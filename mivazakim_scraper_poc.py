@@ -274,12 +274,12 @@ class Scraper:
         tree = html.fromstring(page_source)
 
         # Extract headlines using XPath - get text content
-        headlines = tree.xpath(xpath + '/text()')
+        headlines = tree.xpath(xpath + '/@title')
 
         # Alternative: if tbody is not in HTML, try without it
         if not headlines:
             xpath_no_tbody = xpath.replace('/tbody', '')
-            headlines = tree.xpath(xpath_no_tbody + '/text()')
+            headlines = tree.xpath(xpath_no_tbody + '/@title')
 
         # Clean and store headlines
         all_headlines = []
