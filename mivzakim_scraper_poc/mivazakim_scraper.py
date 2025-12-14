@@ -3,14 +3,21 @@ import os
 from datetime import datetime
 import random
 
+import asyncio
 import pandas as pd
 from lxml import html
 from playwright.async_api import async_playwright
 
 from utils import DATE_FORMAT, read_session, read_cookies, VIEWPORTS, perform_random_mouse_movements, update_session
 
+SOURCE = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[1]' #title
+HEADLINE_PATH = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[4]/a' #title
+IMPORTANCE_LEVEL = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[3]' #class name
+HOUR ='/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[2]' #content
+BASE_URL = 'https://mivzakim.net/view/category/1/date/'
+
 class Scraper:
-    def __init__(self, date: datetime, start_date: datetime = None):
+    def __init__(self, date: datetime, start_date: datetime = None, num_pages: int = 2):
         """
         Initialize scraper with a date
         :param date: The specific date to scrape
@@ -18,13 +25,14 @@ class Scraper:
         """
         self.date = date.strftime(DATE_FORMAT)
         self.start_date = start_date.strftime(DATE_FORMAT) if start_date else None
+        self.num_pages = num_pages
 
     def __str__(self):
         """String representation for session/cookie naming"""
         return f"scraper_{self.date}"
 
     @staticmethod
-    def create_url(date: datetime, base_url: str = 'https://mivzakim.net/view/category/17/date/') -> str:
+    def create_url(date: datetime, base_url: str = BASE_URL) -> str:
         """Create URL from date"""
         year = date.strftime('%Y')
         month = date.strftime('%m')
@@ -33,7 +41,7 @@ class Scraper:
         return f"{base_url}{date_str}"
 
     async def _get_page_source(self, url, response_url=None,
-                               headers: dict = None) -> str:
+                               headers: dict = None) ->  str:
         """
         Async get page source using Playwright
         :param url: website url
@@ -101,53 +109,72 @@ class Scraper:
             await browser.close()
         return full_page_source
 
-    def _get_data(self, page_source: str,
-                  xpath: str = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[4]/a') -> pd.DataFrame:
-        """Extract data from page source using XPath"""
-        # Parse with lxml for XPath support
+    def _get_data(self, page_source: str) -> pd.DataFrame:
+        """Extract table data from page source using XPath"""
+
         tree = html.fromstring(page_source)
 
-        # Extract headlines using XPath - get title attribute
-        headlines = tree.xpath(xpath + '/@title')
+        # Base XPath to rows (handle tbody absence)
+        rows = tree.xpath('/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr')
+        if not rows:
+            rows = tree.xpath('/html/body/div[1]/div[4]/div[1]/div[3]/table/tr')
 
-        # Alternative: if tbody is not in HTML, try without it
-        if not headlines:
-            xpath_no_tbody = xpath.replace('/tbody', '')
-            headlines = tree.xpath(xpath_no_tbody + '/@title')
+        data = []
 
-        # Clean and store headlines
-        all_headlines = []
-        all_dates = []
-        for headline in headlines:
-            cleaned_headline = headline.strip()
-            if cleaned_headline:  # Only add non-empty headlines
-                all_headlines.append(cleaned_headline)
-                all_dates.append(self.date)
+        for row in rows:
+            # Extract per row
+            source = row.xpath('./td[1]/@title')
+            hour = row.xpath('./td[2]/text()')
+            importance = row.xpath('./td[3]/@class')
+            headline = row.xpath('./td[4]/a/@title')
 
-        df = pd.DataFrame({
-            'date': all_dates,
-            'headline': all_headlines
-        })
+            data.append({
+                'date': self.date,
+                'source': source[0].strip() if source else None,
+                'hour': hour[0].strip() if hour else None,
+                'importance_level': importance[0] if importance else None,
+                'headline': headline[0].strip() if headline else None
+            })
 
-        print(f"Total headlines collected for {self.date}: {len(df)}")
+        return pd.DataFrame(data)
 
-        return df
-
-    async def write_data(self) -> pd.DataFrame:
-        """
-        Get data for this scraper's date
-        :return: DataFrame with scraped data
-        """
-        return await self.scrape_from_page(xpath='/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[4]/a')
-
-    async def scrape_from_page(self, xpath: str, response_url=None, headers=None) -> pd.DataFrame:
+    async def scrape_from_page(self,response_url=None, headers=None) -> pd.DataFrame:
         """
         Extract the data from the website
         """
         # Convert date string back to datetime for create_url
         date_obj = datetime.strptime(self.date, DATE_FORMAT)
         url = self.create_url(date_obj)
+        all_dataframes = []
+        for page_num in range(1, self.num_pages):
+            # Construct pagination URL
+            paginated_url = f"{url}/page/{page_num}"
 
-        page_source = await self._get_page_source(url=url, response_url=response_url, headers=headers)
-        return self._get_data(page_source, xpath)
+            print(f"  Scraping page {page_num}: {paginated_url}")
+
+
+            try:
+                page_source = await self._get_page_source(url=paginated_url, response_url=response_url,
+                                                          headers=headers)
+                # Get page source for this page
+
+                # Extract data
+                df_page = self._get_data(page_source)
+
+                if df_page.empty:
+                    print(f"Page {page_num} is empty")
+                    break
+
+                all_dataframes.append(df_page)
+
+                print(f"Page {page_num}: Found {len(df_page)} headlines")
+
+                # Small delay between pages
+                await asyncio.sleep(random.uniform(1, 2))
+
+            except Exception as e:
+                print(f"    Error scraping page {page_num}: {e}")
+                break
+
+        return pd.concat(all_dataframes, ignore_index=True).drop_duplicates().reset_index(drop=True)
 

@@ -27,7 +27,7 @@ def purge() -> None:
     clean_dir('sessions')
 
 
-async def scrape_single_date(date_obj: datetime) -> pd.DataFrame:
+async def scrape_single_date(date_obj: datetime, pages: int =100) -> pd.DataFrame:
     """
     Scrape data for a single date
     :param date_obj: datetime object to scrape
@@ -35,10 +35,10 @@ async def scrape_single_date(date_obj: datetime) -> pd.DataFrame:
     """
     try:
         # Create scraper instance for this date
-        scraper = Scraper(date_obj)
+        scraper = Scraper(date_obj, num_pages = pages)
 
         # Get data
-        df = await scraper.scrape_from_page(xpath='/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[4]/a')
+        df = await scraper.scrape_from_page()
 
         print(f"Completed scraping for date: {date_obj.strftime(DATE_FORMAT)}")
         return df
@@ -48,7 +48,7 @@ async def scrape_single_date(date_obj: datetime) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-async def scrape_and_save(dates: list) -> None:
+async def scrape_and_save(dates: list, pages: int =100) -> None:
     """
     Main flow of the collecting process - scrapes all dates concurrently
     :param dates: list of datetime objects to scrape
@@ -56,7 +56,7 @@ async def scrape_and_save(dates: list) -> None:
     print(f"Starting concurrent scraping for {len(dates)} dates...")
 
     # Create tasks for all dates to run concurrently
-    tasks = [scrape_single_date(date) for date in dates]
+    tasks = [scrape_single_date(date, pages) for date in dates]
 
     # Run all tasks concurrently and gather results
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -89,7 +89,7 @@ async def scrape_and_save(dates: list) -> None:
     print("All tasks completed")
 
 
-def get_data(start_date: datetime = None, days: int = 7) -> None:
+def get_data(start_date: datetime = None, days: int = 7, pages: int =100) -> None:
     """
     Running the main flow of collecting all headlines data
     :param start_date: Optional start date for the scraping campaign (defaults to today)
@@ -105,7 +105,7 @@ def get_data(start_date: datetime = None, days: int = 7) -> None:
     print(f"Scraping {days} days starting from {start_date.strftime(DATE_FORMAT)}")
 
     # Run async scraping
-    asyncio.run(scrape_and_save(dates))
+    asyncio.run(scrape_and_save(dates, pages))
 
     # Final cleanup
     purge()

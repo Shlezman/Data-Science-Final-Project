@@ -1,13 +1,8 @@
-import datetime
 import asyncio
 import json
 import os.path
-from datetime import datetime, timedelta
 import random
-from playwright.async_api import Page, async_playwright
-from lxml import html
-
-import pandas as pd
+from playwright.async_api import Page
 
 DATE_FORMAT = '%Y-%m-%d'
 
