@@ -1,8 +1,14 @@
+#idle
+.idea
+.vscode
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
-
+# Scraper dump
+/cookies
+/sessions
+/headlines.csv
 # C extensions
 *.so
 
