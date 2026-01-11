@@ -10,11 +10,14 @@ from playwright.async_api import async_playwright
 
 from utils import DATE_FORMAT, read_session, read_cookies, VIEWPORTS, perform_random_mouse_movements, update_session
 
-SOURCE = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[1]' #title
-HEADLINE_PATH = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[4]/a' #title
-IMPORTANCE_LEVEL = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[3]' #class name
-HOUR ='/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[2]' #content
+SOURCE = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[1]'  # title
+# title
+HEADLINE_PATH = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[4]/a'
+# class name
+IMPORTANCE_LEVEL = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[3]'
+HOUR = '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr/td[2]'  # content
 BASE_URL = 'https://mivzakim.net/view/category/1/date/'
+
 
 class Scraper:
     def __init__(self, date: datetime, start_date: datetime = None, num_pages: int = 2):
@@ -24,7 +27,8 @@ class Scraper:
         :param start_date: Optional start date for reference (e.g., campaign start)
         """
         self.date = date.strftime(DATE_FORMAT)
-        self.start_date = start_date.strftime(DATE_FORMAT) if start_date else None
+        self.start_date = start_date.strftime(
+            DATE_FORMAT) if start_date else None
         self.num_pages = num_pages
 
     def __str__(self):
@@ -41,7 +45,7 @@ class Scraper:
         return f"{base_url}{date_str}"
 
     async def _get_page_source(self, url, response_url=None,
-                               headers: dict = None) ->  str:
+                               headers: dict = None) -> str:
         """
         Async get page source using Playwright
         :param url: website url
@@ -115,9 +119,11 @@ class Scraper:
         tree = html.fromstring(page_source)
 
         # Base XPath to rows (handle tbody absence)
-        rows = tree.xpath('/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr')
+        rows = tree.xpath(
+            '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr')
         if not rows:
-            rows = tree.xpath('/html/body/div[1]/div[4]/div[1]/div[3]/table/tr')
+            rows = tree.xpath(
+                '/html/body/div[1]/div[4]/div[1]/div[3]/table/tr')
 
         data = []
 
@@ -138,7 +144,7 @@ class Scraper:
 
         return pd.DataFrame(data)
 
-    async def scrape_from_page(self,response_url=None, headers=None) -> pd.DataFrame:
+    async def scrape_from_page(self, response_url=None, headers=None, output_file: str = "../headlines.csv") -> pd.DataFrame:
         """
         Extract the data from the website
         """
@@ -151,7 +157,6 @@ class Scraper:
             paginated_url = f"{url}/page/{page_num}"
 
             print(f"  Scraping page {page_num}: {paginated_url}")
-
 
             try:
                 page_source = await self._get_page_source(url=paginated_url, response_url=response_url,
@@ -176,5 +181,36 @@ class Scraper:
                 print(f"    Error scraping page {page_num}: {e}")
                 break
 
-        return pd.concat(all_dataframes, ignore_index=True).drop_duplicates().reset_index(drop=True)
+        df = pd.concat(all_dataframes, ignore_index=True).drop_duplicates(
+        ).reset_index(drop=True).dropna(subset=["headline"])
+        if not df.empty:
+            # Check if file exists
+            if os.path.exists(output_file):
+                # Read existing data
+                existing_df = pd.read_csv(output_file)
 
+                # Combine with new data and remove duplicates
+                combined_df = pd.concat([existing_df, df], ignore_index=True)
+                combined_df = combined_df.drop_duplicates().reset_index(drop=True)
+
+                # Calculate how many new records were added
+                new_records = len(combined_df) - len(existing_df)
+
+                # Save back to file
+                combined_df.to_csv(output_file, mode='w',
+                                   header=True, index=False)
+                print(
+                    f"Added {new_records} new records to {output_file} (total: {len(combined_df)})")
+            else:
+                # Create new file with header
+                df = df.drop_duplicates().reset_index(drop=True)
+                df.to_csv(output_file, mode='w', header=True, index=False)
+                print(f"Created {output_file} with {len(df)} records")
+
+            print(
+                f"Completed scraping for date: {date_obj.strftime(DATE_FORMAT)}")
+        else:
+            print(
+                f"No data scraped for date: {date_obj.strftime(DATE_FORMAT)}")
+
+        return df

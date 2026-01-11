@@ -9,7 +9,7 @@ from lxml import html
 
 import pandas as pd
 
-from mivzakim_scraper_poc.mivazakim_scraper import Scraper
+from mivazakim_scraper import Scraper
 from utils import read_session, read_cookies, VIEWPORTS, perform_random_mouse_movements, update_session
 
 

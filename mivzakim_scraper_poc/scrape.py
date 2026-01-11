@@ -4,10 +4,10 @@ from datetime import datetime, timedelta
 import asyncio
 import pandas as pd
 
-from mivzakim_scraper_poc.mivzakim_search_scraper import SearchScraper
+from mivzakim_search_scraper import SearchScraper
 from utils import DATE_FORMAT
 
-from mivzakim_scraper_poc.mivazakim_scraper import Scraper
+from mivazakim_scraper import Scraper
 
 
 def clean_dir(dir_name: str) -> None:
