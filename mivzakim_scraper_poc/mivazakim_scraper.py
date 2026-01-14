@@ -154,7 +154,10 @@ class Scraper:
             print(f"  Scraping page {page_num}: {paginated_url}")
 
             try:
-                page_source = await self._get_page_source(browser, url=paginated_url, response_url=response_url, headers=headers)
+                page_source = await asyncio.wait_for(
+                    self._get_page_source(browser, url=paginated_url, response_url=response_url, headers=headers),
+                    timeout=60.0
+                )
                 # Get page source for this page
 
                 # Extract data
@@ -170,6 +173,10 @@ class Scraper:
 
                 # Small delay between pages
                 await asyncio.sleep(random.uniform(1, 2))
+
+            except asyncio.TimeoutError:
+                print(f"    !!! TIMEOUT: Page {page_num} took too long using shared browser. Skipping.")
+                continue
 
             except Exception as e:
                 print(f"    Error scraping page {page_num}: {e}")
