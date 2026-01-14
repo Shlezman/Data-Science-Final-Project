@@ -79,39 +79,40 @@ class Scraper:
                 storage_state=session,
                 ignore_https_errors=True  # Ignore SSL certificate errors
             )
+            try:
 
-            if headers:
-                await context.set_extra_http_headers(headers)
+                if headers:
+                    await context.set_extra_http_headers(headers)
 
-            if cookies:
-                await context.add_cookies(cookies)
+                if cookies:
+                    await context.add_cookies(cookies)
 
-            # Create page from context
-            page = await context.new_page()
+                # Create page from context
+                page = await context.new_page()
 
-            # Write flights response to json file
-            if response_url:
-                page.on('response', _handle_response)
+                # Write flights response to json file
+                if response_url:
+                    page.on('response', _handle_response)
 
-            # Simulate human
-            await page.goto(url, timeout=100000)
-            await page.wait_for_load_state('domcontentloaded')
-            await perform_random_mouse_movements(page)
-            await page.wait_for_timeout(2000)
-            await page.keyboard.press("PageDown")
-            await page.wait_for_load_state('domcontentloaded')
+                # Simulate human
+                await page.goto(url, timeout=100000)
+                await page.wait_for_load_state('domcontentloaded')
+                await perform_random_mouse_movements(page)
+                await page.wait_for_timeout(2000)
+                await page.keyboard.press("PageDown")
+                await page.wait_for_load_state('domcontentloaded')
 
-            # Get page source
-            full_page_source = await page.content()
+                # Get page source
+                full_page_source = await page.content()
 
-            with open(f"./cookies/{self.__str__()}-cookies.json", "w+") as f:
-                f.write(json.dumps(await context.cookies()))
+                with open(f"./cookies/{self.__str__()}-cookies.json", "w+") as f:
+                    f.write(json.dumps(await context.cookies()))
 
-            # Save latest Session
-            update_session(new_data=await context.storage_state(), name=self.__str__())
-
-            await browser.close()
-        return full_page_source
+                # Save latest Session
+                update_session(new_data=await context.storage_state(), name=self.__str__())
+            finally:
+                await browser.close()
+                return full_page_source
 
     def _get_data(self, page_source: str) -> pd.DataFrame:
         """Extract table data from page source using XPath"""
