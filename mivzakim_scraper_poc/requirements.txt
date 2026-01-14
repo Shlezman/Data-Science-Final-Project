@@ -1,5 +1,5 @@
-playwright~=1.37.1
-pandas~=2.14.3
+playwright~=1.57.0
+pandas~=2.3.3
 beautifulsoup4~=4.12.3
 lxml~=4.9.3
 requests~=2.31.0
