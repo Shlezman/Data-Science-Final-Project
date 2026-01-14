@@ -44,7 +44,7 @@ class Scraper:
         date_str = f"{year}-{month}-{day}"
         return f"{base_url}{date_str}"
 
-    async def _get_page_source(self, url, response_url=None,
+    async def _get_page_source(self, browser, url, response_url=None,
                                headers: dict = None) -> str:
         """
         Async get page source using Playwright
@@ -65,54 +65,48 @@ class Scraper:
         os.makedirs("cookies", exist_ok=True)
         os.makedirs("sessions", exist_ok=True)
 
-        async with async_playwright() as pw:
-            browser = await pw.firefox.launch(
-                headless=True,
-                firefox_user_prefs={
-                    "security.insecure_connection_text.enabled": True,
-                    "security.insecure_connection_text.pbmode.enabled": True
-                }
-            )
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-                viewport=random.choice(VIEWPORTS),
-                storage_state=session,
-                ignore_https_errors=True  # Ignore SSL certificate errors
-            )
-            try:
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+            viewport=random.choice(VIEWPORTS),
+            storage_state=session,
+            ignore_https_errors=True
+        )
 
-                if headers:
-                    await context.set_extra_http_headers(headers)
+        page = None
+        try:
+            if headers:
+                await context.set_extra_http_headers(headers)
+            if cookies:
+                await context.add_cookies(cookies)
 
-                if cookies:
-                    await context.add_cookies(cookies)
+            page = await context.new_page()
 
-                # Create page from context
-                page = await context.new_page()
+            if response_url:
+                page.on('response', _handle_response)
 
-                # Write flights response to json file
-                if response_url:
-                    page.on('response', _handle_response)
+            # ניווט ופעולות
+            await page.goto(url, timeout=100000)
+            await page.wait_for_load_state('domcontentloaded')
+            await perform_random_mouse_movements(page)
+            await page.wait_for_timeout(2000)
+            await page.keyboard.press("PageDown")
+            await page.wait_for_load_state('domcontentloaded')
 
-                # Simulate human
-                await page.goto(url, timeout=100000)
-                await page.wait_for_load_state('domcontentloaded')
-                await perform_random_mouse_movements(page)
-                await page.wait_for_timeout(2000)
-                await page.keyboard.press("PageDown")
-                await page.wait_for_load_state('domcontentloaded')
+            full_page_source = await page.content()
 
-                # Get page source
-                full_page_source = await page.content()
+            # שמירת נתונים
+            with open(f"./cookies/{self.__str__()}-cookies.json", "w+") as f:
+                f.write(json.dumps(await context.cookies()))
 
-                with open(f"./cookies/{self.__str__()}-cookies.json", "w+") as f:
-                    f.write(json.dumps(await context.cookies()))
+            update_session(new_data=await context.storage_state(), name=self.__str__())
 
-                # Save latest Session
-                update_session(new_data=await context.storage_state(), name=self.__str__())
-            finally:
-                await browser.close()
-                return full_page_source
+            return full_page_source  # החזרת הערך בתוך ה-try (או בסוף הפונקציה), לא ב-finally
+
+        finally:
+            # סגירת העמוד וה-context בלבד. לא סוגרים את ה-browser!
+            if page:
+                await page.close()
+            await context.close()
 
     def _get_data(self, page_source: str) -> pd.DataFrame:
         """Extract table data from page source using XPath"""
@@ -145,7 +139,7 @@ class Scraper:
 
         return pd.DataFrame(data)
 
-    async def scrape_from_page(self, response_url=None, headers=None, output_file: str = "../headlines.csv") -> pd.DataFrame:
+    async def scrape_from_page(self, browser, response_url=None, headers=None, output_file: str = "../headlines.csv") -> pd.DataFrame:
         """
         Extract the data from the website
         """
@@ -160,8 +154,7 @@ class Scraper:
             print(f"  Scraping page {page_num}: {paginated_url}")
 
             try:
-                page_source = await self._get_page_source(url=paginated_url, response_url=response_url,
-                                                          headers=headers)
+                page_source = await self._get_page_source(browser, url=paginated_url, response_url=response_url, headers=headers)
                 # Get page source for this page
 
                 # Extract data

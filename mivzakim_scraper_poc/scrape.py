@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 import asyncio
 import pandas as pd
+from playwright.async_api import async_playwright
 
 from mivzakim_search_scraper import SearchScraper
 from utils import DATE_FORMAT
@@ -27,18 +28,17 @@ def purge() -> None:
     clean_dir('sessions')
 
 
-async def scrape_single_date(date_obj: datetime, pages: int = 100) -> None:
+
+async def scrape_single_date(date_obj: datetime, pages: int = 100, browser=None) -> None:
     """
-    Scrape data for a single date and write directly to file
-    :param date_obj: datetime object to scrape
-    :param pages: number of pages to scrape
+    Scrape data for a single date using the shared browser
     """
     try:
         # Create scraper instance for this date
         scraper = Scraper(date_obj, num_pages=pages)
 
-        # Scrape and save directly to file (no return value needed)
-        await scraper.scrape_from_page()
+
+        await scraper.scrape_from_page(browser=browser)
 
         print(f"Completed scraping for date: {date_obj.strftime(DATE_FORMAT)}")
 
@@ -48,20 +48,30 @@ async def scrape_single_date(date_obj: datetime, pages: int = 100) -> None:
 
 async def scrape_batch(dates: list, pages: int = 100) -> None:
     """
-    Scrape a batch of dates concurrently (each writes directly to file)
-    :param dates: list of datetime objects to scrape
-    :param pages: number of pages to scrape per date
+    Scrape a batch of dates concurrently using a single browser instance
     """
     print(f"Starting concurrent scraping for {len(dates)} dates in this batch...")
 
-    # Create tasks for all dates to run concurrently
-    tasks = [scrape_single_date(date, pages) for date in dates]
+    # 2. יצירת דפדפן אחד לכל הבאץ'
+    async with async_playwright() as pw:
+        browser = await pw.firefox.launch(
+            headless=True,
+            firefox_user_prefs={
+                "security.insecure_connection_text.enabled": True,
+                "security.insecure_connection_text.pbmode.enabled": True
+            }
+        )
 
-    # Run all tasks concurrently
-    await asyncio.gather(*tasks, return_exceptions=True)
+        # יצירת המשימות עם העברת ה-browser
+        tasks = [scrape_single_date(date, pages, browser=browser) for date in dates]
+
+        # הרצת המשימות במקביל
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # סגירת הדפדפן בסוף הבאץ'
+        await browser.close()
 
     print("Batch completed")
-
 ########## search #############
 
 def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch_size: int = 30) -> None:
