@@ -1,6 +1,9 @@
 #idle
-.idea
-.vscode
+.idea/
+.vscode/
+**cookies/
+**sessions/
+**headlines.csv
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

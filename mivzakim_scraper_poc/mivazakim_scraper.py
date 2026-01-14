@@ -67,7 +67,7 @@ class Scraper:
 
         async with async_playwright() as pw:
             browser = await pw.firefox.launch(
-                headless=False,
+                headless=True,
                 firefox_user_prefs={
                     "security.insecure_connection_text.enabled": True,
                     "security.insecure_connection_text.pbmode.enabled": True
