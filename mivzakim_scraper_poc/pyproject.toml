@@ -1,0 +1,11 @@
+[project]
+name = "mivzakim-scraper"
+version = "0.1.0"
+description = "Mivzakim news headlines scraper with keyword search"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas",
+    "lxml",
+    "playwright",
+]

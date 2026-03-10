@@ -1,0 +1,157 @@
+"""
+processing_engine.engine
+========================
+Production entrypoint for the SentiSense Processing Engine.
+
+Exposes a single async function::
+
+    async def process_single_observation(observation: dict) -> dict
+
+Designed to be called from:
+
+* A **FastAPI route**::
+
+      @app.post("/process")
+      async def process(obs: dict):
+          return await process_single_observation(obs)
+
+* A **batch loop**::
+
+      import asyncio, pandas as pd
+      from processing_engine import process_single_observation
+
+      df = pd.read_csv("headlines.csv")
+      for _, row in df.iterrows():
+          result = asyncio.run(process_single_observation(row.to_dict()))
+
+* The **CLI** via ``python -m processing_engine``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import time
+from typing import Any
+
+from loguru import logger
+
+from .config import LOG_LEVEL
+from .models import PipelineState
+
+# ── Logging configuration ───────────────────────────────────────────
+
+logger.remove()
+logger.add(
+    sys.stderr,
+    level=LOG_LEVEL,
+    format=(
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+        "<level>{message}</level>"
+    ),
+    colorize=True,
+    enqueue=True,
+    backtrace=True,
+    diagnose=True,
+)
+
+# ── Compiled graph singleton ────────────────────────────────────────
+
+_compiled_graph = None
+
+
+def _get_graph():
+    """Lazy-compile the graph once and cache it."""
+    global _compiled_graph
+    if _compiled_graph is None:
+        logger.info("Compiling LangGraph pipeline (first call)…")
+        from .graph import build_graph
+
+        _compiled_graph = build_graph()
+        logger.info("Graph compiled successfully")
+    return _compiled_graph
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PUBLIC API
+# ═══════════════════════════════════════════════════════════════════════
+
+
+async def process_single_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    """
+    Process a single news observation through the full AI pipeline.
+
+    Parameters
+    ----------
+    observation : dict
+        A dictionary with at least:
+          - ``headline`` (str): the Hebrew news headline
+          - ``date`` (str): publication date (YYYY-MM-DD)
+          - ``source`` (str): news publisher
+          - ``hour`` (str): time of publication
+          - ``popularity`` (str, optional): importance level
+
+    Returns
+    -------
+    dict
+        A flat dictionary containing the original observation fields
+        plus 6 relevancy scores, 1 sentiment score, confidence values,
+        reasoning chains, and validation metadata — ready for direct
+        PostgreSQL insertion or CSV export.
+
+    Raises
+    ------
+    No exceptions are raised.  If individual agents fail, their
+    scores default to 0 with error details in the ``errors`` list.
+    """
+    t0 = time.perf_counter()
+    logger.info(
+        "━━━ Processing observation: {} ━━━",
+        observation.get("headline", "<no headline>")[:60],
+    )
+
+    initial_state: PipelineState = {
+        "date": observation.get("date", ""),
+        "source": observation.get("source", ""),
+        "hour": observation.get("hour", ""),
+        "popularity": observation.get("popularity", ""),
+        "headline": observation.get("headline", ""),
+    }
+
+    graph = _get_graph()
+    final_state = await graph.ainvoke(initial_state)
+
+    elapsed = time.perf_counter() - t0
+    output: dict[str, Any] = final_state.get("output", {})
+    output["processing_time_seconds"] = round(elapsed, 3)
+
+    logger.info(
+        "━━━ Done in {:.2f}s | validation={} | errors={} ━━━",
+        elapsed,
+        output.get("validation_passed"),
+        len(output.get("errors", [])),
+    )
+
+    return output
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CLI entrypoint
+# ═══════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    import json as _json
+
+    sample = {
+        "date": "2025-01-15",
+        "source": "כאן חדשות",
+        "hour": "14:30",
+        "popularity": "important",
+        "headline": "בנק ישראל הכריז על העלאת הריבית ב-0.25% לאחר עלייה באינפלציה",
+    }
+
+    logger.info("Running smoke test with sample observation…")
+    result = asyncio.run(process_single_observation(sample))
+    print(_json.dumps(result, ensure_ascii=False, indent=2))

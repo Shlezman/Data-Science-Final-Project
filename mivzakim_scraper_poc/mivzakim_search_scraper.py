@@ -1,10 +1,8 @@
-import datetime
 import asyncio
 import json
-import os.path
+import os
 from datetime import datetime
 import random
-from playwright.async_api import async_playwright
 from lxml import html
 
 import pandas as pd
@@ -31,28 +29,23 @@ class SearchScraper(Scraper):
 
     def __str__(self):
         """String representation for session/cookie naming"""
-        # Use first keyword for naming (sanitized)
         first_keyword = list(self.keywords)[0].replace(' ', '_') if self.keywords else 'search'
         return f"search_scraper_{first_keyword}_{self.date}"
 
     def _get_search_data(self, page_source: str) -> pd.DataFrame:
         """
-        Extract data from search results page with different structure
-        After search, the page has a different structure:
-        - Dates are in <div class="date"> under <div class="dateandlegends">
-        - Headlines are in <td class="nf_title"> with <a> tags containing title attribute
+        Extract data from search results page.
+        Extracts all fields per row: date, source, hour, popularity, headline
+        (matching _get_data field extraction pattern).
         """
-        # Parse with lxml for XPath support
         tree = html.fromstring(page_source)
 
-        all_headlines = []
-        all_dates = []
+        data = []
 
         # Find all date separators
         date_divs = tree.xpath('//div[@class="dateandlegends"]/div[@class="date"]')
 
         for date_div in date_divs:
-            # Get the date text (format: DD.MM.YYYY)
             date_text = date_div.text_content().strip()
 
             # Convert date format from DD.MM.YYYY to YYYY-MM-DD
@@ -62,103 +55,90 @@ class SearchScraper(Scraper):
                     day, month, year = date_parts
                     formatted_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
                 else:
-                    formatted_date = self.date  # Fallback to scraper's date
+                    formatted_date = self.date
             except:
-                formatted_date = self.date  # Fallback to scraper's date
+                formatted_date = self.date
 
             # Find the next table after this date div
-            # Get parent dateandlegends div, then find the following sibling table
             dateandlegends_div = date_div.getparent()
             following_table = dateandlegends_div.getnext()
 
             if following_table is not None and following_table.tag == 'table':
-                # Extract all headlines from this table
-                headline_links = following_table.xpath('.//td[@class="nf_title nf_rtl"]/a | .//td[@class="nf_title"]/a')
+                rows = following_table.xpath('.//tr')
 
-                for link in headline_links:
-                    # Get title attribute
-                    title = link.get('title', '').strip()
-                    if title:
-                        all_headlines.append(title)
-                        all_dates.append(formatted_date)
+                for row in rows:
+                    source = row.xpath('./td[1]/@title')
+                    hour = row.xpath('./td[2]/text()')
+                    popularity = row.xpath('./td[3]/@class')
+                    headline = row.xpath('./td[4]/a/@title')
 
-        df = pd.DataFrame({
-            'date': all_dates,
-            'headline': all_headlines
-        })
+                    headline_text = headline[0].strip() if headline else None
+                    if headline_text:
+                        data.append({
+                            'date': formatted_date,
+                            'source': source[0].strip() if source else None,
+                            'hour': hour[0].strip() if hour else None,
+                            'popularity': popularity[0] if popularity else None,
+                            'headline': headline_text
+                        })
 
+        df = pd.DataFrame(data)
         print(f"Total headlines collected from search: {len(df)}")
-
         return df
 
-    async def _search_and_get_page_source(self, keyword: str, response_url=None, headers: dict = None) -> tuple[str, str]:
+    async def _search_and_get_page_source(self, browser, keyword: str, headers: dict = None) -> tuple[str, str]:
         """
-        Search for a keyword and get page source
+        Search for a keyword and get page source using the shared browser.
+        :param browser: Shared Playwright browser instance
         :param keyword: The keyword to search
         :return: tuple of (page source, search result URL)
         """
         session = read_session(session_name=self.__str__())
         cookies = read_cookies(cookies_name=self.__str__())
 
-        # Ensure directories exist
         os.makedirs("cookies", exist_ok=True)
         os.makedirs("sessions", exist_ok=True)
 
-        async with async_playwright() as pw:
-            browser = await pw.firefox.launch(
-                headless=False,
-                firefox_user_prefs={
-                    "security.insecure_connection_text.enabled": True,
-                    "security.insecure_connection_text.pbmode.enabled": True
-                }
-            )
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-                viewport=random.choice(VIEWPORTS),
-                storage_state=session,
-                ignore_https_errors=True
-            )
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+            viewport=random.choice(VIEWPORTS),
+            storage_state=session,
+            ignore_https_errors=True
+        )
 
+        page = None
+        try:
             if headers:
                 await context.set_extra_http_headers(headers)
-
             if cookies:
                 await context.add_cookies(cookies)
 
-            # Create page from context
             page = await context.new_page()
 
-            # Navigate to base URL first
+            # Navigate to base URL
             base_url = 'https://mivzakim.net/view/category/17'
             await page.goto(base_url, timeout=100000)
             await page.wait_for_load_state('domcontentloaded')
 
-            # Perform random mouse movements
             await perform_random_mouse_movements(page, min_actions=2, max_actions=5)
 
             # Find and fill search box
             search_input_xpath = '/html/body/div[1]/div[3]/div[1]/form/div/input[2]'
             search_result_url = None
             try:
-                # Wait for search input to be available
                 await page.wait_for_selector(f'xpath={search_input_xpath}', timeout=10000)
 
-                # Type the keyword into search box
                 search_input = page.locator(f'xpath={search_input_xpath}')
                 await search_input.fill(keyword)
                 await page.wait_for_timeout(50)
 
-                # Submit the search (press Enter)
                 await search_input.press('Enter')
 
-                # Wait for navigation to complete (new URL will be generated)
                 await page.wait_for_load_state('domcontentloaded', timeout=30000)
                 await page.wait_for_timeout(50)
 
-                # Get the search result URL
                 search_result_url = page.url
 
-                # Perform additional human-like actions
                 await page.keyboard.press("PageDown")
                 await page.wait_for_load_state('domcontentloaded')
 
@@ -167,80 +147,73 @@ class SearchScraper(Scraper):
             except Exception as e:
                 print(f"Error during search for keyword '{keyword}': {e}")
 
-            # Get page source
             full_page_source = await page.content()
 
-            # Save cookies and session
             with open(f"./cookies/{self.__str__()}-cookies.json", "w+") as f:
                 f.write(json.dumps(await context.cookies()))
 
             update_session(new_data=await context.storage_state(), name=self.__str__())
 
-            await browser.close()
+            return full_page_source, search_result_url
 
-        return full_page_source, search_result_url
+        finally:
+            if page:
+                await page.close()
+            await context.close()
 
-    async def _get_page_source_from_url(self, url: str, headers: dict = None) -> str:
+    async def _get_page_source_from_url(self, browser, url: str, headers: dict = None) -> str:
         """
-        Get page source from a specific URL (for pagination)
+        Get page source from a specific URL (for pagination) using the shared browser.
+        :param browser: Shared Playwright browser instance
         :param url: The URL to fetch
         :return: page source
         """
         session = read_session(session_name=self.__str__())
         cookies = read_cookies(cookies_name=self.__str__())
 
-        async with async_playwright() as pw:
-            browser = await pw.firefox.launch(
-                headless=False,
-                firefox_user_prefs={
-                    "security.insecure_connection_text.enabled": True,
-                    "security.insecure_connection_text.pbmode.enabled": True
-                }
-            )
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-                viewport=random.choice(VIEWPORTS),
-                storage_state=session,
-                ignore_https_errors=True
-            )
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+            viewport=random.choice(VIEWPORTS),
+            storage_state=session,
+            ignore_https_errors=True
+        )
 
+        page = None
+        try:
             if headers:
                 await context.set_extra_http_headers(headers)
-
             if cookies:
                 await context.add_cookies(cookies)
 
             page = await context.new_page()
 
-            # Navigate to the URL
             await page.goto(url, timeout=100000)
             await page.wait_for_load_state('domcontentloaded')
 
-            # Wait for content to load
-            # await page.wait_for_selector('div.dateandlegends', timeout=10000)
-
-            # Perform some human-like actions
             await perform_random_mouse_movements(page, min_actions=2, max_actions=4)
             await page.keyboard.press("PageDown")
             await page.wait_for_timeout(50)
 
-            # Get page source
             full_page_source = await page.content()
 
-            # Save cookies and session
             with open(f"./cookies/{self.__str__()}-cookies.json", "w+") as f:
                 f.write(json.dumps(await context.cookies()))
 
             update_session(new_data=await context.storage_state(), name=self.__str__())
 
-            await browser.close()
+            return full_page_source
 
-        return full_page_source
+        finally:
+            if page:
+                await page.close()
+            await context.close()
 
-    async def scrape_from_search(self) -> pd.DataFrame:
+    async def scrape_from_search(self, browser, output_file: str = "../headlines_search.csv") -> pd.DataFrame:
         """
-        Search for all keywords and extract headlines from multiple pages
-        Note: xpath parameter is ignored for search results as they use a different structure
+        Search for all keywords and extract headlines from multiple pages.
+        Uses a shared browser instance. Saves results to CSV.
+        :param browser: Shared Playwright browser instance
+        :param output_file: Path to output CSV file
         :return: DataFrame with all results
         """
         all_dataframes = []
@@ -249,7 +222,10 @@ class SearchScraper(Scraper):
             print(f"Searching for keyword: '{keyword}' across {self.num_pages} page(s)")
             try:
                 # Perform search and get first page
-                page_source, search_result_url = await self._search_and_get_page_source(keyword)
+                page_source, search_result_url = await asyncio.wait_for(
+                    self._search_and_get_page_source(browser, keyword),
+                    timeout=60.0
+                )
 
                 if not search_result_url:
                     print(f"Could not get search result URL for keyword '{keyword}'")
@@ -265,16 +241,15 @@ class SearchScraper(Scraper):
 
                 # Scrape additional pages if num_pages > 1
                 for page_num in range(2, self.num_pages + 1):
-                    # Construct pagination URL
                     paginated_url = f"{search_result_url}/page/{page_num}"
-
                     print(f"  Scraping page {page_num}: {paginated_url}")
 
                     try:
-                        # Get page source for this page
-                        page_source = await self._get_page_source_from_url(paginated_url)
+                        page_source = await asyncio.wait_for(
+                            self._get_page_source_from_url(browser, paginated_url),
+                            timeout=60.0
+                        )
 
-                        # Extract data
                         df_page = self._get_search_data(page_source)
 
                         if df_page.empty:
@@ -287,15 +262,21 @@ class SearchScraper(Scraper):
 
                         print(f"    Page {page_num}: Found {len(df_page)} headlines")
 
-                        # Small delay between pages
                         await asyncio.sleep(random.uniform(1, 2))
+
+                    except asyncio.TimeoutError:
+                        print(f"    !!! TIMEOUT: Page {page_num} for keyword '{keyword}'. Skipping.")
+                        continue
 
                     except Exception as e:
                         print(f"    Error scraping page {page_num} for keyword '{keyword}': {e}")
                         break
 
-                # Delay between different keywords
                 await asyncio.sleep(random.uniform(1, 2))
+
+            except asyncio.TimeoutError:
+                print(f"!!! TIMEOUT: Search for keyword '{keyword}'. Skipping.")
+                continue
 
             except Exception as e:
                 print(f"Error scraping keyword '{keyword}': {e}")
@@ -303,10 +284,23 @@ class SearchScraper(Scraper):
 
         # Combine all results
         if all_dataframes:
-            combined_df = pd.concat(all_dataframes, ignore_index=True).drop_duplicates().reset_index(drop=True)
-            print(f"Total headlines found across all keywords and pages: {len(combined_df)}")
-            return combined_df
+            df = pd.concat(all_dataframes, ignore_index=True).drop_duplicates(
+            ).reset_index(drop=True).dropna(subset=["headline"])
+
+            if not df.empty:
+                if os.path.exists(output_file):
+                    existing_df = pd.read_csv(output_file)
+                    combined_df = pd.concat([existing_df, df], ignore_index=True)
+                    combined_df = combined_df.drop_duplicates().reset_index(drop=True)
+                    new_records = len(combined_df) - len(existing_df)
+                    combined_df.to_csv(output_file, mode='w', header=True, index=False)
+                    print(f"Added {new_records} new records to {output_file} (total: {len(combined_df)})")
+                else:
+                    df.to_csv(output_file, mode='w', header=True, index=False)
+                    print(f"Created {output_file} with {len(df)} records")
+
+            print(f"Total headlines found across all keywords and pages: {len(df)}")
+            return df
         else:
+            print("No data collected from search")
             return pd.DataFrame()
-
-

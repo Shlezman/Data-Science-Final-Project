@@ -122,68 +122,57 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
     print("=" * 60)
 
 
-def get_search_data(keywords: set, num_pages: int = 1) -> None:
+def get_search_data(keywords: set, num_pages: int = 1) -> pd.DataFrame:
     """
     Running the main flow of collecting headlines using keyword search
     :param keywords: Set of keywords to search for
-    :param num_pages: Number of pages to scrape
-    :return: headlines_search.csv file
+    :param num_pages: Number of pages to scrape per keyword
+    :return: DataFrame with scraped headlines
     """
-
     print(f"Searching for keywords {keywords}")
 
     # Run async scraping with search
-    asyncio.run(scrape_and_save_search([datetime.now()], keywords, num_pages))
+    df = asyncio.run(scrape_search_batch(keywords, num_pages))
 
     # Final cleanup
     purge()
     print("Search data collection complete!")
+    return df
 
 
-async def scrape_search_keywords(date_obj: datetime, keywords: set, num_pages: int = 1) -> pd.DataFrame:
+async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int = 1, browser=None) -> pd.DataFrame:
     """
-    Scrape data for a single date using keyword search
-    :param date_obj: datetime object to scrape
-    :param keywords: Set of keywords to search
-    :return: DataFrame with scraped data
+    Scrape search data for a single date using the shared browser
     """
     try:
-        # Create search scraper instance
         scraper = SearchScraper(date_obj, keywords, num_pages)
-
-        # Get data through search
-        df = await scraper.scrape_from_search()
-
+        df = await scraper.scrape_from_search(browser=browser)
         print(f"Completed search scraping for date: {date_obj.strftime(DATE_FORMAT)}")
         return df
-
     except Exception as e:
         print(f"Error search scraping date {date_obj.strftime(DATE_FORMAT)}: {e}")
         return pd.DataFrame()
 
 
-async def scrape_and_save_search(dates: list, keywords: set, num_pages: int = 1) -> None:
+async def scrape_search_batch(keywords: set, num_pages: int = 1) -> pd.DataFrame:
     """
-    Main flow for search-based scraping - scrapes all dates concurrently with keyword search
-    :param dates: list of datetime objects to scrape
-    :param keywords: Set of keywords to search for
-    :param num_pages: Number of pages to scrape
+    Search-based scraping using a single shared browser instance
+    (mirrors scrape_batch pattern from get_data)
     """
-    print(f"Starting concurrent search scraping with keywords: {keywords}")
+    print(f"Starting search scraping with keywords: {keywords}")
 
-    # Run search for the date
-    results = await scrape_search_keywords(dates[0], keywords, num_pages)
+    async with async_playwright() as pw:
+        browser = await pw.firefox.launch(
+            headless=True,
+            firefox_user_prefs={
+                "security.insecure_connection_text.enabled": True,
+                "security.insecure_connection_text.pbmode.enabled": True
+            }
+        )
 
-    df = results.drop_duplicates().reset_index(drop=True)
+        df = await scrape_single_search(datetime.now(), keywords, num_pages, browser=browser)
 
-    # Load existing data if file exists
-    file_name = "headlines_search.csv"
-    if os.path.exists(file_name):
-        existing_df = pd.read_csv(file_name)
-        df = pd.concat([existing_df, df]).drop_duplicates().reset_index(drop=True)
+        await browser.close()
 
-    # Save to CSV
-    df.to_csv(file_name, index=False)
-    print(f"Search data written to {file_name}")
-    print(f"Total unique headlines: {len(df)}")
-    print("All search tasks completed")
+    print("Search batch completed")
+    return df
