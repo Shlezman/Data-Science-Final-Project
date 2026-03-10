@@ -1,0 +1,28 @@
+[project]
+name = "processing-engine"
+version = "0.2.0"
+description = "SentiSense Multi-Agent AI Processing Engine — LangGraph ReAct agents for Hebrew news sentiment and relevancy scoring via local Ollama inference."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # --- LLM Orchestration ---
+    "langchain>=0.3.0",
+    "langchain-ollama>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langgraph>=0.4.0",
+    "langgraph-prebuilt>=1.0.0",
+    # --- Data Validation ---
+    "pydantic>=2.0",
+    # --- Logging ---
+    "loguru>=0.7.0",
+    # --- Retry / Resilience ---
+    "tenacity>=9.0.0",
+    # --- Async ---
+    "anyio>=4.0",
+    # --- Enhanced Unicode regex ---
+    "regex>=2024.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv init --name mivzakim-scraper --python 3.12)",
+      "Bash(uv sync)",
+      "Bash(uv run playwright install firefox)",
+      "Bash(git -C /Users/omrishl/Desktop/DS/DS-Project mv mivzakim_scraper_poc mivzakim_scraper)"
+    ]
+  }
+}

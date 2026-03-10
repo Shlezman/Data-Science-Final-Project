@@ -133,7 +133,7 @@ class Scraper:
                 'date': self.date,
                 'source': source[0].strip() if source else None,
                 'hour': hour[0].strip() if hour else None,
-                'importance_level': importance[0] if importance else None,
+                'popularity': importance[0] if importance else None,
                 'headline': headline[0].strip() if headline else None
             })
 

@@ -1,0 +1,221 @@
+"""
+processing_engine.models
+========================
+Pydantic V2 models and LangGraph state definitions.
+
+Three validation layers:
+
+1. **Input** — ``ObservationInput`` validates the raw dict from the caller.
+2. **LLM output** — ``RelevancyOutput`` / ``SentimentOutput`` enforce that
+   every agent response conforms to the expected schema.
+3. **Graph state** — ``PipelineState`` (TypedDict) is the mutable envelope
+   that LangGraph passes through every node, with ``Annotated`` reducers
+   for safe parallel merging.
+"""
+
+from __future__ import annotations
+
+import operator
+from typing import Annotated, Any, TypedDict
+
+from pydantic import BaseModel, Field, field_validator
+
+from .config import (
+    RELEVANCY_MAX,
+    RELEVANCY_MIN,
+    SENTIMENT_MAX,
+    SENTIMENT_MIN,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 1.  INPUT VALIDATION
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ObservationInput(BaseModel):
+    """
+    Validates a single scraped observation before it enters the graph.
+
+    Expected keys mirror the scraper CSV columns:
+      - date        (str, "YYYY-MM-DD")
+      - source      (str, publisher name)
+      - hour        (str, "HH:MM" or similar)
+      - popularity  (str, importance CSS class)
+      - headline    (str, the Hebrew headline text)
+    """
+
+    date: str = Field(..., description="Publication date in YYYY-MM-DD format.")
+    source: str = Field(..., description="News publisher name.")
+    hour: str = Field(..., description="Time of publication.")
+    popularity: str = Field(default="", description="Importance level from the HTML class attribute.")
+    headline: str = Field(..., min_length=1, description="The Hebrew news headline to analyse.")
+
+    model_config = {"extra": "allow"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 2.  LLM OUTPUT SCHEMAS  (used as response_format in create_react_agent)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class RelevancyOutput(BaseModel):
+    """
+    Structured output expected from every relevancy agent.
+
+    ``chain_of_thought`` captures the CoT reasoning the agent produced
+    *during* the ReAct loop (summarised at the final structured step).
+    """
+
+    chain_of_thought: str = Field(
+        ...,
+        description=(
+            "Your step-by-step reasoning in English.  Structure it as: "
+            "(1) What is the headline about?  "
+            "(2) Which entities/keywords did your tools detect?  "
+            "(3) How does this evidence map to the scoring rubric?  "
+            "(4) Why did you choose this specific score?  "
+            "Reference concrete tool results — do not make claims "
+            "without evidence from your analysis tools."
+        ),
+    )
+    score: int = Field(
+        ...,
+        ge=RELEVANCY_MIN,
+        le=RELEVANCY_MAX,
+        description=(
+            f"Relevancy score from {RELEVANCY_MIN} to {RELEVANCY_MAX}.  "
+            f"{RELEVANCY_MIN}=completely unrelated, 1-3=tangential, "
+            f"4-6=moderate overlap, 7-9=strongly related, "
+            f"{RELEVANCY_MAX}=quintessential.  Use the full range; "
+            f"most headlines are NOT 0 or {RELEVANCY_MAX}."
+        ),
+    )
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Self-assessed confidence in the score (0.0–1.0).  "
+            "Use < 0.8 when evidence is ambiguous or few domain "
+            "keywords were detected.  Use > 0.9 only when tool "
+            "results provide strong, unambiguous evidence."
+        ),
+    )
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _coerce_score(cls, v: Any) -> int:
+        """Accept stringified ints and floats from sloppy LLM output."""
+        if isinstance(v, str):
+            v = float(v)
+        if isinstance(v, float):
+            v = round(v)
+        return int(v)
+
+
+class SentimentOutput(BaseModel):
+    """
+    Structured output expected from the sentiment agent.
+
+    Score semantics:
+      -10  = extremely bearish / negative market impact
+        0  = neutral
+      +10  = extremely bullish / positive market impact
+    """
+
+    chain_of_thought: str = Field(
+        ...,
+        description=(
+            "Your step-by-step reasoning in English.  Structure it as: "
+            "(1) What is the headline about?  "
+            "(2) Which market signals, financial entities, and "
+            "geopolitical indicators did your tools detect?  "
+            "(3) Through which analytical lens (monetary policy, "
+            "geopolitics, macro data, sector impact) does this affect "
+            "the TA-125?  "
+            "(4) Why did you choose this specific score and direction?  "
+            "Reference concrete tool results."
+        ),
+    )
+    score: int = Field(
+        ...,
+        ge=SENTIMENT_MIN,
+        le=SENTIMENT_MAX,
+        description=(
+            f"Sentiment score from {SENTIMENT_MIN} (extremely bearish) "
+            f"to {SENTIMENT_MAX} (extremely bullish).  "
+            f"0=neutral/no market impact.  Most headlines score between "
+            f"-3 and +3.  Scores beyond ±7 require overwhelming "
+            f"evidence of immediate, significant market impact."
+        ),
+    )
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Self-assessed confidence in the score (0.0–1.0).  "
+            "Use < 0.7 when the market impact direction is ambiguous.  "
+            "Use < 0.8 for indirect effects.  "
+            "Use > 0.9 only for direct, unambiguous market events "
+            "(e.g., central bank rate decision, market crash)."
+        ),
+    )
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _coerce_score(cls, v: Any) -> int:
+        if isinstance(v, str):
+            v = float(v)
+        if isinstance(v, float):
+            v = round(v)
+        return int(v)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 3.  GRAPH STATE  (LangGraph TypedDict with reducers)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class AgentResult(TypedDict, total=False):
+    """Result payload written by a single agent node."""
+
+    score: int
+    confidence: float
+    chain_of_thought: str
+    error: str | None
+
+
+class PipelineState(TypedDict, total=False):
+    """
+    The mutable state envelope carried through every LangGraph node.
+
+    ``errors`` uses an ``operator.add`` reducer so that parallel agent
+    nodes can safely append errors without overwriting each other.
+    All other keys are written by exactly one node, so no reducer is
+    needed.
+    """
+
+    # --- Original observation (immutable after ingestion) ----
+    date: str
+    source: str
+    hour: str
+    popularity: str
+    headline: str
+
+    # --- Agent results (written during fan-out, one key per agent) ----
+    relevancy_politics_government: AgentResult
+    relevancy_economy_finance: AgentResult
+    relevancy_security_military: AgentResult
+    relevancy_health_medicine: AgentResult
+    relevancy_science_climate: AgentResult
+    relevancy_technology: AgentResult
+    sentiment: AgentResult
+
+    # --- Post-validation flags ----
+    validation_passed: bool
+    errors: Annotated[list[str], operator.add]
+
+    # --- Final flat output (populated by the aggregator) ----
+    output: dict[str, Any]
