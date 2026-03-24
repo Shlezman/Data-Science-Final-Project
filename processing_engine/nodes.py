@@ -13,7 +13,9 @@ Node taxonomy
   headline from state → invokes the agent → writes the structured
   result back to state.  Includes tenacity retry and graceful fallback.
 * **validation_node** — post-fan-in quality gate.
-* **aggregation_node** — flattens state into a serialisable ``output``.
+* **aggregation_node** — flattens state into the 7-column output:
+    relevance_category_1 … relevance_category_6  (int, 0–10)
+    global_sentiment                              (int, -10..+10)
 """
 
 from __future__ import annotations
@@ -31,7 +33,6 @@ from tenacity import (
 )
 
 from .config import (
-    CATEGORY_DISPLAY_NAMES,
     RELEVANCY_CATEGORIES,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
@@ -103,6 +104,9 @@ def make_agent_node(agent, state_key: str, display_name: str):
       3. Extracts ``structured_response`` from the agent output.
       4. Writes an ``AgentResult`` to ``state[state_key]``.
 
+    Both relevancy agents (score 0–10) and the sentiment agent
+    (score -10..+10) write an integer ``score`` into ``AgentResult``.
+
     If the agent fails after retries, a fallback ``AgentResult``
     with ``score=0`` and the error message is written instead.
 
@@ -148,16 +152,10 @@ def make_agent_node(agent, state_key: str, display_name: str):
 
         try:
             structured = await _invoke_with_retry(headline)
-            logger.info(
-                "[{}] score={} confidence={:.2f}",
-                display_name,
-                structured.score,
-                structured.confidence,
-            )
+            logger.info("[{}] score={}", display_name, structured.score)
             return {
                 state_key: AgentResult(
                     score=structured.score,
-                    confidence=structured.confidence,
                     chain_of_thought=structured.chain_of_thought,
                     error=None,
                 )
@@ -167,7 +165,6 @@ def make_agent_node(agent, state_key: str, display_name: str):
             return {
                 state_key: AgentResult(
                     score=0,
-                    confidence=0.0,
                     chain_of_thought="",
                     error=str(exc),
                 ),
@@ -213,13 +210,13 @@ async def validation_node(state: PipelineState) -> dict[str, Any]:
                 f"[{RELEVANCY_MIN}, {RELEVANCY_MAX}]"
             )
 
-    sentiment: AgentResult | None = state.get("sentiment")  # type: ignore[assignment]
-    if sentiment is None:
+    sentiment_result: AgentResult | None = state.get("sentiment")  # type: ignore[assignment]
+    if sentiment_result is None:
         errors.append("sentiment: missing from state")
     else:
-        if sentiment.get("error"):
-            errors.append(f"sentiment: agent error — {sentiment['error']}")
-        s_score = sentiment.get("score", 0)
+        if sentiment_result.get("error"):
+            errors.append(f"sentiment: agent error — {sentiment_result['error']}")
+        s_score = sentiment_result.get("score", 0)
         if not (SENTIMENT_MIN <= s_score <= SENTIMENT_MAX):
             errors.append(
                 f"sentiment: score {s_score} out of bounds "
@@ -242,21 +239,25 @@ async def validation_node(state: PipelineState) -> dict[str, Any]:
 
 async def aggregation_node(state: PipelineState) -> dict[str, Any]:
     """
-    Flatten all agent results into a single ``output`` dict suitable
+    Flatten all agent results into the 7-column output dict suitable
     for direct Postgres insertion or CSV export.
 
-    Output schema::
+    Output schema (7 data columns)::
 
-        {
-          "date", "source", "hour", "popularity", "headline",
-          "relevancy_{cat}_score", "relevancy_{cat}_confidence",
-          "relevancy_{cat}_reasoning",   (× 6 categories)
-          "sentiment_score", "sentiment_confidence",
-          "sentiment_reasoning",
-          "validation_passed", "errors"
-        }
+        relevance_category_1   int   politics_government score  (0–10)
+        relevance_category_2   int   economy_finance score      (0–10)
+        relevance_category_3   int   security_military score    (0–10)
+        relevance_category_4   int   health_medicine score      (0–10)
+        relevance_category_5   int   science_climate score      (0–10)
+        relevance_category_6   int   technology score           (0–10)
+        global_sentiment       int   tone score                 (-10..+10)
+
+    Metadata columns (not counted in the 7)::
+
+        date, source, hour, popularity, headline,
+        validation_passed, errors
     """
-    logger.info("Aggregation node — building flat output dict")
+    logger.info("Aggregation node — building flat 7-column output dict")
 
     output: dict[str, Any] = {
         "date": state.get("date", ""),
@@ -266,17 +267,15 @@ async def aggregation_node(state: PipelineState) -> dict[str, Any]:
         "headline": state.get("headline", ""),
     }
 
-    for cat in RELEVANCY_CATEGORIES:
+    # 6 relevance scores — one per category, in canonical order
+    for idx, cat in enumerate(RELEVANCY_CATEGORIES, start=1):
         key = f"relevancy_{cat}"
         result: AgentResult = state.get(key, {})  # type: ignore[assignment]
-        output[f"{key}_score"] = result.get("score", 0)
-        output[f"{key}_confidence"] = result.get("confidence", 0.0)
-        output[f"{key}_reasoning"] = result.get("chain_of_thought", "")
+        output[f"relevance_category_{idx}"] = result.get("score", 0)
 
-    sentiment: AgentResult = state.get("sentiment", {})  # type: ignore[assignment]
-    output["sentiment_score"] = sentiment.get("score", 0)
-    output["sentiment_confidence"] = sentiment.get("confidence", 0.0)
-    output["sentiment_reasoning"] = sentiment.get("chain_of_thought", "")
+    # 1 global sentiment score (-10..+10)
+    sentiment_result: AgentResult = state.get("sentiment", {})  # type: ignore[assignment]
+    output["global_sentiment"] = sentiment_result.get("score", 0)
 
     output["validation_passed"] = state.get("validation_passed", False)
     output["errors"] = state.get("errors", [])

@@ -11,6 +11,11 @@ Three validation layers:
 3. **Graph state** — ``PipelineState`` (TypedDict) is the mutable envelope
    that LangGraph passes through every node, with ``Annotated`` reducers
    for safe parallel merging.
+
+Output contract (7 columns per headline):
+  relevance_category_1 … relevance_category_6  — integer scores 0–10
+  global_sentiment                              — integer score -10..+10
+                                                  (0 = neutral tone)
 """
 
 from __future__ import annotations
@@ -65,6 +70,7 @@ class RelevancyOutput(BaseModel):
 
     ``chain_of_thought`` captures the CoT reasoning the agent produced
     *during* the ReAct loop (summarised at the final structured step).
+    No confidence field — the score alone is the deliverable.
     """
 
     chain_of_thought: str = Field(
@@ -91,17 +97,6 @@ class RelevancyOutput(BaseModel):
             f"most headlines are NOT 0 or {RELEVANCY_MAX}."
         ),
     )
-    confidence: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Self-assessed confidence in the score (0.0–1.0).  "
-            "Use < 0.8 when evidence is ambiguous or few domain "
-            "keywords were detected.  Use > 0.9 only when tool "
-            "results provide strong, unambiguous evidence."
-        ),
-    )
 
     @field_validator("score", mode="before")
     @classmethod
@@ -118,10 +113,10 @@ class SentimentOutput(BaseModel):
     """
     Structured output expected from the sentiment agent.
 
-    Score semantics:
-      -10  = extremely bearish / negative market impact
-        0  = neutral
-      +10  = extremely bullish / positive market impact
+    Score semantics (tone of the text, NOT a financial prediction):
+      -10  = extremely negative tone (catastrophic, devastating language)
+        0  = neutral tone (factual, no clear positive or negative valence)
+      +10  = extremely positive tone (celebratory, triumphant language)
     """
 
     chain_of_thought: str = Field(
@@ -129,12 +124,10 @@ class SentimentOutput(BaseModel):
         description=(
             "Your step-by-step reasoning in English.  Structure it as: "
             "(1) What is the headline about?  "
-            "(2) Which market signals, financial entities, and "
-            "geopolitical indicators did your tools detect?  "
-            "(3) Through which analytical lens (monetary policy, "
-            "geopolitics, macro data, sector impact) does this affect "
-            "the TA-125?  "
-            "(4) Why did you choose this specific score and direction?  "
+            "(2) Which tone signals did your tools detect (positive words, "
+            "negative words, conflict language, achievement language)?  "
+            "(3) What is the overall emotional valence of the text?  "
+            "(4) Why did you choose this specific score?  "
             "Reference concrete tool results."
         ),
     )
@@ -143,23 +136,11 @@ class SentimentOutput(BaseModel):
         ge=SENTIMENT_MIN,
         le=SENTIMENT_MAX,
         description=(
-            f"Sentiment score from {SENTIMENT_MIN} (extremely bearish) "
-            f"to {SENTIMENT_MAX} (extremely bullish).  "
-            f"0=neutral/no market impact.  Most headlines score between "
-            f"-3 and +3.  Scores beyond ±7 require overwhelming "
-            f"evidence of immediate, significant market impact."
-        ),
-    )
-    confidence: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Self-assessed confidence in the score (0.0–1.0).  "
-            "Use < 0.7 when the market impact direction is ambiguous.  "
-            "Use < 0.8 for indirect effects.  "
-            "Use > 0.9 only for direct, unambiguous market events "
-            "(e.g., central bank rate decision, market crash)."
+            f"Tone score from {SENTIMENT_MIN} (extremely negative) "
+            f"to {SENTIMENT_MAX} (extremely positive).  "
+            f"0=neutral/no clear emotional valence.  Most headlines score "
+            f"between -5 and +5.  Scores beyond ±7 require overwhelming "
+            f"evidence of extreme positive or negative language."
         ),
     )
 
@@ -181,8 +162,7 @@ class SentimentOutput(BaseModel):
 class AgentResult(TypedDict, total=False):
     """Result payload written by a single agent node."""
 
-    score: int
-    confidence: float
+    score: int          # used by both relevancy and sentiment agents
     chain_of_thought: str
     error: str | None
 
@@ -195,6 +175,10 @@ class PipelineState(TypedDict, total=False):
     nodes can safely append errors without overwriting each other.
     All other keys are written by exactly one node, so no reducer is
     needed.
+
+    Final ``output`` contains exactly 7 data columns:
+      relevance_category_1 … relevance_category_6  (int, 0–10)
+      global_sentiment                              (int, -10..+10)
     """
 
     # --- Original observation (immutable after ingestion) ----

@@ -10,12 +10,24 @@ ReAct agent that:
 2. Decides which of its bound tools to call (keyword scanners, entity
    detectors, numeric extractors, etc.).
 3. Reasons step-by-step using the tool results.
-4. Produces a structured Pydantic response (``RelevancyOutput`` or
-   ``SentimentOutput``) via the ``response_format`` parameter.
+4. Produces a structured Pydantic response via the ``response_format``
+   parameter:
+     - ``RelevancyOutput`` — integer score 0–10 for one category.
+     - ``SentimentOutput`` — integer score -10..+10 reflecting the
+       general tone of the text (0=neutral; no financial prediction,
+       no confidence score).
 
 The ``response_format`` triggers an extra LLM call after the ReAct loop
 to extract a validated Pydantic model — but since all 7 agents execute
 in parallel, the wall-clock overhead is just one extra call.
+
+Architecture contract
+---------------------
+- Relevance is category-specific: evaluated 6 times per headline,
+  once per category.
+- Sentiment is global: evaluated exactly 1 time per headline.
+- No agent emits a confidence score — the score/label alone is the
+  deliverable.
 """
 
 from __future__ import annotations
@@ -55,7 +67,8 @@ def build_relevancy_agent(category: str, llm=None):
     CompiledGraph
         A compiled LangGraph agent that accepts
         ``{"messages": [HumanMessage(...)]}`` and returns a state
-        containing ``structured_response: RelevancyOutput``.
+        containing ``structured_response: RelevancyOutput``
+        (fields: ``score`` int 0–10, ``chain_of_thought`` str).
     """
     llm = llm or build_llm()
     display = CATEGORY_DISPLAY_NAMES[category]
@@ -81,7 +94,12 @@ def build_relevancy_agent(category: str, llm=None):
 
 def build_sentiment_agent(llm=None):
     """
-    Build the ReAct agent for financial/market sentiment scoring.
+    Build the ReAct agent for global text-tone sentiment classification.
+
+    The agent scores the *general tone* of the headline on a scale
+    from -10 (extremely negative) to +10 (extremely positive), with
+    0 meaning neutral.  It does NOT predict financial market movements
+    or TA-125 index impact.
 
     Parameters
     ----------
@@ -93,7 +111,9 @@ def build_sentiment_agent(llm=None):
     CompiledGraph
         A compiled LangGraph agent that accepts
         ``{"messages": [HumanMessage(...)]}`` and returns a state
-        containing ``structured_response: SentimentOutput``.
+        containing ``structured_response: SentimentOutput``
+        (fields: ``score`` int -10..+10,
+        ``chain_of_thought`` str).
     """
     llm = llm or build_llm()
 

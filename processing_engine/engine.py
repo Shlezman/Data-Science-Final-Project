@@ -96,10 +96,20 @@ async def process_single_observation(observation: dict[str, Any]) -> dict[str, A
     Returns
     -------
     dict
-        A flat dictionary containing the original observation fields
-        plus 6 relevancy scores, 1 sentiment score, confidence values,
-        reasoning chains, and validation metadata — ready for direct
-        PostgreSQL insertion or CSV export.
+        A flat dictionary containing the original observation metadata
+        plus exactly 7 data columns — ready for direct PostgreSQL
+        insertion or CSV export:
+
+          relevance_category_1  int   Politics & Government score (0–10)
+          relevance_category_2  int   Economy & Finance score     (0–10)
+          relevance_category_3  int   Security & Military score   (0–10)
+          relevance_category_4  int   Health & Medicine score     (0–10)
+          relevance_category_5  int   Science & Climate score     (0–10)
+          relevance_category_6  int   Technology score            (0–10)
+          global_sentiment      int   text tone score             (-10..+10, 0=neutral)
+
+        Plus metadata: ``validation_passed``, ``errors``,
+        ``processing_time_seconds``.
 
     Raises
     ------
