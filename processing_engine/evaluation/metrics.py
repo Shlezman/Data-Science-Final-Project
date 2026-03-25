@@ -187,13 +187,15 @@ CATEGORY_NAMES: list[str] = [
     "Technology",
 ]
 
+# These match the exact column names in the golden dataset CSV and the
+# pipeline output (relevance_category_1…6 maps to these in order).
 CATEGORY_COLUMNS: list[str] = [
-    "cat_1",
-    "cat_2",
-    "cat_3",
-    "cat_4",
-    "cat_5",
-    "cat_6",
+    "politics_government",
+    "economy_finance",
+    "security_military",
+    "health_medicine",
+    "science_climate",
+    "technology",
 ]
 
 

@@ -40,8 +40,8 @@ Golden dataset CSV format
 --------------------------
 Required columns::
 
-    headline, gold_cat_1, gold_cat_2, gold_cat_3,
-    gold_cat_4, gold_cat_5, gold_cat_6
+    headline, politics_government, economy_finance, security_military,
+    health_medicine, science_climate, technology
 
 Optional columns (passed through to the pipeline)::
 
@@ -82,9 +82,18 @@ from processing_engine.evaluation.metrics import (               # noqa: E402
 # CSV I/O helpers
 # ═══════════════════════════════════════════════════════════════════════
 
-GOLD_COLUMNS = [f"gold_cat_{i}" for i in range(1, 7)]
-PRED_COLUMNS = [f"pred_cat_{i}" for i in range(1, 7)]
-ERR_COLUMNS  = [f"err_cat_{i}"  for i in range(1, 7)]
+# Golden dataset column names (match the real CSV schema exactly)
+GOLD_COLUMNS = [
+    "politics_government",
+    "economy_finance",
+    "security_military",
+    "health_medicine",
+    "science_climate",
+    "technology",
+]
+# Predicted and error columns written to the predictions CSV
+PRED_COLUMNS = [f"pred_{col}" for col in GOLD_COLUMNS]
+ERR_COLUMNS  = [f"err_{col}"  for col in GOLD_COLUMNS]
 
 
 def load_golden_dataset(path: Path) -> list[dict[str, Any]]:
@@ -92,7 +101,7 @@ def load_golden_dataset(path: Path) -> list[dict[str, Any]]:
     Load the golden dataset CSV.
 
     Returns a list of dicts, one per headline.  Each dict contains at
-    minimum ``headline`` and ``gold_cat_1`` … ``gold_cat_6`` (as ints).
+    minimum ``headline`` and the 6 named category columns (as ints).
     """
     rows: list[dict[str, Any]] = []
     with open(path, newline="", encoding="utf-8") as f:
@@ -102,7 +111,8 @@ def load_golden_dataset(path: Path) -> list[dict[str, Any]]:
             missing = [c for c in ["headline"] + GOLD_COLUMNS if c not in row]
             if missing:
                 raise ValueError(
-                    f"Row {i}: missing required columns: {missing}"
+                    f"Row {i}: missing required columns: {missing}\n"
+                    f"Expected: headline, {', '.join(GOLD_COLUMNS)}"
                 )
             # Coerce gold scores to int
             for col in GOLD_COLUMNS:
@@ -137,7 +147,7 @@ def save_predictions(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = (
-        ["headline", "date", "source", "hour", "popularity"]
+        ["headline"]
         + GOLD_COLUMNS
         + PRED_COLUMNS
         + ERR_COLUMNS
@@ -168,9 +178,9 @@ async def run_pipeline_on_dataset(
     Processes headlines sequentially to avoid overloading Ollama.
 
     Returns a list of result dicts, one per headline, containing:
-      - All original golden dataset columns
-      - ``pred_cat_1`` … ``pred_cat_6`` (pipeline relevance scores)
-      - ``err_cat_1`` … ``err_cat_6`` (|predicted − gold|)
+      - All original golden dataset columns (headline + 6 gold scores)
+      - ``pred_<category>`` columns (pipeline relevance scores)
+      - ``err_<category>`` columns (|predicted − gold|)
       - ``global_sentiment`` (pipeline output, not evaluated)
       - ``validation_passed`` (pipeline flag)
       - ``pipeline_error`` (error string if pipeline failed, else "")
@@ -185,10 +195,10 @@ async def run_pipeline_on_dataset(
     for idx, row in enumerate(golden_rows, start=1):
         observation = {
             "headline":   row.get("headline", ""),
-            "date":       row.get("date", "2000-01-01"),
-            "source":     row.get("source", "unknown"),
-            "hour":       row.get("hour", "00:00"),
-            "popularity": row.get("popularity", ""),
+            "date":       "2000-01-01",
+            "source":     "golden_dataset",
+            "hour":       "00:00",
+            "popularity": "",
         }
 
         t0 = time.perf_counter()
@@ -196,16 +206,13 @@ async def run_pipeline_on_dataset(
             output = await process_single_observation(observation)
             elapsed = time.perf_counter() - t0
 
-            result = dict(row)  # copy all original columns (headline, gold_*)
+            result = dict(row)  # copy all original columns (headline + gold scores)
 
-            # Map pipeline output columns to pred_cat_* columns
+            # Map pipeline output relevance_category_N → named pred/err columns
             for i, col in enumerate(CATEGORY_COLUMNS, start=1):
-                pred_key = f"pred_cat_{i}"
-                gold_key = f"gold_cat_{i}"
-                err_key  = f"err_cat_{i}"
                 pred_val = output.get(f"relevance_category_{i}", 0)
-                result[pred_key] = pred_val
-                result[err_key]  = abs(pred_val - row[gold_key])
+                result[f"pred_{col}"] = pred_val
+                result[f"err_{col}"]  = abs(pred_val - row[col])
 
             result["global_sentiment"]  = output.get("global_sentiment", 0)
             result["validation_passed"] = output.get("validation_passed", False)
@@ -220,9 +227,9 @@ async def run_pipeline_on_dataset(
         except Exception as exc:
             elapsed = time.perf_counter() - t0
             result = dict(row)
-            for i in range(1, 7):
-                result[f"pred_cat_{i}"] = 0
-                result[f"err_cat_{i}"]  = row[f"gold_cat_{i}"]  # max error
+            for col in CATEGORY_COLUMNS:
+                result[f"pred_{col}"] = 0
+                result[f"err_{col}"]  = row[col]  # max error = gold score
             result["global_sentiment"]  = 0
             result["validation_passed"] = False
             result["pipeline_error"]    = str(exc)
@@ -253,17 +260,17 @@ def extract_scores(
     Returns
     -------
     predictions : dict[str, list[float]]
-        Keys: ``"cat_1"`` … ``"cat_6"``.
+        Keys: category slug names (e.g. ``"politics_government"``).
     gold_labels : dict[str, list[float]]
-        Keys: ``"cat_1"`` … ``"cat_6"``.
+        Keys: category slug names (e.g. ``"politics_government"``).
     """
     predictions: dict[str, list[float]] = {c: [] for c in CATEGORY_COLUMNS}
     gold_labels: dict[str, list[float]] = {c: [] for c in CATEGORY_COLUMNS}
 
-    for i, col in enumerate(CATEGORY_COLUMNS, start=1):
+    for col in CATEGORY_COLUMNS:
         for row in results:
-            predictions[col].append(float(row.get(f"pred_cat_{i}", 0)))
-            gold_labels[col].append(float(row.get(f"gold_cat_{i}", 0)))
+            predictions[col].append(float(row.get(f"pred_{col}", 0)))
+            gold_labels[col].append(float(row.get(col, 0)))
 
     return predictions, gold_labels
 
