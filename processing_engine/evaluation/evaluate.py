@@ -3,6 +3,24 @@ processing_engine.evaluation.evaluate
 ======================================
 Main evaluation script for the SentiSense relevance scoring pipeline.
 
+Usage — auto-discover all installed Ollama models (recommended)
+----------------------------------------------------------------
+::
+
+    python -m processing_engine.evaluation.evaluate --all-models
+
+    # With explicit output directory
+    python -m processing_engine.evaluation.evaluate \\
+        --all-models \\
+        --output evaluation/results/
+
+Usage — explicit model list
+----------------------------
+::
+
+    python -m processing_engine.evaluation.evaluate \\
+        --models qwen2.5:14b llama3.1:8b mistral:7b
+
 Usage — single model
 ---------------------
 ::
@@ -12,17 +30,21 @@ Usage — single model
         --models  qwen2.5:14b \\
         --output  evaluation/results/
 
-Usage — multiple models in one command
-----------------------------------------
+Usage — dry run (validate CSV only, no LLM calls)
+---------------------------------------------------
 ::
 
-    python -m processing_engine.evaluation.evaluate \\
-        --golden  evaluation/golden_dataset.csv \\
-        --models  qwen2.5:14b llama3.1:8b mistral:7b \\
-        --output  evaluation/results/
+    python -m processing_engine.evaluation.evaluate --dry-run
 
-When multiple models are provided, each is evaluated sequentially and
-a leaderboard is printed at the end comparing all models.
+Model discovery
+---------------
+When ``--all-models`` is passed (or when ``--models`` is omitted and the
+``SENTISENSE_OLLAMA_MODEL`` env var is not set), the script calls
+``ollama list`` and parses every model name from the output.  Models that
+fail to start are skipped with a warning so the rest can still complete.
+
+When multiple models are evaluated, a leaderboard is printed at the end
+and saved to ``results/leaderboard.md``.
 
 For each model this script will:
 1. Load the golden dataset (headline + 6 gold relevance scores).
@@ -57,6 +79,8 @@ import asyncio
 import csv
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -76,6 +100,79 @@ from processing_engine.evaluation.metrics import (               # noqa: E402
     CATEGORY_NAMES,
     compute_all_metrics,
 )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Ollama model discovery
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def discover_ollama_models() -> list[str]:
+    """
+    Return the list of models currently installed in the local Ollama instance.
+
+    Runs ``ollama list`` and parses its tabular output.  The first column of
+    every non-header line is treated as a model name.
+
+    ``ollama list`` output example::
+
+        NAME                    ID              SIZE      MODIFIED
+        qwen2.5:14b             abc1234567ef    9.0 GB    3 weeks ago
+        llama3.1:8b             def7654321ab    4.7 GB    5 days ago
+        mistral:7b              aaa000111bbb    4.1 GB    2 months ago
+
+    Returns
+    -------
+    list[str]
+        Ordered list of model name strings (e.g. ``["qwen2.5:14b", ...]``).
+
+    Raises
+    ------
+    RuntimeError
+        If ``ollama`` is not found on PATH or the subprocess returns a
+        non-zero exit code.
+    """
+    if shutil.which("ollama") is None:
+        raise RuntimeError(
+            "ollama executable not found on PATH. "
+            "Install Ollama from https://ollama.com and ensure it is running."
+        )
+
+    try:
+        proc = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("'ollama list' timed out after 15 seconds.") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"'ollama list' exited with code {proc.returncode}.\n"
+            f"stderr: {proc.stderr.strip()}"
+        )
+
+    models: list[str] = []
+    lines = proc.stdout.splitlines()
+
+    for line in lines[1:]:          # skip header row
+        line = line.strip()
+        if not line:
+            continue
+        # First whitespace-delimited token is the model name
+        name = line.split()[0]
+        if name:
+            models.append(name)
+
+    if not models:
+        raise RuntimeError(
+            "'ollama list' returned no models. "
+            "Pull at least one model first, e.g.: ollama pull qwen2.5:14b"
+        )
+
+    return models
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -335,18 +432,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate the SentiSense pipeline against a golden dataset. "
-            "Accepts one or more model names via --models. "
+            "Use --all-models to benchmark every model installed in Ollama, "
+            "or supply an explicit list with --models. "
             "Computes MAE, Within-1/2 Accuracy, and Pearson r per category. "
-            "When multiple models are provided, prints a leaderboard at the end."
+            "A leaderboard is printed and saved whenever more than one model "
+            "is evaluated."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Single model\n"
-            "  python -m processing_engine.evaluation.evaluate --models qwen2.5:14b\n\n"
-            "  # Multiple models — evaluated sequentially, leaderboard at the end\n"
+            "  # Auto-discover and benchmark all installed Ollama models\n"
+            "  python -m processing_engine.evaluation.evaluate --all-models\n\n"
+            "  # Explicit model list\n"
             "  python -m processing_engine.evaluation.evaluate \\\n"
             "      --models qwen2.5:14b llama3.1:8b mistral:7b\n\n"
+            "  # Single model\n"
+            "  python -m processing_engine.evaluation.evaluate --models qwen2.5:14b\n\n"
             "  # Dry run — validate CSV without running the pipeline\n"
             "  python -m processing_engine.evaluation.evaluate --dry-run\n"
         ),
@@ -357,17 +458,30 @@ def parse_args() -> argparse.Namespace:
         default=Path("processing_engine/evaluation/golden_dataset.csv"),
         help="Path to the golden dataset CSV file.",
     )
-    parser.add_argument(
+
+    model_group = parser.add_mutually_exclusive_group()
+    model_group.add_argument(
         "--models",
         type=str,
         nargs="+",
-        default=[os.environ.get("SENTISENSE_OLLAMA_MODEL", "qwen2.5:14b")],
         metavar="MODEL",
         help=(
             "One or more Ollama model names to evaluate, separated by spaces. "
+            "Mutually exclusive with --all-models. "
             "Example: --models qwen2.5:14b llama3.1:8b mistral:7b"
         ),
     )
+    model_group.add_argument(
+        "--all-models",
+        action="store_true",
+        dest="all_models",
+        help=(
+            "Discover all models installed in the local Ollama instance via "
+            "'ollama list' and evaluate every one of them. "
+            "Mutually exclusive with --models."
+        ),
+    )
+
     parser.add_argument(
         "--output",
         type=Path,
@@ -428,7 +542,38 @@ async def main() -> None:
         print(json.dumps(golden_rows[0], ensure_ascii=False, indent=2))
         return
 
-    models = args.models
+    # 2. Resolve model list
+    #    Priority: --all-models > --models > SENTISENSE_OLLAMA_MODEL env var > hardcoded default
+    if args.all_models:
+        print("\nDiscovering installed Ollama models via 'ollama list'…")
+        try:
+            models = discover_ollama_models()
+            print(f"Found {len(models)} model(s): {', '.join(models)}")
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+    elif args.models:
+        models = args.models
+    else:
+        # Neither flag given — try auto-discovery, fall back to env/default
+        env_model = os.environ.get("SENTISENSE_OLLAMA_MODEL")
+        if env_model:
+            models = [env_model]
+            print(f"\nUsing model from SENTISENSE_OLLAMA_MODEL: {env_model}")
+        else:
+            print("\nNo --models or --all-models specified. "
+                  "Attempting auto-discovery via 'ollama list'…")
+            try:
+                models = discover_ollama_models()
+                print(f"Found {len(models)} model(s): {', '.join(models)}")
+            except RuntimeError:
+                models = ["qwen2.5:14b"]
+                print(
+                    "Auto-discovery failed. Falling back to default model: "
+                    f"{models[0]}\n"
+                    "  Tip: pass --models <name> or --all-models explicitly."
+                )
+
     print(f"\n{'━' * 60}")
     print(f"  Evaluating {len(models)} model(s): {', '.join(models)}")
     print(f"{'━' * 60}")
