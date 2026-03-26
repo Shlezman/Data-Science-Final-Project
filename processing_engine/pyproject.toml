@@ -2,7 +2,6 @@
 name = "processing-engine"
 version = "0.2.0"
 description = "SentiSense Multi-Agent AI Processing Engine — LangGraph ReAct agents for Hebrew news sentiment and relevancy scoring via local Ollama inference."
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # --- LLM Orchestration ---
@@ -24,5 +23,11 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+# pyproject.toml lives *inside* the processing_engine/ package directory,
+# so we point setuptools one level up to discover the package correctly.
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["processing_engine*"]
