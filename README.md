@@ -1,17 +1,17 @@
 # SentiSense
 
-A Hebrew news headline analysis pipeline that scrapes Israeli news, scores each headline across six topic categories using a multi-agent LLM system, and provides a UI for human annotation.
+A Hebrew news headline analysis pipeline that scrapes Israeli news and scores each headline across six topic categories using a multi-agent LLM system.
 
 ## System Overview
 
 ```
-┌─────────────────────┐     CSV      ┌──────────────────────┐     CSV      ┌─────────────────────────┐
-│  mivzakim_scraper   │ ──────────▶  │  processing_engine   │ ──────────▶  │  self_ranking_platform  │
-│                     │              │                       │              │                         │
-│  Playwright scraper │              │  LangGraph multi-     │              │  Streamlit annotation   │
-│  for mivzakim.net   │              │  agent LLM pipeline   │              │  UI for human labeling  │
-│  (Hebrew news)      │              │  (7 parallel agents)  │              │  (ground truth)         │
-└─────────────────────┘              └──────────────────────┘              └─────────────────────────┘
+┌─────────────────────┐     CSV      ┌──────────────────────┐
+│  mivzakim_scraper   │ ──────────▶  │  processing_engine   │
+│                     │              │                       │
+│  Playwright scraper │              │  LangGraph multi-     │
+│  for mivzakim.net   │              │  agent LLM pipeline   │
+│  (Hebrew news)      │              │  (7 parallel agents)  │
+└─────────────────────┘              └──────────────────────┘
                                                │
                                                ▼
                                      ┌──────────────────────┐
@@ -29,7 +29,6 @@ A Hebrew news headline analysis pipeline that scrapes Israeli news, scores each 
 |--------|---------|-------------|
 | [`mivzakim_scraper/`](mivzakim_scraper/) | Scrape Hebrew news headlines by date or keyword | `python main.py` |
 | [`processing_engine/`](processing_engine/) | Score headlines with 7 parallel LLM agents | `from processing_engine import process_single_observation` |
-| [`self_ranking_platform/`](self_ranking_platform/) | Streamlit UI for manual headline annotation | `streamlit run ranking_script.py` |
 
 ## Output Schema
 
@@ -52,14 +51,15 @@ Each headline is scored by the pipeline and produces:
 
 ### Prerequisites
 - Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - [Ollama](https://ollama.com/) running locally with `qwen2.5:14b` pulled
 
 ### 1 — Scrape headlines
 ```bash
 cd mivzakim_scraper
-pip install -e .
-playwright install firefox
-python main.py          # scrapes ~3450 days → headlines.csv
+uv sync
+uv run playwright install firefox
+uv run python main.py      # scrapes ~3450 days → headlines.csv
 ```
 
 ### 2 — Run the pipeline
@@ -69,14 +69,7 @@ pip install -e .
 python -m processing_engine   # smoke test with a sample headline
 ```
 
-### 3 — Annotate headlines (human labeling)
-```bash
-cd self_ranking_platform
-pip install -r requirements.txt
-streamlit run ranking_script.py --server.headless true
-```
-
-### 4 — Evaluate models
+### 3 — Evaluate models
 ```bash
 # Validate the golden dataset (no LLM calls)
 python -m processing_engine.evaluation.evaluate \
@@ -111,28 +104,27 @@ All `processing_engine` settings can be overridden with environment variables:
 ## Repository Structure
 
 ```
-├── mivzakim_scraper/          # Web scraper module
-│   ├── mivzakim_scraper.py    # Scraper class (date-based)
+├── mivzakim_scraper/               # Web scraper module
+│   ├── mivzakim_scraper.py         # Scraper class (date-based)
 │   ├── mivzakim_search_scraper.py  # SearchScraper class (keyword-based)
-│   ├── scrape.py              # Batch orchestration logic
-│   ├── main.py                # CLI entry point
-│   └── utils.py               # Session, cookies, anti-detection helpers
+│   ├── scrape.py                   # Batch orchestration logic
+│   ├── main.py                     # CLI entry point
+│   ├── utils.py                    # Session, cookies, anti-detection helpers
+│   ├── pyproject.toml              # Package definition
+│   └── uv.lock                     # Pinned dependency lockfile
 │
-├── processing_engine/         # LLM pipeline module
-│   ├── config.py              # Centralized config + env vars
-│   ├── models.py              # Pydantic data models
-│   ├── agents.py              # ReAct agent constructors
-│   ├── tools.py               # Hebrew text tools per agent
-│   ├── prompts.py             # System prompts + LLM factory
-│   ├── graph.py               # LangGraph state graph
-│   ├── nodes.py               # Ingestion, validation, aggregation nodes
-│   ├── engine.py              # Public async API
-│   └── evaluation/            # Evaluation harness
-│       ├── golden_dataset.csv # 26 hand-labeled headlines
-│       ├── evaluate.py        # CLI: run models against golden dataset
-│       ├── metrics.py         # MAE, Within-N Accuracy, Pearson r
-│       └── report.py          # Leaderboard generator
-│
-└── self_ranking_platform/     # Annotation UI module
-    └── ranking_script.py      # Streamlit app
+└── processing_engine/              # LLM pipeline module
+    ├── config.py                   # Centralized config + env vars
+    ├── models.py                   # Pydantic data models
+    ├── agents.py                   # ReAct agent constructors
+    ├── tools.py                    # Hebrew text tools per agent
+    ├── prompts.py                  # System prompts + LLM factory
+    ├── graph.py                    # LangGraph state graph
+    ├── nodes.py                    # Ingestion, validation, aggregation nodes
+    ├── engine.py                   # Public async API
+    └── evaluation/                 # Evaluation harness
+        ├── golden_dataset.csv      # 26 hand-labeled headlines
+        ├── evaluate.py             # CLI: run models against golden dataset
+        ├── metrics.py              # MAE, Within-N Accuracy, Pearson r
+        └── report.py               # Leaderboard generator
 ```
