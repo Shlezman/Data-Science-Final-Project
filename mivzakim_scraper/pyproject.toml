@@ -5,7 +5,9 @@ description = "Mivzakim news headlines scraper with keyword search"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pandas",
-    "lxml",
-    "playwright",
+    "pandas~=2.3.3",
+    "lxml~=4.9.3",
+    "playwright~=1.57.0",
+    "beautifulsoup4~=4.12.3",
+    "requests~=2.31.0",
 ]
