@@ -36,7 +36,6 @@ from loguru import logger
 from langgraph.prebuilt import create_react_agent
 
 from .config import (
-    AGENT_RECURSION_LIMIT,
     CATEGORY_DISPLAY_NAMES,
     RELEVANCY_CATEGORIES,
 )
@@ -85,7 +84,6 @@ def build_relevancy_agent(category: str, llm=None):
         prompt=prompt,
         response_format=(RELEVANCY_EXTRACTION_INSTRUCTION, RelevancyOutput),
         name=f"relevancy_{category}_agent",
-        recursion_limit=AGENT_RECURSION_LIMIT,
     )
 
     logger.debug("Built ReAct agent: relevancy_{} ({} tools)", category, len(tools))
@@ -126,7 +124,6 @@ def build_sentiment_agent(llm=None):
         prompt=prompt,
         response_format=(SENTIMENT_EXTRACTION_INSTRUCTION, SentimentOutput),
         name="sentiment_agent",
-        recursion_limit=AGENT_RECURSION_LIMIT,
     )
 
     logger.debug("Built ReAct agent: sentiment ({} tools)", len(tools))

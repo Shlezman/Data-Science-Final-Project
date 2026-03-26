@@ -24,5 +24,11 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+# pyproject.toml lives *inside* the processing_engine/ package directory,
+# so we point setuptools one level up to discover the package correctly.
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["processing_engine*"]
