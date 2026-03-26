@@ -8,7 +8,7 @@ from playwright.async_api import async_playwright
 from mivzakim_search_scraper import SearchScraper
 from utils import DATE_FORMAT
 
-from mivazakim_scraper import Scraper
+from mivzakim_scraper import Scraper
 
 
 def clean_dir(dir_name: str) -> None:
