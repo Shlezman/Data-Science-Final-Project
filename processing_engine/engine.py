@@ -36,7 +36,7 @@ from typing import Any
 
 from loguru import logger
 
-from .config import LOG_LEVEL
+from .config import AGENT_RECURSION_LIMIT, LOG_LEVEL
 from .models import PipelineState
 
 # ── Logging configuration ───────────────────────────────────────────
@@ -131,7 +131,10 @@ async def process_single_observation(observation: dict[str, Any]) -> dict[str, A
     }
 
     graph = _get_graph()
-    final_state = await graph.ainvoke(initial_state)
+    final_state = await graph.ainvoke(
+        initial_state,
+        config={"recursion_limit": AGENT_RECURSION_LIMIT},
+    )
 
     elapsed = time.perf_counter() - t0
     output: dict[str, Any] = final_state.get("output", {})
