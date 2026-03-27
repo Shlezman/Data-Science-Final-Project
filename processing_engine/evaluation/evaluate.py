@@ -317,10 +317,15 @@ def check_model_supports_tools(model_name: str, base_url: str) -> tuple[bool, st
         )
         return True, ""
     except ollama.ResponseError as exc:
-        # Ollama surfaces "does not support tools" as a ResponseError.
-        # Any other ResponseError (e.g. model not found) is also a skip —
-        # there's no point running 26 headlines if the model can't be loaded.
-        return False, exc.error
+        # Only hard-skip when Ollama explicitly says the model has no tool support.
+        # Other errors (OOM, timeout, etc.) are treated as warnings — we still
+        # attempt the evaluation and let per-headline error handling take over.
+        if "does not support tools" in exc.error:
+            return False, exc.error
+        # Non-capability error: warn but allow the run to proceed.
+        print(f"\n  ⚠  pre-flight warning for {model_name}: {exc.error}")
+        print("     Proceeding anyway — per-headline errors will be recorded.")
+        return True, ""
 
 
 async def run_pipeline_on_dataset(
