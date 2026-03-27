@@ -172,6 +172,10 @@ def discover_ollama_models() -> list[str]:
             "Pull at least one model first, e.g.: ollama pull qwen2.5:14b"
         )
 
+    # Prioritise dicta models so they run first (useful for fast iteration /
+    # debugging before the longer models are evaluated).
+    models.sort(key=lambda m: (0 if "dicta" in m.lower() else 1, m))
+
     return models
 
 
