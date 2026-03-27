@@ -269,47 +269,58 @@ def check_model_supports_tools(model_name: str, base_url: str) -> tuple[bool, st
     Send a minimal tool-calling request to Ollama and return whether the
     model supports function/tool calling.
 
+    Uses the ``ollama`` Python client (already installed as a transitive
+    dependency of ``langchain-ollama``) so the request format is guaranteed
+    to match what Ollama expects.
+
     Returns
     -------
     (True, "")
-        Model responded with HTTP 200 — tool calling works.
+        Model responded successfully — tool calling works.
     (False, reason)
-        Any HTTP error was returned (400, 500, …) — skip the model.
-        ``reason`` contains the status code and message for the warning log.
+        The model returned an error that mentions it does not support tools.
+        ``reason`` contains the server's error message.
 
-    This pre-flight check avoids running all 26 headlines through a model
-    that will silently produce all-zero scores due to a server error.
+    Raises
+    ------
+    RuntimeError
+        If Ollama is unreachable (connection refused, timeout, etc.) —
+        this is a server problem, not a model capability problem.
     """
-    import urllib.request
-    import urllib.error
+    import ollama  # transitive dep via langchain-ollama
 
-    payload = json.dumps({
-        "model": model_name,
-        "messages": [{"role": "user", "content": "ping"}],
-        "tools": [
-            {
-                "type": "function",
-                "function": {
-                    "name": "ping",
-                    "description": "no-op probe",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }
-        ],
-        "stream": False,
-    }).encode()
+    client = ollama.Client(host=base_url)
 
-    req = urllib.request.Request(
-        f"{base_url}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=15):
-            return True, ""
-    except urllib.error.HTTPError as exc:
-        return False, f"HTTP {exc.code} {exc.reason}"
+        client.chat(
+            model=model_name,
+            messages=[{"role": "user", "content": "ping"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "probe",
+                        "description": "capability probe",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "input": {
+                                    "type": "string",
+                                    "description": "probe input",
+                                }
+                            },
+                            "required": ["input"],
+                        },
+                    },
+                }
+            ],
+        )
+        return True, ""
+    except ollama.ResponseError as exc:
+        # Ollama surfaces "does not support tools" as a ResponseError.
+        # Any other ResponseError (e.g. model not found) is also a skip —
+        # there's no point running 26 headlines if the model can't be loaded.
+        return False, exc.error
 
 
 async def run_pipeline_on_dataset(
