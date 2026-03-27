@@ -264,14 +264,21 @@ def save_predictions(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def check_model_supports_tools(model_name: str, base_url: str) -> bool:
+def check_model_supports_tools(model_name: str, base_url: str) -> tuple[bool, str]:
     """
-    Send a minimal tool-calling request to Ollama and return True if the
-    model supports function/tool calling (HTTP 200), False if it doesn't
-    (HTTP 400 with "does not support tools").
+    Send a minimal tool-calling request to Ollama and return whether the
+    model supports function/tool calling.
+
+    Returns
+    -------
+    (True, "")
+        Model responded with HTTP 200 — tool calling works.
+    (False, reason)
+        Any HTTP error was returned (400, 500, …) — skip the model.
+        ``reason`` contains the status code and message for the warning log.
 
     This pre-flight check avoids running all 26 headlines through a model
-    that will silently produce all-zero scores due to a 400 error.
+    that will silently produce all-zero scores due to a server error.
     """
     import urllib.request
     import urllib.error
@@ -300,11 +307,9 @@ def check_model_supports_tools(model_name: str, base_url: str) -> bool:
     )
     try:
         with urllib.request.urlopen(req, timeout=15):
-            return True
+            return True, ""
     except urllib.error.HTTPError as exc:
-        if exc.code == 400:
-            return False
-        raise  # unexpected error — let it propagate
+        return False, f"HTTP {exc.code} {exc.reason}"
 
 
 async def run_pipeline_on_dataset(
@@ -558,10 +563,11 @@ async def evaluate_one_model(
     # Pre-flight: verify the model supports tool calling before running 26 headlines
     base_url = os.environ.get("SENTISENSE_OLLAMA_BASE_URL", "http://localhost:11434")
     print(f"\n[pre-flight] Checking tool support for {model_name}…", end=" ", flush=True)
-    if not check_model_supports_tools(model_name, base_url=base_url):
-        print("✗ SKIPPED")
+    supported, reason = check_model_supports_tools(model_name, base_url=base_url)
+    if not supported:
+        print(f"✗ SKIPPED ({reason})")
         print(
-            f"  ⚠ {model_name} does not support tool calling.\n"
+            f"  ⚠ {model_name} does not support tool calling ({reason}).\n"
             f"  The SentiSense pipeline requires tool-capable models.\n"
             f"  Skipping this model — no results written."
         )
