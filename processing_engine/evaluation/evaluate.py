@@ -689,6 +689,7 @@ async def main() -> None:
                 "category_names": dict(zip(CATEGORY_COLUMNS, CATEGORY_NAMES)),
             }
             for model_name in models
+            if model_name in all_metrics  # skip models that were skipped/failed
         ]
 
         leaderboard_rows = build_leaderboard(payloads)
