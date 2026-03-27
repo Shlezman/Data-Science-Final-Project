@@ -72,6 +72,13 @@ class OllamaConfig:
 
 AGENT_RECURSION_LIMIT: int = int(_env("AGENT_RECURSION_LIMIT", "10"))
 
+# Maximum number of agents that may call Ollama concurrently.
+# Default: 7 (all agents run in parallel — fastest on machines with ample RAM).
+# Set to 1 to run agents sequentially — required on memory-constrained machines
+# where simultaneous requests cause Ollama to report OOM errors.
+# Example: SENTISENSE_AGENT_CONCURRENCY=1 uv run python -m processing_engine
+AGENT_CONCURRENCY: int = int(_env("AGENT_CONCURRENCY", "7"))
+
 
 # ---------------------------------------------------------------------------
 # Retry / resilience settings
