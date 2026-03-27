@@ -94,8 +94,8 @@ _ENGINE_ROOT = _HERE.parent.parent               # project root
 if str(_ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(_ENGINE_ROOT))
 
-from processing_engine.engine import process_single_observation  # noqa: E402
-from processing_engine.evaluation.metrics import (               # noqa: E402
+from processing_engine.engine import process_single_observation, reset_graph  # noqa: E402
+from processing_engine.evaluation.metrics import (                             # noqa: E402
     CATEGORY_COLUMNS,
     CATEGORY_NAMES,
     compute_all_metrics,
@@ -264,6 +264,49 @@ def save_predictions(
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def check_model_supports_tools(model_name: str, base_url: str) -> bool:
+    """
+    Send a minimal tool-calling request to Ollama and return True if the
+    model supports function/tool calling (HTTP 200), False if it doesn't
+    (HTTP 400 with "does not support tools").
+
+    This pre-flight check avoids running all 26 headlines through a model
+    that will silently produce all-zero scores due to a 400 error.
+    """
+    import urllib.request
+    import urllib.error
+
+    payload = json.dumps({
+        "model": model_name,
+        "messages": [{"role": "user", "content": "ping"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "ping",
+                    "description": "no-op probe",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        "stream": False,
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400:
+            return False
+        raise  # unexpected error — let it propagate
+
+
 async def run_pipeline_on_dataset(
     golden_rows: list[dict[str, Any]],
     model_name: str,
@@ -271,7 +314,8 @@ async def run_pipeline_on_dataset(
     """
     Run the SentiSense pipeline on every headline in the golden dataset.
 
-    Sets ``SENTISENSE_OLLAMA_MODEL`` to ``model_name`` before running.
+    Sets ``SENTISENSE_OLLAMA_MODEL`` to ``model_name`` before running and
+    resets the compiled graph singleton so the new model is actually used.
     Processes headlines sequentially to avoid overloading Ollama.
 
     Returns a list of result dicts, one per headline, containing:
@@ -283,6 +327,7 @@ async def run_pipeline_on_dataset(
       - ``pipeline_error`` (error string if pipeline failed, else "")
     """
     os.environ["SENTISENSE_OLLAMA_MODEL"] = model_name
+    reset_graph()  # force LangGraph to rebuild with the new model
     print(f"\nRunning pipeline with model: {model_name}")
     print(f"Processing {len(golden_rows)} headlines sequentially…\n")
 
@@ -503,12 +548,26 @@ async def evaluate_one_model(
     golden_rows: list[dict[str, Any]],
     model_name: str,
     output_dir: Path,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float]] | None:
     """
     Run the full evaluation pipeline for a single model.
 
-    Returns the metrics dict (same structure as ``compute_all_metrics``).
+    Returns the metrics dict (same structure as ``compute_all_metrics``),
+    or ``None`` if the model does not support tool calling.
     """
+    # Pre-flight: verify the model supports tool calling before running 26 headlines
+    base_url = os.environ.get("SENTISENSE_OLLAMA_BASE_URL", "http://localhost:11434")
+    print(f"\n[pre-flight] Checking tool support for {model_name}…", end=" ", flush=True)
+    if not check_model_supports_tools(model_name, base_url=base_url):
+        print("✗ SKIPPED")
+        print(
+            f"  ⚠ {model_name} does not support tool calling.\n"
+            f"  The SentiSense pipeline requires tool-capable models.\n"
+            f"  Skipping this model — no results written."
+        )
+        return None
+    print("✓ supported")
+
     # Run pipeline
     results = await run_pipeline_on_dataset(golden_rows, model_name=model_name)
 
@@ -580,12 +639,19 @@ async def main() -> None:
 
     # 2. Evaluate each model sequentially
     all_metrics: dict[str, dict[str, dict[str, float]]] = {}
+    skipped: list[str] = []
     for model_name in models:
         metrics = await evaluate_one_model(golden_rows, model_name, args.output)
-        all_metrics[model_name] = metrics
+        if metrics is None:
+            skipped.append(model_name)
+        else:
+            all_metrics[model_name] = metrics
+
+    if skipped:
+        print(f"\n⚠ Skipped {len(skipped)} model(s) (no tool support): {', '.join(skipped)}")
 
     # 3. If multiple models were evaluated, print a final leaderboard
-    if len(models) > 1:
+    if len(all_metrics) > 1:
         # Import here to avoid circular dependency at module level
         from processing_engine.evaluation.report import (
             build_leaderboard,
