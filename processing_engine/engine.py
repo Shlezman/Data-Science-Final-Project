@@ -74,18 +74,6 @@ def _get_graph():
     return _compiled_graph
 
 
-def reset_graph() -> None:
-    """
-    Discard the cached compiled graph so the next call to
-    ``process_single_observation`` rebuilds it from scratch.
-
-    Call this whenever you change ``SENTISENSE_OLLAMA_MODEL`` at runtime
-    (e.g. between model evaluations) so the new model name is actually picked up.
-    """
-    global _compiled_graph
-    _compiled_graph = None
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # PUBLIC API
 # ═══════════════════════════════════════════════════════════════════════
