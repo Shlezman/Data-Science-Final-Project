@@ -580,19 +580,25 @@ async def evaluate_one_model(
     Returns the metrics dict (same structure as ``compute_all_metrics``),
     or ``None`` if the model does not support tool calling.
     """
-    # Pre-flight: verify the model supports tool calling before running 26 headlines
+    # Pre-flight: verify the model supports tool calling before running 26 headlines.
+    # Nemotron / Dicta models don't expose the native tool API but are handled
+    # via ManualToolAgent (JSON-in-system-prompt), so we skip the probe for them.
     base_url = os.environ.get("SENTISENSE_OLLAMA_BASE_URL", "http://localhost:11434")
+    from processing_engine.agents import is_nemotron_model
     print(f"\n[pre-flight] Checking tool support for {model_name}…", end=" ", flush=True)
-    supported, reason = check_model_supports_tools(model_name, base_url=base_url)
-    if not supported:
-        print(f"✗ SKIPPED ({reason})")
-        print(
-            f"  ⚠ {model_name} does not support tool calling ({reason}).\n"
-            f"  The SentiSense pipeline requires tool-capable models.\n"
-            f"  Skipping this model — no results written."
-        )
-        return None
-    print("✓ supported")
+    if is_nemotron_model(model_name):
+        print("✓ ManualToolAgent (Nemotron/Dicta — native tool API bypassed)")
+    else:
+        supported, reason = check_model_supports_tools(model_name, base_url=base_url)
+        if not supported:
+            print(f"✗ SKIPPED ({reason})")
+            print(
+                f"  ⚠ {model_name} does not support tool calling ({reason}).\n"
+                f"  The SentiSense pipeline requires tool-capable models.\n"
+                f"  Skipping this model — no results written."
+            )
+            return None
+        print("✓ supported")
 
     # Run pipeline
     results = await run_pipeline_on_dataset(golden_rows, model_name=model_name)
