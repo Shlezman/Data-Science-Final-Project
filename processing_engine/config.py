@@ -98,3 +98,7 @@ class RetryConfig:
 # ---------------------------------------------------------------------------
 
 LOG_LEVEL: str = _env("LOG_LEVEL", "DEBUG")
+
+# Directory where rotating log files are written.
+# Set SENTISENSE_LOG_DIR="" to disable file logging entirely.
+LOG_DIR: str = _env("LOG_DIR", "logs")

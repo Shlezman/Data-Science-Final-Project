@@ -32,16 +32,26 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from .config import AGENT_RECURSION_LIMIT, LOG_LEVEL
+from .config import AGENT_RECURSION_LIMIT, LOG_DIR, LOG_LEVEL
 from .models import PipelineState
 
 # ── Logging configuration ───────────────────────────────────────────
 
+_LOG_FMT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+    "{level: <8} | "
+    "{name}:{function}:{line} | "
+    "{message}"
+)
+
 logger.remove()
+
+# Stderr sink (coloured for interactive use)
 logger.add(
     sys.stderr,
     level=LOG_LEVEL,
@@ -56,6 +66,24 @@ logger.add(
     backtrace=True,
     diagnose=True,
 )
+
+# File sink — rotating daily, kept for 7 days, plain text (no ANSI codes)
+if LOG_DIR:
+    _log_dir = Path(LOG_DIR)
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        _log_dir / "sentisense_{time:YYYY-MM-DD}.log",
+        level=LOG_LEVEL,
+        format=_LOG_FMT,
+        colorize=False,
+        rotation="00:00",       # new file every midnight
+        retention="7 days",     # keep the last 7 daily files
+        compression="gz",       # compress old logs
+        enqueue=True,
+        backtrace=True,
+        diagnose=True,
+        encoding="utf-8",
+    )
 
 # ── Compiled graph singleton ────────────────────────────────────────
 
