@@ -98,17 +98,23 @@ else
 fi
 
 # Python 3.12+
-if check_cmd python3; then
-    PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    if python3 -c "import sys; exit(0 if sys.version_info >= (3,12) else 1)"; then
-        ok "Python $PY_VERSION (>= 3.12)"
-    else
-        fail "Python $PY_VERSION found but 3.12+ required"
-        info "Install with: apt install python3.12 python3.12-venv"
-        exit 1
+# On Ubuntu, python3 may point to an older version even when python3.12 is installed.
+# Try python3 first, then fall back to python3.12, python3.13, etc.
+PYTHON=""
+for candidate in python3 python3.12 python3.13 python3.14; do
+    if command -v "$candidate" &>/dev/null; then
+        if "$candidate" -c "import sys; exit(0 if sys.version_info >= (3,12) else 1)" 2>/dev/null; then
+            PYTHON="$candidate"
+            break
+        fi
     fi
+done
+
+if [ -n "$PYTHON" ]; then
+    PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    ok "Python $PY_VERSION (>= 3.12) via $(command -v "$PYTHON")"
 else
-    fail "Python3 not found"
+    fail "Python 3.12+ not found"
     info "Install with: apt install python3.12 python3.12-venv"
     exit 1
 fi
