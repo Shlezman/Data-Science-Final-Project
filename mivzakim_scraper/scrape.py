@@ -2,10 +2,8 @@ import os
 from datetime import datetime, timedelta
 
 import asyncio
-import pandas as pd
 from playwright.async_api import async_playwright
 
-from mivzakim_search_scraper import SearchScraper
 from utils import DATE_FORMAT
 
 from mivzakim_scraper import Scraper
@@ -122,13 +120,17 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
     print("=" * 60)
 
 
-def get_search_data(keywords: set, num_pages: int = 1) -> pd.DataFrame:
+def get_search_data(keywords: set, num_pages: int = 1):
     """
     Running the main flow of collecting headlines using keyword search
     :param keywords: Set of keywords to search for
     :param num_pages: Number of pages to scrape per keyword
     :return: DataFrame with scraped headlines
     """
+    import pandas as pd  # noqa: F811 — lazy import, only needed for search functions
+
+    from mivzakim_search_scraper import SearchScraper  # noqa: F811
+
     print(f"Searching for keywords {keywords}")
 
     # Run async scraping with search
@@ -140,10 +142,14 @@ def get_search_data(keywords: set, num_pages: int = 1) -> pd.DataFrame:
     return df
 
 
-async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int = 1, browser=None) -> pd.DataFrame:
+async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int = 1, browser=None):
     """
     Scrape search data for a single date using the shared browser
     """
+    import pandas as pd
+
+    from mivzakim_search_scraper import SearchScraper
+
     try:
         scraper = SearchScraper(date_obj, keywords, num_pages)
         df = await scraper.scrape_from_search(browser=browser)
@@ -154,7 +160,7 @@ async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int
         return pd.DataFrame()
 
 
-async def scrape_search_batch(keywords: set, num_pages: int = 1) -> pd.DataFrame:
+async def scrape_search_batch(keywords: set, num_pages: int = 1):
     """
     Search-based scraping using a single shared browser instance
     (mirrors scrape_batch pattern from get_data)
