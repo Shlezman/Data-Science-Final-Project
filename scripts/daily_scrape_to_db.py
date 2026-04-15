@@ -129,18 +129,14 @@ def scrape_dates(
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
 
     try:
+        # Stream stdout/stderr to terminal in real-time (no buffering)
         result = subprocess.run(
-            ["uv", "run", "python", "-c", scraper_script],
+            ["uv", "run", "python", "-u", "-c", scraper_script],
             cwd=str(SCRAPER_DIR),
             env=env,
-            capture_output=True,
-            text=True,
             timeout=3600,
         )
-        if result.stdout:
-            logger.info("Scraper stdout:\n{}", result.stdout.rstrip())
         if result.returncode != 0:
-            logger.error("Scraper stderr:\n{}", result.stderr.rstrip())
             raise RuntimeError(f"Scraper exited with code {result.returncode}")
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("Scraper timed out after 1 hour") from exc
