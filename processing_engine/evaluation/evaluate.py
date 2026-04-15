@@ -3,6 +3,24 @@ processing_engine.evaluation.evaluate
 ======================================
 Main evaluation script for the SentiSense relevance scoring pipeline.
 
+Usage — auto-discover all installed Ollama models (recommended)
+----------------------------------------------------------------
+::
+
+    python -m processing_engine.evaluation.evaluate --all-models
+
+    # With explicit output directory
+    python -m processing_engine.evaluation.evaluate \\
+        --all-models \\
+        --output evaluation/results/
+
+Usage — explicit model list
+----------------------------
+::
+
+    python -m processing_engine.evaluation.evaluate \\
+        --models qwen2.5:14b llama3.1:8b mistral:7b
+
 Usage — single model
 ---------------------
 ::
@@ -12,17 +30,21 @@ Usage — single model
         --models  qwen2.5:14b \\
         --output  evaluation/results/
 
-Usage — multiple models in one command
-----------------------------------------
+Usage — dry run (validate CSV only, no LLM calls)
+---------------------------------------------------
 ::
 
-    python -m processing_engine.evaluation.evaluate \\
-        --golden  evaluation/golden_dataset.csv \\
-        --models  qwen2.5:14b llama3.1:8b mistral:7b \\
-        --output  evaluation/results/
+    python -m processing_engine.evaluation.evaluate --dry-run
 
-When multiple models are provided, each is evaluated sequentially and
-a leaderboard is printed at the end comparing all models.
+Model discovery
+---------------
+When ``--all-models`` is passed (or when ``--models`` is omitted and the
+``SENTISENSE_OLLAMA_MODEL`` env var is not set), the script calls
+``ollama list`` and parses every model name from the output.  Models that
+fail to start are skipped with a warning so the rest can still complete.
+
+When multiple models are evaluated, a leaderboard is printed at the end
+and saved to ``results/leaderboard.md``.
 
 For each model this script will:
 1. Load the golden dataset (headline + 6 gold relevance scores).
@@ -57,6 +79,8 @@ import asyncio
 import csv
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -70,12 +94,89 @@ _ENGINE_ROOT = _HERE.parent.parent               # project root
 if str(_ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(_ENGINE_ROOT))
 
-from processing_engine.engine import process_single_observation  # noqa: E402
-from processing_engine.evaluation.metrics import (               # noqa: E402
+from processing_engine.engine import process_single_observation, reset_graph  # noqa: E402
+from processing_engine.evaluation.metrics import (                             # noqa: E402
     CATEGORY_COLUMNS,
     CATEGORY_NAMES,
     compute_all_metrics,
 )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Ollama model discovery
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def discover_ollama_models() -> list[str]:
+    """
+    Return the list of models currently installed in the local Ollama instance.
+
+    Runs ``ollama list`` and parses its tabular output.  The first column of
+    every non-header line is treated as a model name.
+
+    ``ollama list`` output example::
+
+        NAME                    ID              SIZE      MODIFIED
+        qwen2.5:14b             abc1234567ef    9.0 GB    3 weeks ago
+        llama3.1:8b             def7654321ab    4.7 GB    5 days ago
+        mistral:7b              aaa000111bbb    4.1 GB    2 months ago
+
+    Returns
+    -------
+    list[str]
+        Ordered list of model name strings (e.g. ``["qwen2.5:14b", ...]``).
+
+    Raises
+    ------
+    RuntimeError
+        If ``ollama`` is not found on PATH or the subprocess returns a
+        non-zero exit code.
+    """
+    if shutil.which("ollama") is None:
+        raise RuntimeError(
+            "ollama executable not found on PATH. "
+            "Install Ollama from https://ollama.com and ensure it is running."
+        )
+
+    try:
+        proc = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("'ollama list' timed out after 15 seconds.") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"'ollama list' exited with code {proc.returncode}.\n"
+            f"stderr: {proc.stderr.strip()}"
+        )
+
+    models: list[str] = []
+    lines = proc.stdout.splitlines()
+
+    for line in lines[1:]:          # skip header row
+        line = line.strip()
+        if not line:
+            continue
+        # First whitespace-delimited token is the model name
+        name = line.split()[0]
+        if name:
+            models.append(name)
+
+    if not models:
+        raise RuntimeError(
+            "'ollama list' returned no models. "
+            "Pull at least one model first, e.g.: ollama pull qwen2.5:14b"
+        )
+
+    # Prioritise dicta models so they run first (useful for fast iteration /
+    # debugging before the longer models are evaluated).
+    models.sort(key=lambda m: (0 if "dicta" in m.lower() else 1, m))
+
+    return models
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -167,6 +268,70 @@ def save_predictions(
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def check_model_supports_tools(model_name: str, base_url: str) -> tuple[bool, str]:
+    """
+    Send a minimal tool-calling request to Ollama and return whether the
+    model supports function/tool calling.
+
+    Uses the ``ollama`` Python client (already installed as a transitive
+    dependency of ``langchain-ollama``) so the request format is guaranteed
+    to match what Ollama expects.
+
+    Returns
+    -------
+    (True, "")
+        Model responded successfully — tool calling works.
+    (False, reason)
+        The model returned an error that mentions it does not support tools.
+        ``reason`` contains the server's error message.
+
+    Raises
+    ------
+    RuntimeError
+        If Ollama is unreachable (connection refused, timeout, etc.) —
+        this is a server problem, not a model capability problem.
+    """
+    import ollama  # transitive dep via langchain-ollama
+
+    client = ollama.Client(host=base_url)
+
+    try:
+        client.chat(
+            model=model_name,
+            messages=[{"role": "user", "content": "ping"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "probe",
+                        "description": "capability probe",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "input": {
+                                    "type": "string",
+                                    "description": "probe input",
+                                }
+                            },
+                            "required": ["input"],
+                        },
+                    },
+                }
+            ],
+        )
+        return True, ""
+    except ollama.ResponseError as exc:
+        # Only hard-skip when Ollama explicitly says the model has no tool support.
+        # Other errors (OOM, timeout, etc.) are treated as warnings — we still
+        # attempt the evaluation and let per-headline error handling take over.
+        if "does not support tools" in exc.error:
+            return False, exc.error
+        # Non-capability error: warn but allow the run to proceed.
+        print(f"\n  ⚠  pre-flight warning for {model_name}: {exc.error}")
+        print("     Proceeding anyway — per-headline errors will be recorded.")
+        return True, ""
+
+
 async def run_pipeline_on_dataset(
     golden_rows: list[dict[str, Any]],
     model_name: str,
@@ -174,7 +339,8 @@ async def run_pipeline_on_dataset(
     """
     Run the SentiSense pipeline on every headline in the golden dataset.
 
-    Sets ``SENTISENSE_OLLAMA_MODEL`` to ``model_name`` before running.
+    Sets ``SENTISENSE_OLLAMA_MODEL`` to ``model_name`` before running and
+    resets the compiled graph singleton so the new model is actually used.
     Processes headlines sequentially to avoid overloading Ollama.
 
     Returns a list of result dicts, one per headline, containing:
@@ -186,6 +352,7 @@ async def run_pipeline_on_dataset(
       - ``pipeline_error`` (error string if pipeline failed, else "")
     """
     os.environ["SENTISENSE_OLLAMA_MODEL"] = model_name
+    reset_graph()  # force LangGraph to rebuild with the new model
     print(f"\nRunning pipeline with model: {model_name}")
     print(f"Processing {len(golden_rows)} headlines sequentially…\n")
 
@@ -335,18 +502,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate the SentiSense pipeline against a golden dataset. "
-            "Accepts one or more model names via --models. "
+            "Use --all-models to benchmark every model installed in Ollama, "
+            "or supply an explicit list with --models. "
             "Computes MAE, Within-1/2 Accuracy, and Pearson r per category. "
-            "When multiple models are provided, prints a leaderboard at the end."
+            "A leaderboard is printed and saved whenever more than one model "
+            "is evaluated."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Single model\n"
-            "  python -m processing_engine.evaluation.evaluate --models qwen2.5:14b\n\n"
-            "  # Multiple models — evaluated sequentially, leaderboard at the end\n"
+            "  # Auto-discover and benchmark all installed Ollama models\n"
+            "  python -m processing_engine.evaluation.evaluate --all-models\n\n"
+            "  # Explicit model list\n"
             "  python -m processing_engine.evaluation.evaluate \\\n"
             "      --models qwen2.5:14b llama3.1:8b mistral:7b\n\n"
+            "  # Single model\n"
+            "  python -m processing_engine.evaluation.evaluate --models qwen2.5:14b\n\n"
             "  # Dry run — validate CSV without running the pipeline\n"
             "  python -m processing_engine.evaluation.evaluate --dry-run\n"
         ),
@@ -357,17 +528,30 @@ def parse_args() -> argparse.Namespace:
         default=Path("processing_engine/evaluation/golden_dataset.csv"),
         help="Path to the golden dataset CSV file.",
     )
-    parser.add_argument(
+
+    model_group = parser.add_mutually_exclusive_group()
+    model_group.add_argument(
         "--models",
         type=str,
         nargs="+",
-        default=[os.environ.get("SENTISENSE_OLLAMA_MODEL", "qwen2.5:14b")],
         metavar="MODEL",
         help=(
             "One or more Ollama model names to evaluate, separated by spaces. "
+            "Mutually exclusive with --all-models. "
             "Example: --models qwen2.5:14b llama3.1:8b mistral:7b"
         ),
     )
+    model_group.add_argument(
+        "--all-models",
+        action="store_true",
+        dest="all_models",
+        help=(
+            "Discover all models installed in the local Ollama instance via "
+            "'ollama list' and evaluate every one of them. "
+            "Mutually exclusive with --models."
+        ),
+    )
+
     parser.add_argument(
         "--output",
         type=Path,
@@ -389,12 +573,33 @@ async def evaluate_one_model(
     golden_rows: list[dict[str, Any]],
     model_name: str,
     output_dir: Path,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float]] | None:
     """
     Run the full evaluation pipeline for a single model.
 
-    Returns the metrics dict (same structure as ``compute_all_metrics``).
+    Returns the metrics dict (same structure as ``compute_all_metrics``),
+    or ``None`` if the model does not support tool calling.
     """
+    # Pre-flight: verify the model supports tool calling before running 26 headlines.
+    # Nemotron / Dicta models don't expose the native tool API but are handled
+    # via ManualToolAgent (JSON-in-system-prompt), so we skip the probe for them.
+    base_url = os.environ.get("SENTISENSE_OLLAMA_BASE_URL", "http://localhost:11434")
+    from processing_engine.agents import is_nemotron_model
+    print(f"\n[pre-flight] Checking tool support for {model_name}…", end=" ", flush=True)
+    if is_nemotron_model(model_name):
+        print("✓ ManualToolAgent (Nemotron/Dicta — native tool API bypassed)")
+    else:
+        supported, reason = check_model_supports_tools(model_name, base_url=base_url)
+        if not supported:
+            print(f"✗ SKIPPED ({reason})")
+            print(
+                f"  ⚠ {model_name} does not support tool calling ({reason}).\n"
+                f"  The SentiSense pipeline requires tool-capable models.\n"
+                f"  Skipping this model — no results written."
+            )
+            return None
+        print("✓ supported")
+
     # Run pipeline
     results = await run_pipeline_on_dataset(golden_rows, model_name=model_name)
 
@@ -428,19 +633,57 @@ async def main() -> None:
         print(json.dumps(golden_rows[0], ensure_ascii=False, indent=2))
         return
 
-    models = args.models
+    # 2. Resolve model list
+    #    Priority: --all-models > --models > SENTISENSE_OLLAMA_MODEL env var > hardcoded default
+    if args.all_models:
+        print("\nDiscovering installed Ollama models via 'ollama list'…")
+        try:
+            models = discover_ollama_models()
+            print(f"Found {len(models)} model(s): {', '.join(models)}")
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+    elif args.models:
+        models = args.models
+    else:
+        # Neither flag given — try auto-discovery, fall back to env/default
+        env_model = os.environ.get("SENTISENSE_OLLAMA_MODEL")
+        if env_model:
+            models = [env_model]
+            print(f"\nUsing model from SENTISENSE_OLLAMA_MODEL: {env_model}")
+        else:
+            print("\nNo --models or --all-models specified. "
+                  "Attempting auto-discovery via 'ollama list'…")
+            try:
+                models = discover_ollama_models()
+                print(f"Found {len(models)} model(s): {', '.join(models)}")
+            except RuntimeError:
+                models = ["qwen2.5:14b"]
+                print(
+                    "Auto-discovery failed. Falling back to default model: "
+                    f"{models[0]}\n"
+                    "  Tip: pass --models <name> or --all-models explicitly."
+                )
+
     print(f"\n{'━' * 60}")
     print(f"  Evaluating {len(models)} model(s): {', '.join(models)}")
     print(f"{'━' * 60}")
 
     # 2. Evaluate each model sequentially
     all_metrics: dict[str, dict[str, dict[str, float]]] = {}
+    skipped: list[str] = []
     for model_name in models:
         metrics = await evaluate_one_model(golden_rows, model_name, args.output)
-        all_metrics[model_name] = metrics
+        if metrics is None:
+            skipped.append(model_name)
+        else:
+            all_metrics[model_name] = metrics
+
+    if skipped:
+        print(f"\n⚠ Skipped {len(skipped)} model(s) (no tool support): {', '.join(skipped)}")
 
     # 3. If multiple models were evaluated, print a final leaderboard
-    if len(models) > 1:
+    if len(all_metrics) > 1:
         # Import here to avoid circular dependency at module level
         from processing_engine.evaluation.report import (
             build_leaderboard,
@@ -456,6 +699,7 @@ async def main() -> None:
                 "category_names": dict(zip(CATEGORY_COLUMNS, CATEGORY_NAMES)),
             }
             for model_name in models
+            if model_name in all_metrics  # skip models that were skipped/failed
         ]
 
         leaderboard_rows = build_leaderboard(payloads)

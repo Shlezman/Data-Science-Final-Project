@@ -20,6 +20,7 @@ Node taxonomy
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -33,6 +34,7 @@ from tenacity import (
 )
 
 from .config import (
+    AGENT_CONCURRENCY,
     RELEVANCY_CATEGORIES,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
@@ -47,6 +49,18 @@ from .models import (
 )
 
 _retry_cfg = RetryConfig()
+
+# Semaphore that caps simultaneous Ollama calls across all agent nodes.
+# Concurrency=7 → all agents run in parallel (default, fastest).
+# Concurrency=1 → agents run one at a time (sequential, low-RAM safe).
+_agent_semaphore = asyncio.Semaphore(AGENT_CONCURRENCY)
+
+_mode = "parallel" if AGENT_CONCURRENCY > 1 else "sequential"
+logger.info(
+    "Agent concurrency: {} ({} mode) — set SENTISENSE_AGENT_CONCURRENCY=1 to force sequential",
+    AGENT_CONCURRENCY,
+    _mode,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -151,7 +165,8 @@ def make_agent_node(agent, state_key: str, display_name: str):
         logger.info("[{}] Starting ReAct agent for: {}…", display_name, headline[:50])
 
         try:
-            structured = await _invoke_with_retry(headline)
+            async with _agent_semaphore:
+                structured = await _invoke_with_retry(headline)
             logger.info("[{}] score={}", display_name, structured.score)
             return {
                 state_key: AgentResult(
