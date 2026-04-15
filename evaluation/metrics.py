@@ -1,6 +1,6 @@
 """
-processing_engine.evaluation.metrics
-=====================================
+evaluation.metrics
+==================
 Pure metric computation functions for the SentiSense relevance evaluation.
 
 All functions operate on plain Python lists/floats — no pandas required —

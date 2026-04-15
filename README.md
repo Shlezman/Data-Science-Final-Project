@@ -72,20 +72,20 @@ python -m processing_engine   # smoke test with a sample headline
 ### 3 — Evaluate models
 ```bash
 # Validate the golden dataset (no LLM calls)
-python -m processing_engine.evaluation.evaluate \
-    --golden processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden evaluation/golden_dataset.csv \
     --dry-run
 
 # Benchmark one or more models
-python -m processing_engine.evaluation.evaluate \
-    --golden processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden evaluation/golden_dataset.csv \
     --models qwen2.5:14b llama3.1:8b \
-    --output processing_engine/evaluation/results/
+    --output evaluation/results/
 
 # Generate leaderboard from saved results
-python -m processing_engine.evaluation.report \
-    --results processing_engine/evaluation/results/ \
-    --output processing_engine/evaluation/results/leaderboard.md
+python -m evaluation.report \
+    --results evaluation/results/ \
+    --output evaluation/results/leaderboard.md
 ```
 
 ## Configuration
@@ -113,18 +113,45 @@ All `processing_engine` settings can be overridden with environment variables:
 │   ├── pyproject.toml              # Package definition
 │   └── uv.lock                     # Pinned dependency lockfile
 │
-└── processing_engine/              # LLM pipeline module
-    ├── config.py                   # Centralized config + env vars
-    ├── models.py                   # Pydantic data models
-    ├── agents.py                   # ReAct agent constructors
-    ├── tools.py                    # Hebrew text tools per agent
-    ├── prompts.py                  # System prompts + LLM factory
-    ├── graph.py                    # LangGraph state graph
-    ├── nodes.py                    # Ingestion, validation, aggregation nodes
-    ├── engine.py                   # Public async API
-    └── evaluation/                 # Evaluation harness
-        ├── golden_dataset.csv      # 26 hand-labeled headlines
-        ├── evaluate.py             # CLI: run models against golden dataset
-        ├── metrics.py              # MAE, Within-N Accuracy, Pearson r
-        └── report.py               # Leaderboard generator
+├── processing_engine/              # LLM pipeline module
+│   ├── config.py                   # Centralized config + env vars
+│   ├── models.py                   # Pydantic data models
+│   ├── agents.py                   # ReAct agent constructors
+│   ├── tools.py                    # Hebrew text tools per agent
+│   ├── prompts.py                  # System prompts + LLM factory
+│   ├── graph.py                    # LangGraph state graph
+│   ├── nodes.py                    # Ingestion, validation, aggregation nodes
+│   └── engine.py                   # Public async API
+│
+├── evaluation/                     # Model evaluation harness
+│   ├── golden_dataset.csv          # 26 hand-labeled headlines
+│   ├── evaluate.py                 # CLI: run models against golden dataset
+│   ├── metrics.py                  # MAE, Within-N Accuracy, Pearson r
+│   └── report.py                   # Leaderboard generator
+│
+├── scripts/                        # Data pipeline & operations
+│   ├── init_db.sql                 # PostgreSQL schema (auto-runs on first start)
+│   ├── update_data_csv.py          # Scrape new headlines → merge into data.csv
+│   ├── migrate_csv_to_db.py        # One-time CSV → PostgreSQL migration
+│   └── daily_scrape_to_db.py       # Daily cronjob: scrape → DB insert
+│
+├── docker-compose.yml              # PostgreSQL + optional pgAdmin
+├── .env.example                    # Environment variable template
+└── data.csv                        # Master headlines dataset (~1.8M rows)
+```
+
+## Database Setup
+
+```bash
+# Start PostgreSQL (schema auto-initializes on first run)
+docker compose up -d
+
+# Optional: also start pgAdmin web UI on port 5050
+docker compose --profile admin up -d
+
+# One-time: migrate existing data.csv into the database
+python scripts/migrate_csv_to_db.py
+
+# Daily cronjob: scrape today's headlines directly into DB
+python scripts/daily_scrape_to_db.py
 ```

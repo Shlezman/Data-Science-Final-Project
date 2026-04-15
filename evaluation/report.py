@@ -1,6 +1,6 @@
 """
-processing_engine.evaluation.report
-=====================================
+evaluation.report
+==================
 Leaderboard and per-model report generator.
 
 Reads all ``*_metrics.json`` files from the results directory and
@@ -12,12 +12,12 @@ Usage
 -----
 After running ``evaluate.py`` for one or more models::
 
-    python -m processing_engine.evaluation.report \\
+    python -m evaluation.report \\
         --results evaluation/results/ \\
         --output  evaluation/results/leaderboard.md
 
 The generated Markdown can be pasted directly into
-``processing_engine/EVALUATION_REPORT.md`` Sections 5 and 6.
+``EVALUATION_REPORT.md`` Sections 5 and 6.
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ from typing import Any
 # Ensure project root is on sys.path when run as a script
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent
-_ENGINE_ROOT = _HERE.parent.parent
+_ENGINE_ROOT = _HERE.parent
 if str(_ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(_ENGINE_ROOT))
 
-from processing_engine.evaluation.metrics import CATEGORY_COLUMNS, CATEGORY_NAMES  # noqa: E402
+from evaluation.metrics import CATEGORY_COLUMNS, CATEGORY_NAMES  # noqa: E402
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -231,13 +231,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--results",
         type=Path,
-        default=Path("processing_engine/evaluation/results"),
+        default=Path("evaluation/results"),
         help="Directory containing *_metrics.json files from evaluate.py.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("processing_engine/evaluation/results/leaderboard.md"),
+        default=Path("evaluation/results/leaderboard.md"),
         help="Output path for the generated Markdown report.",
     )
     return parser.parse_args()

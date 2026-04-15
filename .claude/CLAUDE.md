@@ -17,6 +17,9 @@ The full pipeline spans five modules (see `.claude/ROADMAP.md` for the complete 
 
 - `mivzakim_scraper/` — Playwright-based scraper for Hebrew news from mivzakim.net
 - `processing_engine/` — LangGraph multi-agent pipeline; the core ML component
+- `evaluation/` — Model evaluation harness (golden dataset, metrics, leaderboard)
+- `scripts/` — Data pipeline: DB schema, CSV migration, daily scraper-to-DB cronjob
+- `docker-compose.yml` — PostgreSQL 16 + optional pgAdmin
 
 `mivzakim_scraper` is managed with **uv** (lockfile at `mivzakim_scraper/uv.lock`).
 `processing_engine` is managed with plain **pip** (`pyproject.toml`).
@@ -41,25 +44,43 @@ python -m processing_engine
 ### Evaluation harness
 ```bash
 # Validate golden dataset only (no LLM calls)
-python -m processing_engine.evaluation.evaluate \
-    --golden processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden evaluation/golden_dataset.csv \
     --dry-run
 
 # Run evaluation against one or more Ollama models
-python -m processing_engine.evaluation.evaluate \
-    --golden processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden evaluation/golden_dataset.csv \
     --models qwen2.5:14b llama3.1:8b \
-    --output processing_engine/evaluation/results/
+    --output evaluation/results/
 
 # Generate leaderboard from saved results
-python -m processing_engine.evaluation.report \
-    --results processing_engine/evaluation/results/ \
-    --output processing_engine/evaluation/results/leaderboard.md
+python -m evaluation.report \
+    --results evaluation/results/ \
+    --output evaluation/results/leaderboard.md
 ```
 
 ### Install Ollama models
 ```bash
-bash processing_engine/evaluation/install_llms.sh
+bash evaluation/install_llms.sh
+```
+
+### Database & Data Pipeline
+```bash
+# Start PostgreSQL (schema auto-initializes on first start via scripts/init_db.sql)
+docker compose up -d
+
+# Optional: start pgAdmin web UI on port 5050
+docker compose --profile admin up -d
+
+# One-time: migrate data.csv into PostgreSQL
+python scripts/migrate_csv_to_db.py
+
+# Update data.csv with newly scraped headlines
+python scripts/update_data_csv.py
+
+# Daily cronjob: scrape today's headlines directly into DB
+python scripts/daily_scrape_to_db.py
 ```
 
 ## Architecture: processing_engine
@@ -103,12 +124,32 @@ result = await process_single_observation(observation_dict)
 
 ## Evaluation Metrics
 
-Located in `processing_engine/evaluation/metrics.py`:
+Located in `evaluation/metrics.py`:
 - **MAE** — mean absolute error in score points
 - **Within-1 Accuracy** — % of predictions within 1 point of gold (primary ranking metric)
 - **Within-2 Accuracy** — looser tolerance
 - **Pearson r** — ranking correlation
 - **Composite Score** — average Within-1 across 6 categories
+
+## Database Schema
+
+PostgreSQL tables defined in `scripts/init_db.sql`:
+
+- **`raw_headlines`** — scraped headlines (date, source, hour, popularity, headline). Unique constraint on `(date, source, hour, headline)`.
+- **`nlp_vectors`** — per-headline LLM scores (6 relevance + 1 sentiment). FK to `raw_headlines`.
+- **`daily_features`** — aggregated daily feature vector for model training. PK on date.
+- **`model_predictions`** — inference log (prediction, confidence, actual outcome).
+
+Connection: `SENTISENSE_DATABASE_URL` env var (default: `postgresql://sentisense:sentisense_dev@localhost:5432/sentisense`).
+
+## Data Pipeline Scripts
+
+Located in `scripts/`:
+- **`update_data_csv.py`** — scrapes new dates, merges into `data.csv`, renames legacy columns, logs summary
+- **`migrate_csv_to_db.py`** — one-time bulk import of `data.csv` → `raw_headlines` table (idempotent)
+- **`daily_scrape_to_db.py`** — cronjob: scrape today + yesterday → insert directly to DB
+
+All scripts use loguru (stderr + `logs/` directory) and support `--dry-run`.
 
 ## Golden Dataset Schema
 
