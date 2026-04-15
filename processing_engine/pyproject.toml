@@ -2,7 +2,6 @@
 name = "processing-engine"
 version = "0.2.0"
 description = "SentiSense Multi-Agent AI Processing Engine — LangGraph ReAct agents for Hebrew news sentiment and relevancy scoring via local Ollama inference."
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # --- LLM Orchestration ---

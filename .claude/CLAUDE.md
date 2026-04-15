@@ -1,26 +1,35 @@
-.# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-**SentiSense** — A Hebrew news headline analysis pipeline that combines web scraping, multi-agent AI reasoning, structured evaluation, and a manual annotation UI.
+**SentiSense** — An AI-driven predictive pipeline that forecasts the daily rise/fall of the **TA-125** (Tel Aviv Stock Exchange 125 Index) based on real-time Hebrew news sentiment and macroeconomic indicators.
+
+The full pipeline spans five modules (see `.claude/ROADMAP.md` for the complete build agenda):
+1. **Ingestion** — scrape Hebrew news headlines ✅
+2. **NLP Processing** — multi-agent LLM scoring ✅
+3. **Feature Engineering** — daily vectorization + financial data injection 🔜
+4. **Forecasting Engine** — LSTM/GRU deep learning model 🔜
+5. **Orchestration, Dashboard & DevOps** — scheduling, DB, UI, K8s 🔜
 
 ## Module Layout
 
 - `mivzakim_scraper/` — Playwright-based scraper for Hebrew news from mivzakim.net
 - `processing_engine/` — LangGraph multi-agent pipeline; the core ML component
-- `self_ranking_platform/` — Streamlit annotation UI for human labeling
 
-Each module has its own `pyproject.toml` and is managed independently.
+`mivzakim_scraper` is managed with **uv** (lockfile at `mivzakim_scraper/uv.lock`).
+`processing_engine` is managed with plain **pip** (`pyproject.toml`).
 
 ## Common Commands
 
-### Installation (each module separately)
+### Installation
 ```bash
+# mivzakim_scraper (uv)
+cd mivzakim_scraper && uv sync && uv run playwright install firefox
+
+# processing_engine (pip)
 cd processing_engine && pip install -e .
-cd mivzakim_scraper && pip install -e .
-cd self_ranking_platform && pip install -r requirements.txt
 ```
 
 ### Running the pipeline (smoke test)
@@ -36,12 +45,7 @@ python -m processing_engine.evaluation.evaluate \
     --golden processing_engine/evaluation/golden_dataset.csv \
     --dry-run
 
-# Auto-discover ALL installed Ollama models and benchmark them (recommended)
-python -m processing_engine.evaluation.evaluate \
-    --all-models \
-    --output processing_engine/evaluation/results/
-
-# Run evaluation against an explicit list of models
+# Run evaluation against one or more Ollama models
 python -m processing_engine.evaluation.evaluate \
     --golden processing_engine/evaluation/golden_dataset.csv \
     --models qwen2.5:14b llama3.1:8b \
@@ -51,18 +55,6 @@ python -m processing_engine.evaluation.evaluate \
 python -m processing_engine.evaluation.report \
     --results processing_engine/evaluation/results/ \
     --output processing_engine/evaluation/results/leaderboard.md
-```
-
-**Model resolution order** (when running `evaluate`):
-1. `--all-models` flag → runs `ollama list`, evaluates every installed model
-2. `--models <name ...>` → explicit list
-3. `SENTISENSE_OLLAMA_MODEL` env var → single model from env
-4. Auto-discovery fallback → same as `--all-models`; if Ollama is unreachable, defaults to `qwen2.5:14b`
-
-### Annotation UI
-```bash
-cd self_ranking_platform
-streamlit run ranking_script.py --server.headless true
 ```
 
 ### Install Ollama models
@@ -108,12 +100,6 @@ result = await process_single_observation(observation_dict)
 - Uses Playwright (headless Firefox) with session/cookie persistence
 - Anti-detection: random user agents, viewports, mouse movements
 - Extracts: date, time, source, importance level, headline text
-
-## Architecture: self_ranking_platform
-
-- Streamlit UI for manual annotation of CSV-loaded headlines
-- Annotators score 6 relevance categories (0–10) and global sentiment (-10 to +10)
-- Supports CSV upload, random sampling without replacement, and export
 
 ## Evaluation Metrics
 
