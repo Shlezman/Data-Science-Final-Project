@@ -21,41 +21,42 @@ The full pipeline spans five modules (see `.claude/ROADMAP.md` for the complete 
 - `scripts/` — Data pipeline: DB schema, CSV migration, daily scraper-to-DB cronjob
 - `docker-compose.yml` — PostgreSQL 16 + optional pgAdmin
 
-`mivzakim_scraper` is managed with **uv** (lockfile at `mivzakim_scraper/uv.lock`).
-`processing_engine` is managed with plain **pip** (`pyproject.toml`).
+Both modules are managed with **uv** (lockfiles at `mivzakim_scraper/uv.lock` and `processing_engine/uv.lock`).
 
 ## Common Commands
 
 ### Installation
 ```bash
-# mivzakim_scraper (uv)
+# mivzakim_scraper
 cd mivzakim_scraper && uv sync && uv run playwright install firefox
 
-# processing_engine (pip)
-cd processing_engine && pip install -e .
+# processing_engine (includes psycopg for DB scripts)
+cd processing_engine && uv sync
 ```
 
 ### Running the pipeline (smoke test)
 ```bash
 cd processing_engine
-python -m processing_engine
+uv run python -m processing_engine
 ```
 
 ### Evaluation harness
 ```bash
+cd processing_engine
+
 # Validate golden dataset only (no LLM calls)
-python -m evaluation.evaluate \
+uv run python -m evaluation.evaluate \
     --golden evaluation/golden_dataset.csv \
     --dry-run
 
 # Run evaluation against one or more Ollama models
-python -m evaluation.evaluate \
+uv run python -m evaluation.evaluate \
     --golden evaluation/golden_dataset.csv \
     --models qwen2.5:14b llama3.1:8b \
     --output evaluation/results/
 
 # Generate leaderboard from saved results
-python -m evaluation.report \
+uv run python -m evaluation.report \
     --results evaluation/results/ \
     --output evaluation/results/leaderboard.md
 ```
@@ -74,13 +75,19 @@ docker compose up -d
 docker compose --profile admin up -d
 
 # One-time: migrate data.csv into PostgreSQL
-python scripts/migrate_csv_to_db.py
+cd processing_engine && uv run python ../scripts/migrate_csv_to_db.py
 
 # Update data.csv with newly scraped headlines
-python scripts/update_data_csv.py
+cd processing_engine && uv run python ../scripts/update_data_csv.py
 
 # Daily cronjob: scrape today's headlines directly into DB
-python scripts/daily_scrape_to_db.py
+cd processing_engine && uv run python ../scripts/daily_scrape_to_db.py
+```
+
+### Full pipeline init (Ubuntu)
+```bash
+chmod +x scripts/init_pipeline.sh
+./scripts/init_pipeline.sh
 ```
 
 ## Architecture: processing_engine

@@ -5,7 +5,7 @@
 #
 # This script bootstraps the entire SentiSense data pipeline from zero:
 #   1. Installs system dependencies (Docker, Python, uv)
-#   2. Installs Python packages for all modules
+#   2. Installs Python packages via uv for all modules
 #   3. Installs Playwright browser for the scraper
 #   4. Starts PostgreSQL via docker compose
 #   5. Updates data.csv with newly scraped headlines
@@ -113,15 +113,7 @@ else
     exit 1
 fi
 
-# pip
-if check_cmd pip3 || check_cmd pip; then
-    :
-else
-    info "Installing pip..."
-    sudo apt-get install -y -qq python3-pip
-fi
-
-# uv (for mivzakim_scraper)
+# uv
 if check_cmd uv; then
     :
 else
@@ -132,27 +124,22 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────
-# Step 2: Python packages
+# Step 2: Python packages (all via uv)
 # ─────────────────────────────────────────────────────────────────────
 
-step "Step 2/6 — Installing Python packages"
+step "Step 2/6 — Installing Python packages (uv)"
 
-# processing_engine
-info "Installing processing_engine..."
+# processing_engine (includes psycopg, loguru, langchain, etc.)
+info "Syncing processing_engine..."
 cd "$PROJECT_ROOT/processing_engine"
-pip install -e . --quiet 2>&1 | tail -1
-ok "processing_engine installed"
+uv sync
+ok "processing_engine synced ($(wc -l < uv.lock | tr -d ' ') lines in lockfile)"
 
-# DB driver + loguru (for scripts)
-info "Installing psycopg and loguru..."
-pip install "psycopg[binary]" loguru --quiet 2>&1 | tail -1
-ok "psycopg + loguru installed"
-
-# mivzakim_scraper (via uv)
-info "Installing mivzakim_scraper dependencies..."
+# mivzakim_scraper
+info "Syncing mivzakim_scraper..."
 cd "$PROJECT_ROOT/mivzakim_scraper"
-uv sync --quiet
-ok "mivzakim_scraper dependencies synced"
+uv sync
+ok "mivzakim_scraper synced"
 
 cd "$PROJECT_ROOT"
 
@@ -162,8 +149,6 @@ cd "$PROJECT_ROOT"
 
 step "Step 3/6 — Installing Playwright Firefox"
 
-cd "$PROJECT_ROOT/mivzakim_scraper"
-
 # Install system deps for Playwright (Ubuntu)
 info "Installing Playwright system dependencies..."
 sudo npx playwright install-deps firefox 2>/dev/null || sudo apt-get install -y -qq \
@@ -171,6 +156,7 @@ sudo npx playwright install-deps firefox 2>/dev/null || sudo apt-get install -y 
     libgbm1 libpango-1.0-0 libcairo2 libcups2 libx11-xcb1 libxcomposite1 \
     libxdamage1 libxrandr2 2>/dev/null || info "Some Playwright deps may already be installed"
 
+cd "$PROJECT_ROOT/mivzakim_scraper"
 uv run playwright install firefox
 ok "Firefox installed for Playwright"
 
@@ -229,7 +215,9 @@ step "Step 5/6 — Updating data.csv"
 if $SKIP_SCRAPE; then
     info "Skipped (--skip-scrape flag)"
 elif $DRY_RUN; then
-    python3 "$PROJECT_ROOT/scripts/update_data_csv.py" --dry-run
+    cd "$PROJECT_ROOT/processing_engine"
+    uv run python "$PROJECT_ROOT/scripts/update_data_csv.py" --dry-run
+    cd "$PROJECT_ROOT"
 else
     if [ -f "$PROJECT_ROOT/data.csv" ]; then
         BEFORE_ROWS=$(wc -l < "$PROJECT_ROOT/data.csv")
@@ -238,7 +226,9 @@ else
         info "No data.csv found — will create fresh"
     fi
 
-    python3 "$PROJECT_ROOT/scripts/update_data_csv.py"
+    cd "$PROJECT_ROOT/processing_engine"
+    uv run python "$PROJECT_ROOT/scripts/update_data_csv.py"
+    cd "$PROJECT_ROOT"
 
     if [ -f "$PROJECT_ROOT/data.csv" ]; then
         AFTER_ROWS=$(wc -l < "$PROJECT_ROOT/data.csv")
@@ -255,11 +245,15 @@ step "Step 6/6 — Migrating data.csv → PostgreSQL"
 if $SKIP_MIGRATE; then
     info "Skipped (--skip-migrate flag)"
 elif $DRY_RUN; then
-    python3 "$PROJECT_ROOT/scripts/migrate_csv_to_db.py" --dry-run
+    cd "$PROJECT_ROOT/processing_engine"
+    uv run python "$PROJECT_ROOT/scripts/migrate_csv_to_db.py" --dry-run
+    cd "$PROJECT_ROOT"
 elif [ ! -f "$PROJECT_ROOT/data.csv" ]; then
     fail "data.csv not found — cannot migrate. Run the scraper first."
 else
-    python3 "$PROJECT_ROOT/scripts/migrate_csv_to_db.py"
+    cd "$PROJECT_ROOT/processing_engine"
+    uv run python "$PROJECT_ROOT/scripts/migrate_csv_to_db.py"
+    cd "$PROJECT_ROOT"
 
     # Show final stats
     echo ""
@@ -287,7 +281,7 @@ echo "  PostgreSQL:  localhost:5432  (user: sentisense / db: sentisense)"
 echo "  Logs:        $PROJECT_ROOT/logs/"
 echo ""
 echo "  Next steps:"
-echo "    • Run evaluations:  python -m evaluation.evaluate --all-models"
-echo "    • Daily cron:       python scripts/daily_scrape_to_db.py"
+echo "    • Run evaluations:  cd processing_engine && uv run python -m evaluation.evaluate --all-models"
+echo "    • Daily cron:       cd processing_engine && uv run python scripts/daily_scrape_to_db.py"
 echo "    • pgAdmin UI:       docker compose --profile admin up -d  →  http://localhost:5050"
 echo ""

@@ -51,7 +51,7 @@ Each headline is scored by the pipeline and produces:
 
 ### Prerequisites
 - Python 3.12+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- [uv](https://docs.astral.sh/uv/)
 - [Ollama](https://ollama.com/) running locally with `qwen2.5:14b` pulled
 
 ### 1 — Scrape headlines
@@ -65,25 +65,27 @@ uv run python main.py      # scrapes ~3450 days → headlines.csv
 ### 2 — Run the pipeline
 ```bash
 cd processing_engine
-pip install -e .
-python -m processing_engine   # smoke test with a sample headline
+uv sync
+uv run python -m processing_engine   # smoke test with a sample headline
 ```
 
 ### 3 — Evaluate models
 ```bash
+cd processing_engine
+
 # Validate the golden dataset (no LLM calls)
-python -m evaluation.evaluate \
+uv run python -m evaluation.evaluate \
     --golden evaluation/golden_dataset.csv \
     --dry-run
 
 # Benchmark one or more models
-python -m evaluation.evaluate \
+uv run python -m evaluation.evaluate \
     --golden evaluation/golden_dataset.csv \
     --models qwen2.5:14b llama3.1:8b \
     --output evaluation/results/
 
 # Generate leaderboard from saved results
-python -m evaluation.report \
+uv run python -m evaluation.report \
     --results evaluation/results/ \
     --output evaluation/results/leaderboard.md
 ```
