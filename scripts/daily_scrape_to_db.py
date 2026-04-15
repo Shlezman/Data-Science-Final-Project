@@ -125,10 +125,14 @@ def scrape_dates(
         f"days={days}, pages={pages}, batch_size={batch_size})"
     )
 
+    # Clear VIRTUAL_ENV so uv doesn't get confused by the parent's venv
+    env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+
     try:
         result = subprocess.run(
             ["uv", "run", "python", "-c", scraper_script],
             cwd=str(SCRAPER_DIR),
+            env=env,
             capture_output=True,
             text=True,
             timeout=3600,
