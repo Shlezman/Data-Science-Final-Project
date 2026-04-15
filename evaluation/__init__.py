@@ -1,6 +1,6 @@
 """
-processing_engine.evaluation
-=============================
+evaluation
+==========
 Evaluation harness for the SentiSense multi-agent relevance scoring pipeline.
 
 Compares LLM model outputs against a manually-labelled golden dataset.

@@ -1,16 +1,16 @@
 """
-processing_engine.evaluation.evaluate
-======================================
+evaluation.evaluate
+===================
 Main evaluation script for the SentiSense relevance scoring pipeline.
 
 Usage — auto-discover all installed Ollama models (recommended)
 ----------------------------------------------------------------
 ::
 
-    python -m processing_engine.evaluation.evaluate --all-models
+    python -m evaluation.evaluate --all-models
 
     # With explicit output directory
-    python -m processing_engine.evaluation.evaluate \\
+    python -m evaluation.evaluate \\
         --all-models \\
         --output evaluation/results/
 
@@ -18,14 +18,14 @@ Usage — explicit model list
 ----------------------------
 ::
 
-    python -m processing_engine.evaluation.evaluate \\
+    python -m evaluation.evaluate \\
         --models qwen2.5:14b llama3.1:8b mistral:7b
 
 Usage — single model
 ---------------------
 ::
 
-    python -m processing_engine.evaluation.evaluate \\
+    python -m evaluation.evaluate \\
         --golden  evaluation/golden_dataset.csv \\
         --models  qwen2.5:14b \\
         --output  evaluation/results/
@@ -34,7 +34,7 @@ Usage — dry run (validate CSV only, no LLM calls)
 ---------------------------------------------------
 ::
 
-    python -m processing_engine.evaluation.evaluate --dry-run
+    python -m evaluation.evaluate --dry-run
 
 Model discovery
 ---------------
@@ -89,13 +89,13 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Ensure the project root is on sys.path when run as a script
 # ---------------------------------------------------------------------------
-_HERE = Path(__file__).resolve().parent          # processing_engine/evaluation/
-_ENGINE_ROOT = _HERE.parent.parent               # project root
+_HERE = Path(__file__).resolve().parent          # evaluation/
+_ENGINE_ROOT = _HERE.parent                      # project root
 if str(_ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(_ENGINE_ROOT))
 
 from processing_engine.engine import process_single_observation, reset_graph  # noqa: E402
-from processing_engine.evaluation.metrics import (                             # noqa: E402
+from evaluation.metrics import (                                              # noqa: E402
     CATEGORY_COLUMNS,
     CATEGORY_NAMES,
     compute_all_metrics,
@@ -512,20 +512,20 @@ def parse_args() -> argparse.Namespace:
         epilog=(
             "Examples:\n"
             "  # Auto-discover and benchmark all installed Ollama models\n"
-            "  python -m processing_engine.evaluation.evaluate --all-models\n\n"
+            "  python -m evaluation.evaluate --all-models\n\n"
             "  # Explicit model list\n"
-            "  python -m processing_engine.evaluation.evaluate \\\n"
+            "  python -m evaluation.evaluate \\\n"
             "      --models qwen2.5:14b llama3.1:8b mistral:7b\n\n"
             "  # Single model\n"
-            "  python -m processing_engine.evaluation.evaluate --models qwen2.5:14b\n\n"
+            "  python -m evaluation.evaluate --models qwen2.5:14b\n\n"
             "  # Dry run — validate CSV without running the pipeline\n"
-            "  python -m processing_engine.evaluation.evaluate --dry-run\n"
+            "  python -m evaluation.evaluate --dry-run\n"
         ),
     )
     parser.add_argument(
         "--golden",
         type=Path,
-        default=Path("processing_engine/evaluation/golden_dataset.csv"),
+        default=Path("evaluation/golden_dataset.csv"),
         help="Path to the golden dataset CSV file.",
     )
 
@@ -555,7 +555,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("processing_engine/evaluation/results"),
+        default=Path("evaluation/results"),
         help="Directory to save predictions CSVs, metrics JSONs, and leaderboard.",
     )
     parser.add_argument(
@@ -685,7 +685,7 @@ async def main() -> None:
     # 3. If multiple models were evaluated, print a final leaderboard
     if len(all_metrics) > 1:
         # Import here to avoid circular dependency at module level
-        from processing_engine.evaluation.report import (
+        from evaluation.report import (
             build_leaderboard,
             print_leaderboard,
             format_leaderboard_markdown,

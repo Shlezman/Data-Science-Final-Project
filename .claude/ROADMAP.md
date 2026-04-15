@@ -35,7 +35,7 @@
 
 ---
 
-## Module 1 — Data Aggregation & Feature Engineering 🔜
+## Module 1 — Data Aggregation & Feature Engineering 🔄
 
 > **Goal:** Turn the raw per-headline score vectors into a clean daily time-series dataset ready for model training.
 
@@ -43,7 +43,11 @@
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1.1 | Design DB schema for raw news rows and processed AI vectors | ⏸ | PostgreSQL for structured, MongoDB for raw JSON |
+| 1.0a | Docker-compose for PostgreSQL + schema init | ✅ | `docker-compose.yml` + `scripts/init_db.sql` |
+| 1.0b | CSV-to-DB migration script | ✅ | `scripts/migrate_csv_to_db.py` (idempotent) |
+| 1.0c | Daily scraper-to-DB cronjob script | ✅ | `scripts/daily_scrape_to_db.py` |
+| 1.0d | data.csv update script (column rename, merge, logging) | ✅ | `scripts/update_data_csv.py` |
+| 1.1 | Design DB schema for raw news rows and processed AI vectors | ✅ | PostgreSQL tables: `raw_headlines`, `nlp_vectors`, `daily_features`, `model_predictions` |
 | 1.2 | Build daily aggregator: group by `(date, news_provider)`, compute mean of 7 scores | ⏸ | One row = one trading day |
 | 1.3 | Integrate USD/NIS exchange rate (daily close) | ⏸ | Source TBD ❓ (e.g. Yahoo Finance, Bank of Israel API) |
 | 1.4 | Integrate S&P 500 daily close + day-over-day change | ⏸ | Source TBD ❓ |
@@ -84,7 +88,7 @@ date | politics_avg | economy_avg | security_avg | health_avg | science_avg | te
 
 ---
 
-## Module 3 — System Orchestration & Databases ⏸
+## Module 3 — System Orchestration & Databases 🔄
 
 > **Goal:** Fully automated, scheduled daily data flow from scrape → NLP → features → inference.
 
@@ -92,9 +96,9 @@ date | politics_avg | economy_avg | security_avg | health_avg | science_avg | te
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 3.1 | Design PostgreSQL schema: `raw_headlines`, `nlp_vectors`, `daily_features`, `model_predictions` | ⏸ | |
-| 3.2 | Design MongoDB collections: `raw_scrape_jobs` (full page dumps, metadata) | ⏸ | |
-| 3.3 | Build DB migration system (Alembic for Postgres) | ⏸ | |
+| 3.1 | Design PostgreSQL schema: `raw_headlines`, `nlp_vectors`, `daily_features`, `model_predictions` | ✅ | `scripts/init_db.sql`, auto-runs via docker-compose |
+| 3.2 | Design MongoDB collections: `raw_scrape_jobs` (full page dumps, metadata) | ⏸ | May drop — PostgreSQL covers most needs |
+| 3.3 | Build DB migration system (Alembic for Postgres) | ⏸ | Currently using init_db.sql; Alembic for future schema changes |
 | 3.4 | Decide orchestration tool: Airflow vs Prefect vs K8s CronJobs ❓ | ⏸ | K8s CronJobs for simplicity |
 | 3.5 | Define daily DAG / job sequence: `scrape → nlp → aggregate → inference → store` | ⏸ | |
 | 3.6 | Dead-letter queue / retry logic for failed NLP observations | ⏸ | |

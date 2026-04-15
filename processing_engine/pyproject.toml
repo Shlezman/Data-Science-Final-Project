@@ -20,6 +20,8 @@ dependencies = [
     "anyio>=4.0",
     # --- Enhanced Unicode regex ---
     "regex>=2024.0.0",
+    # --- Database ---
+    "psycopg[binary]>=3.1",
 ]
 
 [build-system]

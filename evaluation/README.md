@@ -9,7 +9,7 @@ LLM models.
 ## Directory Structure
 
 ```
-processing_engine/evaluation/
+evaluation/
 ├── golden_dataset.csv      ← Golden dataset (headline + 6 gold relevance scores)
 ├── metrics.py              ← Pure metric functions (MAE, Within-1/2, Pearson r)
 ├── evaluate.py             ← Main evaluation script (runs pipeline, saves results)
@@ -90,8 +90,8 @@ Gold scores must be integers in the range **0–10** following the rubric:
 Before running the full pipeline, check that your CSV is correctly formatted:
 
 ```bash
-python -m processing_engine.evaluation.evaluate \
-    --golden processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden evaluation/golden_dataset.csv \
     --dry-run
 ```
 
@@ -104,10 +104,10 @@ This loads and validates the CSV without calling the LLM.
 ### Option A — Single model
 
 ```bash
-python -m processing_engine.evaluation.evaluate \
-    --golden  processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden  evaluation/golden_dataset.csv \
     --models  qwen2.5:14b \
-    --output  processing_engine/evaluation/results/
+    --output  evaluation/results/
 ```
 
 This will:
@@ -120,10 +120,10 @@ This will:
 ### Option B — Multiple models in one command
 
 ```bash
-python -m processing_engine.evaluation.evaluate \
-    --golden  processing_engine/evaluation/golden_dataset.csv \
+python -m evaluation.evaluate \
+    --golden  evaluation/golden_dataset.csv \
     --models  qwen2.5:14b llama3.1:8b mistral:7b \
-    --output  processing_engine/evaluation/results/
+    --output  evaluation/results/
 ```
 
 This evaluates each model sequentially and automatically prints a
@@ -141,9 +141,9 @@ If you ran models separately on different days, you can regenerate
 the leaderboard at any time from the saved `*_metrics.json` files:
 
 ```bash
-python -m processing_engine.evaluation.report \
-    --results processing_engine/evaluation/results/ \
-    --output  processing_engine/evaluation/results/leaderboard.md
+python -m evaluation.report \
+    --results evaluation/results/ \
+    --output  evaluation/results/leaderboard.md
 ```
 
 This reads all `*_metrics.json` files in the results directory and produces:
