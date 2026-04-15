@@ -81,10 +81,10 @@ if check_cmd docker; then
     docker --version
 else
     info "Installing Docker..."
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq docker.io docker-compose-plugin
-    sudo systemctl enable --now docker
-    sudo usermod -aG docker "$USER"
+    apt-get update -qq
+    apt-get install -y -qq docker.io docker-compose-plugin
+    systemctl enable --now docker
+    usermod -aG docker "$USER"
     ok "Docker installed. NOTE: You may need to log out and back in for group changes."
 fi
 
@@ -93,7 +93,7 @@ if docker compose version &>/dev/null; then
     ok "docker compose v2: $(docker compose version --short)"
 else
     info "Installing docker-compose-plugin..."
-    sudo apt-get install -y -qq docker-compose-plugin
+    apt-get install -y -qq docker-compose-plugin
     ok "docker-compose-plugin installed"
 fi
 
@@ -104,12 +104,12 @@ if check_cmd python3; then
         ok "Python $PY_VERSION (>= 3.12)"
     else
         fail "Python $PY_VERSION found but 3.12+ required"
-        info "Install with: sudo apt install python3.12 python3.12-venv"
+        info "Install with: apt install python3.12 python3.12-venv"
         exit 1
     fi
 else
     fail "Python3 not found"
-    info "Install with: sudo apt install python3.12 python3.12-venv"
+    info "Install with: apt install python3.12 python3.12-venv"
     exit 1
 fi
 
@@ -151,7 +151,7 @@ step "Step 3/6 — Installing Playwright Firefox"
 
 # Install system deps for Playwright (Ubuntu)
 info "Installing Playwright system dependencies..."
-sudo npx playwright install-deps firefox 2>/dev/null || sudo apt-get install -y -qq \
+npx playwright install-deps firefox 2>/dev/null || apt-get install -y -qq \
     libgtk-3-0 libnotify4 libnss3 libxss1 libasound2t64 libatk-bridge2.0-0 libdrm2 \
     libgbm1 libpango-1.0-0 libcairo2 libcups2 libx11-xcb1 libxcomposite1 \
     libxdamage1 libxrandr2 2>/dev/null || info "Some Playwright deps may already be installed"
