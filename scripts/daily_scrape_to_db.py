@@ -97,7 +97,7 @@ def scrape_dates(
     batch_size: int = 5,
 ) -> list[dict[str, str]]:
     """
-    Run the mivzakim_scraper and return parsed rows.
+    Run the mivzakim_scraper as a subprocess under its own venv.
 
     The scraper writes to ``../headlines.csv`` relative to its own directory.
     We read that file back, then delete it (we don't want to accumulate files).
@@ -108,11 +108,7 @@ def scrape_dates(
         If the scraper crashes — allows the cron scheduler to detect failure.
     """
     import csv
-
-    if str(SCRAPER_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRAPER_DIR))
-
-    from scrape import get_data  # type: ignore[import-untyped]
+    import subprocess
 
     logger.info(
         "Running scraper for {} day(s) ending {}",
@@ -120,11 +116,34 @@ def scrape_dates(
         end_date.strftime("%Y-%m-%d"),
     )
 
+    # Run the scraper in its own venv via `uv run` to avoid cross-venv
+    # import issues (playwright, pandas, etc. live in mivzakim_scraper's venv).
+    scraper_script = (
+        "from scrape import get_data; "
+        "from datetime import datetime; "
+        f"get_data(start_date=datetime({end_date.year},{end_date.month},{end_date.day}), "
+        f"days={days}, pages={pages}, batch_size={batch_size})"
+    )
+
     try:
-        get_data(start_date=end_date, days=days, pages=pages, batch_size=batch_size)
-    except Exception as exc:
-        logger.error("Scraper failed: {}", exc)
-        raise RuntimeError(f"Scraper failed for {days} day(s) ending {end_date}") from exc
+        result = subprocess.run(
+            ["uv", "run", "python", "-c", scraper_script],
+            cwd=str(SCRAPER_DIR),
+            capture_output=True,
+            text=True,
+            timeout=3600,
+        )
+        if result.stdout:
+            logger.info("Scraper stdout:\n{}", result.stdout.rstrip())
+        if result.returncode != 0:
+            logger.error("Scraper stderr:\n{}", result.stderr.rstrip())
+            raise RuntimeError(f"Scraper exited with code {result.returncode}")
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Scraper timed out after 1 hour") from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "uv not found — install from https://docs.astral.sh/uv/"
+        ) from exc
 
     # Read the scraper output
     output_file = SCRAPER_DIR.parent / "headlines.csv"

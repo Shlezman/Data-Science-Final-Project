@@ -159,15 +159,15 @@ def scrape_new_dates(
     """
     Run the mivzakim_scraper for dates in [start_date, end_date].
 
+    Invokes the scraper as a subprocess under the mivzakim_scraper venv
+    (via ``uv run``) to avoid cross-venv import issues.
+
     Returns the newly scraped rows (with canonical column names).
     """
-    # Import scraper from the sibling package
+    import subprocess
+
     project_root = Path(__file__).resolve().parent.parent
     scraper_dir = project_root / "mivzakim_scraper"
-    if str(scraper_dir) not in sys.path:
-        sys.path.insert(0, str(scraper_dir))
-
-    from scrape import get_data  # type: ignore[import-untyped]
 
     days = (end_date - start_date).days + 1
     if days <= 0:
@@ -181,25 +181,44 @@ def scrape_new_dates(
         end_date.strftime(DATE_FMT),
     )
 
+    # Build a small Python snippet that calls get_data with our arguments.
+    # This runs inside the mivzakim_scraper venv where playwright/pandas exist.
+    scraper_script = (
+        "from scrape import get_data; "
+        "from datetime import datetime; "
+        f"get_data(start_date=datetime({end_date.year},{end_date.month},{end_date.day}), "
+        f"days={days}, pages={pages}, batch_size={batch_size})"
+    )
+
     try:
-        get_data(
-            start_date=end_date,
-            days=days,
-            pages=pages,
-            batch_size=batch_size,
+        result = subprocess.run(
+            ["uv", "run", "python", "-c", scraper_script],
+            cwd=str(scraper_dir),
+            capture_output=True,
+            text=True,
+            timeout=3600,  # 1 hour max for large scrapes
         )
-        # Scraper writes to ../headlines.csv relative to mivzakim_scraper/
-        scraper_output = scraper_dir.parent / "headlines.csv"
-        if scraper_output.exists():
-            _, new_rows = read_csv(scraper_output)
-            scraper_output.unlink()  # clean up temp file
-            return new_rows
-        else:
-            logger.warning("Scraper did not produce output file")
-            return []
-    except Exception as exc:
-        logger.error("Scraper failed: {}", exc)
-        raise RuntimeError(f"Scraper failed for {start_date} → {end_date}") from exc
+        if result.stdout:
+            logger.info("Scraper stdout:\n{}", result.stdout.rstrip())
+        if result.returncode != 0:
+            logger.error("Scraper stderr:\n{}", result.stderr.rstrip())
+            raise RuntimeError(f"Scraper exited with code {result.returncode}")
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Scraper timed out after 1 hour") from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "uv not found — install from https://docs.astral.sh/uv/"
+        ) from exc
+
+    # Scraper writes to ../headlines.csv relative to mivzakim_scraper/
+    scraper_output = project_root / "headlines.csv"
+    if scraper_output.exists():
+        _, new_rows = read_csv(scraper_output)
+        scraper_output.unlink()  # clean up temp file
+        return new_rows
+    else:
+        logger.warning("Scraper did not produce output file")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────

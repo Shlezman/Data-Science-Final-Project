@@ -2,6 +2,13 @@ import os
 from datetime import datetime, timedelta
 
 import asyncio
+import pandas as pd
+from playwright.async_api import async_playwright
+
+from mivzakim_search_scraper import SearchScraper
+from utils import DATE_FORMAT
+
+from mivzakim_scraper import Scraper
 
 
 def clean_dir(dir_name: str) -> None:
@@ -26,12 +33,13 @@ async def scrape_single_date(date_obj: datetime, pages: int = 100, browser=None)
     """
     Scrape data for a single date using the shared browser
     """
-    from mivzakim_scraper import Scraper
-    from utils import DATE_FORMAT
-
     try:
+        # Create scraper instance for this date
         scraper = Scraper(date_obj, num_pages=pages)
+
+
         await scraper.scrape_from_page(browser=browser)
+
         print(f"Completed scraping for date: {date_obj.strftime(DATE_FORMAT)}")
 
     except Exception as e:
@@ -42,10 +50,9 @@ async def scrape_batch(dates: list, pages: int = 100) -> None:
     """
     Scrape a batch of dates concurrently using a single browser instance
     """
-    from playwright.async_api import async_playwright
-
     print(f"Starting concurrent scraping for {len(dates)} dates in this batch...")
 
+    # 2. יצירת דפדפן אחד לכל הבאץ'
     async with async_playwright() as pw:
         browser = await pw.firefox.launch(
             headless=True,
@@ -76,8 +83,6 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
     :param batch_size: Number of days to process in each batch (default 30)
     :return: headlines.csv file
     """
-    from utils import DATE_FORMAT
-
     if start_date is None:
         start_date = datetime.now()
 
@@ -117,17 +122,13 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
     print("=" * 60)
 
 
-def get_search_data(keywords: set, num_pages: int = 1):
+def get_search_data(keywords: set, num_pages: int = 1) -> pd.DataFrame:
     """
     Running the main flow of collecting headlines using keyword search
     :param keywords: Set of keywords to search for
     :param num_pages: Number of pages to scrape per keyword
     :return: DataFrame with scraped headlines
     """
-    import pandas as pd  # noqa: F811 — lazy import, only needed for search functions
-
-    from mivzakim_search_scraper import SearchScraper  # noqa: F811
-
     print(f"Searching for keywords {keywords}")
 
     # Run async scraping with search
@@ -139,15 +140,10 @@ def get_search_data(keywords: set, num_pages: int = 1):
     return df
 
 
-async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int = 1, browser=None):
+async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int = 1, browser=None) -> pd.DataFrame:
     """
     Scrape search data for a single date using the shared browser
     """
-    import pandas as pd
-
-    from mivzakim_search_scraper import SearchScraper
-    from utils import DATE_FORMAT
-
     try:
         scraper = SearchScraper(date_obj, keywords, num_pages)
         df = await scraper.scrape_from_search(browser=browser)
@@ -158,13 +154,11 @@ async def scrape_single_search(date_obj: datetime, keywords: set, num_pages: int
         return pd.DataFrame()
 
 
-async def scrape_search_batch(keywords: set, num_pages: int = 1):
+async def scrape_search_batch(keywords: set, num_pages: int = 1) -> pd.DataFrame:
     """
     Search-based scraping using a single shared browser instance
     (mirrors scrape_batch pattern from get_data)
     """
-    from playwright.async_api import async_playwright
-
     print(f"Starting search scraping with keywords: {keywords}")
 
     async with async_playwright() as pw:
