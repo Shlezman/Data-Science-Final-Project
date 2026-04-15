@@ -108,6 +108,12 @@ AGENT_CONCURRENCY: int = int(_env("AGENT_CONCURRENCY", "7"))
 # Only relevant for OpenAI-compatible backends; Ollama has no rate limits.
 RATE_LIMIT_RPM: int = int(_env("RATE_LIMIT_RPM", "0"))
 
+# Force the text-based ManualToolAgent for ALL models, regardless of name.
+# Required when the inference server (e.g. vLLM on RunAI) does not support
+# native tool/function calling (--enable-auto-tool-choice not set).
+# Default: auto-detect (only Nemotron/Dicta use ManualToolAgent).
+FORCE_MANUAL_TOOLS: bool = _env("FORCE_MANUAL_TOOLS", "false").lower() in ("true", "1", "yes")
+
 
 # ---------------------------------------------------------------------------
 # Retry / resilience settings
