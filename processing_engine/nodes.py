@@ -35,6 +35,7 @@ from tenacity import (
 
 from .config import (
     AGENT_CONCURRENCY,
+    RATE_LIMIT_RPM,
     RELEVANCY_CATEGORIES,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
@@ -61,6 +62,33 @@ logger.info(
     AGENT_CONCURRENCY,
     _mode,
 )
+
+
+# ── Rate limiter for external APIs ─────────────────────────────────────
+
+
+class _AsyncRateLimiter:
+    """Simple rate limiter for async contexts (requests per minute)."""
+
+    def __init__(self, rpm: int) -> None:
+        self._interval = 60.0 / rpm if rpm > 0 else 0.0
+        self._lock = asyncio.Lock()
+        self._last_call = 0.0
+
+    async def acquire(self) -> None:
+        if self._interval <= 0:
+            return
+        async with self._lock:
+            now = asyncio.get_event_loop().time()
+            wait = self._last_call + self._interval - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_call = asyncio.get_event_loop().time()
+
+
+_rate_limiter = _AsyncRateLimiter(RATE_LIMIT_RPM)
+if RATE_LIMIT_RPM > 0:
+    logger.info("Rate limiter: {} RPM ({:.1f}s between calls)", RATE_LIMIT_RPM, 60.0 / RATE_LIMIT_RPM)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -166,6 +194,7 @@ def make_agent_node(agent, state_key: str, display_name: str):
 
         try:
             async with _agent_semaphore:
+                await _rate_limiter.acquire()
                 structured = await _invoke_with_retry(headline)
             logger.info("[{}] score={}", display_name, structured.score)
             return {

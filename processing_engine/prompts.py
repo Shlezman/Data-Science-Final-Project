@@ -26,11 +26,13 @@ from __future__ import annotations
 
 from .config import (
     CATEGORY_DISPLAY_NAMES,
+    LLM_BACKEND,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
     SENTIMENT_MAX,
     SENTIMENT_MIN,
     OllamaConfig,
+    OpenAIConfig,
 )
 
 
@@ -39,22 +41,72 @@ from .config import (
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def build_llm(cfg: OllamaConfig | None = None):
+def build_llm(cfg: OllamaConfig | OpenAIConfig | None = None):
     """
-    Instantiate a ``ChatOllama`` model from the provided config.
+    Instantiate a chat model from the provided config.
 
-    Uses ``langchain_ollama`` (the official LangChain–Ollama
-    integration package).
+    Backend selection:
+      - ``SENTISENSE_LLM_BACKEND=ollama`` (default) → ``ChatOllama``
+      - ``SENTISENSE_LLM_BACKEND=openai`` → ``ChatOpenAI`` (works with
+        any OpenAI-compatible API: Mistral, vLLM, etc.)
     """
+    backend = LLM_BACKEND.lower()
+
+    if backend == "openai" and not isinstance(cfg, OllamaConfig):
+        return _build_openai_llm(cfg)
+    return _build_ollama_llm(cfg)
+
+
+def _build_ollama_llm(cfg: OllamaConfig | None = None):
+    """Instantiate a ``ChatOllama`` model."""
     from langchain_ollama import ChatOllama
 
-    cfg = cfg or OllamaConfig()
+    cfg = cfg if isinstance(cfg, OllamaConfig) else OllamaConfig()
     return ChatOllama(
         base_url=cfg.base_url,
         model=cfg.model,
         temperature=cfg.temperature,
         num_ctx=cfg.num_ctx,
         timeout=cfg.request_timeout,
+    )
+
+
+def _build_openai_llm(cfg: OpenAIConfig | None = None):
+    """
+    Instantiate a ``ChatOpenAI`` model for OpenAI-compatible APIs.
+
+    Handles:
+      - Self-signed certificates (``verify_ssl=false``)
+      - Custom Host header (required by some reverse-proxy deployments)
+    """
+    import httpx
+    from langchain_openai import ChatOpenAI
+
+    cfg = cfg if isinstance(cfg, OpenAIConfig) else OpenAIConfig()
+
+    # Suppress noisy SSL warnings when verification is disabled
+    if not cfg.verify_ssl:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    # Build custom headers (Host header for reverse-proxy routing)
+    headers: dict[str, str] = {}
+    if cfg.host_header:
+        headers["Host"] = cfg.host_header
+
+    # httpx clients for sync and async — handle SSL bypass + headers
+    http_client = httpx.Client(verify=cfg.verify_ssl, headers=headers)
+    http_async_client = httpx.AsyncClient(verify=cfg.verify_ssl, headers=headers)
+
+    return ChatOpenAI(
+        base_url=cfg.base_url,
+        model=cfg.model,
+        temperature=cfg.temperature,
+        api_key=cfg.api_key,
+        timeout=cfg.request_timeout,
+        max_retries=cfg.max_retries,
+        http_client=http_client,
+        http_async_client=http_async_client,
     )
 
 

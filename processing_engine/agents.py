@@ -78,8 +78,9 @@ def is_nemotron_model(model_name: str) -> bool:
 
 
 def _llm_is_nemotron(llm) -> bool:
-    """Extract the model name from a ChatOllama instance and check it."""
-    return is_nemotron_model(getattr(llm, "model", ""))
+    """Extract the model name from a ChatOllama/ChatOpenAI instance and check it."""
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "")
+    return is_nemotron_model(model_name)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -435,7 +436,7 @@ def build_all_agents(llm=None) -> dict:
 
     agents["sentiment"] = build_sentiment_agent(llm=llm)
 
-    model_name = getattr(llm, "model", "unknown")
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
     agent_type = "ManualToolAgent" if _llm_is_nemotron(llm) else "create_react_agent"
     logger.info(
         "All 7 agents built ({}) for model '{}'", agent_type, model_name
