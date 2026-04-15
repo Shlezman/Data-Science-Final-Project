@@ -18,6 +18,7 @@
 # Flags:
 #   --skip-scrape    Skip the data.csv update (scraper) step
 #   --skip-migrate   Skip the CSV-to-DB migration step
+#   --skip-docker    Skip PostgreSQL start (use when Docker daemon is unavailable)
 #   --dry-run        Show what would happen without making changes
 #
 # ═══════════════════════════════════════════════════════════════════════
@@ -33,12 +34,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SKIP_SCRAPE=false
 SKIP_MIGRATE=false
+SKIP_DOCKER=false
 DRY_RUN=false
 
 for arg in "$@"; do
     case "$arg" in
         --skip-scrape)  SKIP_SCRAPE=true ;;
         --skip-migrate) SKIP_MIGRATE=true ;;
+        --skip-docker)  SKIP_DOCKER=true ;;
         --dry-run)      DRY_RUN=true ;;
         *)              echo "Unknown flag: $arg"; exit 1 ;;
     esac
@@ -157,10 +160,14 @@ step "Step 3/6 — Installing Playwright Firefox"
 
 # Install system deps for Playwright (Ubuntu)
 info "Installing Playwright system dependencies..."
-npx playwright install-deps firefox 2>/dev/null || apt-get install -y -qq \
-    libgtk-3-0 libnotify4 libnss3 libxss1 libasound2t64 libatk-bridge2.0-0 libdrm2 \
-    libgbm1 libpango-1.0-0 libcairo2 libcups2 libx11-xcb1 libxcomposite1 \
-    libxdamage1 libxrandr2 2>/dev/null || info "Some Playwright deps may already be installed"
+cd "$PROJECT_ROOT/mivzakim_scraper"
+uv run playwright install-deps 2>/dev/null || apt-get install -y -qq \
+    libxcb-shm0 libx11-xcb1 libx11-6 libxcb1 libxext6 libxrandr2 \
+    libxcomposite1 libxcursor1 libxdamage1 libxfixes3 libxi6 \
+    libgtk-3-0 libpangocairo-1.0-0 libpango-1.0-0 libatk1.0-0 \
+    libcairo-gobject2 libcairo2 libgdk-pixbuf-2.0-0 libxrender1 \
+    libasound2 libfreetype6 libfontconfig1 \
+    2>/dev/null || info "Some Playwright deps may already be installed"
 
 cd "$PROJECT_ROOT/mivzakim_scraper"
 uv run playwright install firefox
@@ -182,8 +189,13 @@ else
     ok ".env already exists"
 fi
 
-if $DRY_RUN; then
+if $SKIP_DOCKER; then
+    info "Skipped (--skip-docker flag)"
+elif $DRY_RUN; then
     info "[DRY RUN] Would run: docker compose up -d"
+elif ! docker info &>/dev/null; then
+    info "Docker daemon not available (no socket). Skipping PostgreSQL start."
+    info "If running inside a container, start PostgreSQL externally or use --skip-docker."
 else
     docker compose up -d
     ok "PostgreSQL container started"
