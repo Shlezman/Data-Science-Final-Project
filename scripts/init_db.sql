@@ -16,9 +16,13 @@ CREATE TABLE IF NOT EXISTS raw_headlines (
     headline        TEXT         NOT NULL,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
-    -- Deduplicate on (date, source, hour, headline) to prevent re-imports
-    CONSTRAINT uq_headline UNIQUE (date, source, hour, headline)
+    -- MD5 hash column for unique constraint (avoids B-tree size limit on long headlines)
+    headline_hash   TEXT GENERATED ALWAYS AS (md5(headline)) STORED
 );
+
+-- Deduplicate on (date, source, hour, headline_hash) — safe for any headline length
+CREATE UNIQUE INDEX IF NOT EXISTS uq_headline
+    ON raw_headlines (date, source, hour, headline_hash);
 
 -- Index for fast lookups by date (daily aggregation queries)
 CREATE INDEX IF NOT EXISTS idx_raw_headlines_date ON raw_headlines (date);

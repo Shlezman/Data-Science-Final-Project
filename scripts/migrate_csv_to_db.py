@@ -102,7 +102,7 @@ def get_connection(db_url: str) -> Any:
 INSERT_SQL = """
     INSERT INTO raw_headlines (date, source, hour, popularity, headline)
     VALUES (%s, %s, %s, %s, %s)
-    ON CONFLICT (date, source, hour, headline) DO NOTHING
+    ON CONFLICT (date, source, hour, headline_hash) DO NOTHING
 """
 
 
