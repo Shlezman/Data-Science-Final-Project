@@ -159,6 +159,65 @@ class SentimentOutput(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════
 
 
+class HeadlineScores(BaseModel):
+    """
+    All 7 scores from a single LLM call (fast pipeline mode).
+
+    Used by ``fast_pipeline.py`` to get all relevancy + sentiment scores
+    in one inference call instead of 7 separate ReAct agent invocations.
+    """
+
+    chain_of_thought: str = Field(
+        ...,
+        description=(
+            "Brief reasoning for each score.  Reference the pre-computed "
+            "tool analysis results to justify your scores."
+        ),
+    )
+    politics_government: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Politics & Government (0-10).",
+    )
+    economy_finance: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Economy & Finance (0-10).",
+    )
+    security_military: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Security & Military (0-10).",
+    )
+    health_medicine: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Health & Medicine (0-10).",
+    )
+    science_climate: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Science & Climate (0-10).",
+    )
+    technology: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Technology (0-10).",
+    )
+    global_sentiment: int = Field(
+        ..., ge=SENTIMENT_MIN, le=SENTIMENT_MAX,
+        description="Overall tone of the text (-10 to +10, 0=neutral).",
+    )
+
+    @field_validator(
+        "politics_government", "economy_finance", "security_military",
+        "health_medicine", "science_climate", "technology", "global_sentiment",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_scores(cls, v: Any) -> int:
+        """Accept stringified ints and floats from sloppy LLM output."""
+        if isinstance(v, str):
+            v = float(v)
+        if isinstance(v, float):
+            v = round(v)
+        return int(v)
+
+
 class AgentResult(TypedDict, total=False):
     """Result payload written by a single agent node."""
 
