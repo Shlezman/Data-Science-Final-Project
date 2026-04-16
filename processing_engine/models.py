@@ -218,6 +218,74 @@ class HeadlineScores(BaseModel):
         return int(v)
 
 
+class HeadlineScoreEntry(BaseModel):
+    """One headline's scores inside a batch response."""
+
+    headline_index: int = Field(
+        ...,
+        description="0-based index matching the headline's position in the input list.",
+    )
+    chain_of_thought: str = Field(
+        ...,
+        description="Brief reasoning for this headline's scores.",
+    )
+    politics_government: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Politics & Government (0-10).",
+    )
+    economy_finance: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Economy & Finance (0-10).",
+    )
+    security_military: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Security & Military (0-10).",
+    )
+    health_medicine: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Health & Medicine (0-10).",
+    )
+    science_climate: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Science & Climate (0-10).",
+    )
+    technology: int = Field(
+        ..., ge=RELEVANCY_MIN, le=RELEVANCY_MAX,
+        description="Relevancy to Technology (0-10).",
+    )
+    global_sentiment: int = Field(
+        ..., ge=SENTIMENT_MIN, le=SENTIMENT_MAX,
+        description="Overall tone of the text (-10 to +10, 0=neutral).",
+    )
+
+    @field_validator(
+        "politics_government", "economy_finance", "security_military",
+        "health_medicine", "science_climate", "technology", "global_sentiment",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_scores(cls, v: Any) -> int:
+        if isinstance(v, str):
+            v = float(v)
+        if isinstance(v, float):
+            v = round(v)
+        return int(v)
+
+
+class BatchHeadlineScores(BaseModel):
+    """
+    Structured output for scoring multiple headlines in a single LLM call.
+
+    Each entry in ``results`` corresponds to one headline from the input,
+    identified by ``headline_index`` (0-based).
+    """
+
+    results: list[HeadlineScoreEntry] = Field(
+        ...,
+        description="One scoring entry per headline, in order of input.",
+    )
+
+
 class AgentResult(TypedDict, total=False):
     """Result payload written by a single agent node."""
 

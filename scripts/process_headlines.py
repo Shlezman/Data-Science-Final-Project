@@ -4,20 +4,27 @@ scripts.process_headlines
 Batch-process headlines from the PostgreSQL ``raw_headlines`` table
 through the SentiSense pipeline and write results to ``nlp_vectors``.
 
-Two modes:
+Three modes (slowest → fastest):
   - **Standard** (default) — 7 ReAct agents per headline (~50-60s each)
   - **Fast** (``--fast``) — single-prompt scoring with concurrent
-    headlines (~5-10s each, ~10-15x faster)
+    headlines (~3-5s each, ~10-15x faster)
+  - **Fast-batch** (``--fast --headlines-per-call N``) — N headlines packed
+    into each LLM call (~0.3-0.5s per headline effective, ~100x faster)
 
 Usage
 -----
 ::
 
-    # Fast mode (recommended) — 4 headlines concurrently, 1 LLM call each
-    cd processing_engine && uv run python ../scripts/process_headlines.py --fast --limit 100
+    # Fast-batch mode (fastest) — 15 headlines per LLM call, 4 calls at a time
+    cd processing_engine && uv run python ../scripts/process_headlines.py \\
+        --fast --headlines-per-call 15 --limit 100
 
-    # Fast mode with higher concurrency
-    cd processing_engine && uv run python ../scripts/process_headlines.py --fast --concurrency 8
+    # Fast-batch with higher throughput
+    cd processing_engine && uv run python ../scripts/process_headlines.py \\
+        --fast --headlines-per-call 20 --concurrency 8
+
+    # Fast mode — 4 headlines concurrently, 1 LLM call each
+    cd processing_engine && uv run python ../scripts/process_headlines.py --fast --limit 100
 
     # Standard multi-agent mode
     cd processing_engine && uv run python ../scripts/process_headlines.py --limit 100
@@ -351,6 +358,81 @@ async def run_batch_fast(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Fast batch mode — multiple headlines per single LLM call
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def run_batch_fast_batched(
+    conn: Any,
+    headlines: list[dict[str, Any]],
+    model_name: str,
+    commit_size: int,
+    headlines_per_call: int,
+    concurrency: int,
+) -> None:
+    """
+    Process headlines using batched single-prompt pipeline.
+
+    Multiple headlines are packed into each LLM call (``headlines_per_call``),
+    and multiple batches run concurrently.  This is the fastest mode:
+    N headlines ÷ headlines_per_call = total LLM calls needed.
+    """
+    from processing_engine.fast_pipeline import score_headlines_batch
+    from processing_engine.prompts import build_llm
+
+    llm = build_llm()
+    total = len(headlines)
+    t_start = time.perf_counter()
+    processed = 0
+    succeeded = 0
+    failed = 0
+    failed_ids: list[int] = []
+
+    total_calls = (total + headlines_per_call - 1) // headlines_per_call
+    logger.info(
+        "Fast-batch mode: {} headlines/call, {} concurrent batches → ~{} LLM calls total",
+        headlines_per_call, concurrency, total_calls,
+    )
+
+    for commit_start in range(0, total, commit_size):
+        commit_chunk = headlines[commit_start : commit_start + commit_size]
+        obs_list = [_make_obs(row) for row in commit_chunk]
+        ids = [row["id"] for row in commit_chunk]
+
+        results = await score_headlines_batch(
+            obs_list,
+            llm=llm,
+            batch_size=headlines_per_call,
+            concurrency=concurrency,
+        )
+
+        cursor = conn.cursor()
+        for headline_id, result in zip(ids, results):
+            try:
+                insert_nlp_vector(cursor, headline_id, model_name, result)
+                if result.get("validation_passed", False):
+                    succeeded += 1
+                else:
+                    failed += 1
+                    failed_ids.append(headline_id)
+            except Exception as exc:
+                logger.error("DB insert failed id={}: {}", headline_id, exc)
+                failed += 1
+                failed_ids.append(headline_id)
+            processed += 1
+
+        conn.commit()
+        cursor.close()
+        _log_progress(processed, total, succeeded, failed, t_start)
+
+    _log_summary(
+        model_name,
+        f"fast-batch ({headlines_per_call}/call, concurrency={concurrency})",
+        total, succeeded, failed, failed_ids, t_start,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Unified entry point
 # ─────────────────────────────────────────────────────────────────────
 
@@ -366,8 +448,9 @@ async def run_batch(
     dry_run: bool = False,
     fast: bool = False,
     concurrency: int = 4,
+    headlines_per_call: int = 0,
 ) -> None:
-    """Main entry point — dispatches to standard or fast runner."""
+    """Main entry point — dispatches to standard, fast, or fast-batch runner."""
     conn = get_connection(db_url)
     headlines = get_unprocessed_headlines(
         conn, model_name, limit=limit, date_from=date_from, date_to=date_to,
@@ -390,7 +473,12 @@ async def run_batch(
         conn.close()
         return
 
-    if fast:
+    if fast and headlines_per_call > 1:
+        await run_batch_fast_batched(
+            conn, headlines, model_name, batch_size,
+            headlines_per_call, concurrency,
+        )
+    elif fast:
         await run_batch_fast(conn, headlines, model_name, batch_size, concurrency)
     else:
         await run_batch_standard(conn, headlines, model_name, batch_size)
@@ -459,18 +547,37 @@ def main() -> None:
         default=4,
         help="Number of headlines to process simultaneously in fast mode (default: 4).",
     )
+    parser.add_argument(
+        "--headlines-per-call",
+        type=int,
+        default=0,
+        help=(
+            "Pack N headlines into each LLM call (batch mode). "
+            "Requires --fast. 0=disabled (1 headline per call). "
+            "Recommended: 15-20 for 32K context models. Max: ~25."
+        ),
+    )
     args = parser.parse_args()
 
     setup_logging()
 
     model_name = args.model_name or get_active_model_name()
-    mode = "fast" if args.fast else "standard"
+    hpc = args.headlines_per_call
+    if hpc > 1 and args.fast:
+        mode = f"fast-batch ({hpc}/call)"
+    elif args.fast:
+        mode = "fast"
+    else:
+        mode = "standard"
+
     logger.info("SentiSense — Batch Headline Processing")
     logger.info("  LLM backend: {}", os.environ.get("SENTISENSE_LLM_BACKEND", "ollama"))
     logger.info("  Model:       {}", model_name)
     logger.info("  Mode:        {}", mode)
     if args.fast:
         logger.info("  Concurrency: {}", args.concurrency)
+    if hpc > 1:
+        logger.info("  Headlines/call: {}", hpc)
 
     asyncio.run(run_batch(
         db_url=args.db_url,
@@ -482,6 +589,7 @@ def main() -> None:
         dry_run=args.dry_run,
         fast=args.fast,
         concurrency=args.concurrency,
+        headlines_per_call=hpc,
     ))
 
 
