@@ -49,6 +49,7 @@ from langgraph.prebuilt import create_react_agent
 
 from .config import (
     CATEGORY_DISPLAY_NAMES,
+    FORCE_MANUAL_TOOLS,
     RELEVANCY_CATEGORIES,
 )
 from .models import RelevancyOutput, SentimentOutput
@@ -77,9 +78,19 @@ def is_nemotron_model(model_name: str) -> bool:
     return any(kw in model_name.lower() for kw in _NEMOTRON_KEYWORDS)
 
 
-def _llm_is_nemotron(llm) -> bool:
-    """Extract the model name from a ChatOllama instance and check it."""
-    return is_nemotron_model(getattr(llm, "model", ""))
+def _needs_manual_tools(llm) -> bool:
+    """
+    Return True if the LLM requires the ManualToolAgent fallback.
+
+    Triggers:
+      - ``SENTISENSE_FORCE_MANUAL_TOOLS=true`` (e.g. vLLM without
+        ``--enable-auto-tool-choice``)
+      - Model name contains a Nemotron / Dicta keyword.
+    """
+    if FORCE_MANUAL_TOOLS:
+        return True
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "")
+    return is_nemotron_model(model_name)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -344,11 +355,12 @@ def build_relevancy_agent(category: str, llm=None):
     tools = SHARED_TOOLS + TOOLS_BY_CATEGORY[category]
     prompt = build_relevancy_system_prompt(category)
 
-    if _llm_is_nemotron(llm):
+    if _needs_manual_tools(llm):
         model_name = getattr(llm, "model", "unknown")
+        reason = "FORCE_MANUAL_TOOLS" if FORCE_MANUAL_TOOLS else "Nemotron/Dicta"
         logger.info(
-            "Model '{}' is Nemotron/Dicta — using ManualToolAgent for category: {}",
-            model_name, category,
+            "Model '{}' ({}) — using ManualToolAgent for category: {}",
+            model_name, reason, category,
         )
         return ManualToolAgent(
             llm=llm,
@@ -391,11 +403,12 @@ def build_sentiment_agent(llm=None):
     tools = SHARED_TOOLS + SENTIMENT_TOOLS
     prompt = build_sentiment_system_prompt()
 
-    if _llm_is_nemotron(llm):
+    if _needs_manual_tools(llm):
         model_name = getattr(llm, "model", "unknown")
+        reason = "FORCE_MANUAL_TOOLS" if FORCE_MANUAL_TOOLS else "Nemotron/Dicta"
         logger.info(
-            "Model '{}' is Nemotron/Dicta — using ManualToolAgent for sentiment",
-            model_name,
+            "Model '{}' ({}) — using ManualToolAgent for sentiment",
+            model_name, reason,
         )
         return ManualToolAgent(
             llm=llm,
@@ -435,8 +448,8 @@ def build_all_agents(llm=None) -> dict:
 
     agents["sentiment"] = build_sentiment_agent(llm=llm)
 
-    model_name = getattr(llm, "model", "unknown")
-    agent_type = "ManualToolAgent" if _llm_is_nemotron(llm) else "create_react_agent"
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
+    agent_type = "ManualToolAgent" if _needs_manual_tools(llm) else "create_react_agent"
     logger.info(
         "All 7 agents built ({}) for model '{}'", agent_type, model_name
     )

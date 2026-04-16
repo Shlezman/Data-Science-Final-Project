@@ -20,6 +20,6 @@ Usage::
     })
 """
 
-from .engine import process_single_observation
+from .engine import process_single_observation, reset_graph
 
-__all__ = ["process_single_observation"]
+__all__ = ["process_single_observation", "reset_graph"]
