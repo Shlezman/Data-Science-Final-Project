@@ -199,7 +199,7 @@ async def process_one(observation: dict[str, Any]) -> dict[str, Any]:
     return await process_single_observation(observation)
 
 
-def run_batch(
+async def run_batch(
     db_url: str,
     model_name: str,
     batch_size: int,
@@ -209,7 +209,7 @@ def run_batch(
     *,
     dry_run: bool = False,
 ) -> None:
-    """Main batch processing loop."""
+    """Main batch processing loop (async — single event loop for all headlines)."""
     t_start = time.perf_counter()
 
     conn = get_connection(db_url)
@@ -257,7 +257,7 @@ def run_batch(
             }
 
             try:
-                result = asyncio.run(process_one(obs))
+                result = await process_one(obs)
                 insert_nlp_vector(cursor, headline_id, model_name, result)
                 succeeded += 1
             except Exception as exc:
@@ -365,7 +365,7 @@ def main() -> None:
     logger.info("  LLM backend: {}", os.environ.get("SENTISENSE_LLM_BACKEND", "ollama"))
     logger.info("  Model:       {}", model_name)
 
-    run_batch(
+    asyncio.run(run_batch(
         db_url=args.db_url,
         model_name=model_name,
         batch_size=args.batch_size,
@@ -373,7 +373,7 @@ def main() -> None:
         date_from=args.date_from,
         date_to=args.date_to,
         dry_run=args.dry_run,
-    )
+    ))
 
 
 if __name__ == "__main__":
