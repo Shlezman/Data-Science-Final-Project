@@ -85,7 +85,7 @@ class OpenAIConfig:
     model: str = field(default_factory=lambda: _env("OPENAI_MODEL", "mistral-large-2"))
     temperature: float = field(default_factory=lambda: float(_env("OPENAI_TEMPERATURE", "0.1")))
     api_key: str = field(default_factory=lambda: _env("OPENAI_API_KEY", "not-needed"))
-    request_timeout: float = field(default_factory=lambda: float(_env("OPENAI_TIMEOUT", "120")))
+    request_timeout: float = field(default_factory=lambda: float(_env("OPENAI_TIMEOUT", "600")))
     max_retries: int = field(default_factory=lambda: int(_env("OPENAI_MAX_RETRIES", "2")))
     verify_ssl: bool = field(default_factory=lambda: _env("OPENAI_VERIFY_SSL", "false").lower() in ("true", "1", "yes"))
     host_header: str = field(default_factory=lambda: _env("OPENAI_HOST_HEADER", ""))

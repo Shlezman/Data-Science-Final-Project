@@ -94,9 +94,10 @@ def _build_openai_llm(cfg: OpenAIConfig | None = None):
     if cfg.host_header:
         headers["Host"] = cfg.host_header
 
-    # httpx clients for sync and async — handle SSL bypass + headers
-    http_client = httpx.Client(verify=cfg.verify_ssl, headers=headers)
-    http_async_client = httpx.AsyncClient(verify=cfg.verify_ssl, headers=headers)
+    # httpx clients for sync and async — handle SSL bypass + headers + timeout
+    http_timeout = httpx.Timeout(cfg.request_timeout, connect=30.0)
+    http_client = httpx.Client(verify=cfg.verify_ssl, headers=headers, timeout=http_timeout)
+    http_async_client = httpx.AsyncClient(verify=cfg.verify_ssl, headers=headers, timeout=http_timeout)
 
     return ChatOpenAI(
         base_url=cfg.base_url,
