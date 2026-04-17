@@ -24,8 +24,15 @@ Relevance and sentiment are fully decoupled:
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
+from loguru import logger
+
 from .config import (
     CATEGORY_DISPLAY_NAMES,
+    COMPLETIONS_MAX_TOKENS,
+    FORCE_COMPLETIONS_API,
     LLM_BACKEND,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
@@ -47,13 +54,24 @@ def build_llm(cfg: OllamaConfig | OpenAIConfig | None = None):
 
     Backend selection:
       - ``SENTISENSE_LLM_BACKEND=ollama`` (default) → ``ChatOllama``
+      - ``SENTISENSE_LLM_BACKEND=openai`` + ``FORCE_COMPLETIONS_API=true``
+        → ``CompletionsLLMWrapper`` (raw ``/v1/completions`` endpoint)
       - ``SENTISENSE_LLM_BACKEND=openai`` → ``ChatOpenAI`` (works with
         any OpenAI-compatible API: Mistral, vLLM, etc.)
     """
     backend = LLM_BACKEND.lower()
 
     if backend == "openai" and not isinstance(cfg, OllamaConfig):
+        if FORCE_COMPLETIONS_API:
+            return _build_openai_completions_llm(cfg)
         return _build_openai_llm(cfg)
+
+    if FORCE_COMPLETIONS_API and backend != "openai":
+        logger.warning(
+            "FORCE_COMPLETIONS_API=true has no effect when LLM_BACKEND={}; "
+            "set SENTISENSE_LLM_BACKEND=openai to use /v1/completions.",
+            backend,
+        )
     return _build_ollama_llm(cfg)
 
 
@@ -109,6 +127,248 @@ def _build_openai_llm(cfg: OpenAIConfig | None = None):
         http_client=http_client,
         http_async_client=http_async_client,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Raw /v1/completions wrapper  (FORCE_COMPLETIONS_API=true)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _extract_json_object(text: str) -> str:
+    """
+    Extract the first complete JSON object from LLM output.
+
+    Uses brace-depth counting that respects string literals so it
+    won't be tripped up by ``{`` or ``}`` inside quoted values.
+    """
+    text = text.strip()
+    start = text.find("{")
+    if start == -1:
+        raise ValueError(f"No JSON object found in completion: {text[:300]}…")
+
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    raise ValueError(f"Unterminated JSON object in completion: {text[:300]}…")
+
+
+def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
+    """
+    Convert a chat-style messages list into a single text prompt.
+
+    Uses Mistral-style ``[INST]…[/INST]`` markers — compatible with
+    Mistral, Mixtral, and most instruction-tuned models served via vLLM's
+    ``/v1/completions`` endpoint.
+
+    Message ordering is preserved: system messages come first (grouped),
+    then remaining messages in their original order.
+    """
+    system_parts: list[str] = []
+    rest_parts: list[str] = []
+
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            system_parts.append(content)
+        elif role in ("user", "assistant"):
+            rest_parts.append(content)
+        else:
+            logger.warning("Unsupported role '{}' in _messages_to_prompt; skipping.", role)
+
+    body = "\n\n".join(system_parts + rest_parts)
+    return f"[INST] {body} [/INST]"
+
+
+class _StructuredCompletionsLLM:
+    """
+    Wraps a :class:`CompletionsLLMWrapper` to parse raw completions into
+    a validated Pydantic model.
+
+    Drop-in replacement for the object returned by
+    ``ChatOpenAI(...).with_structured_output(MyModel)``.
+    """
+
+    __slots__ = ("_wrapper", "_schema_class", "_schema_instruction")
+
+    def __init__(
+        self,
+        wrapper: "CompletionsLLMWrapper",
+        schema_class: type,
+    ) -> None:
+        self._wrapper = wrapper
+        self._schema_class = schema_class
+
+        # Build the JSON schema instruction once (cached across calls).
+        schema_json = json.dumps(
+            schema_class.model_json_schema(), indent=2,
+        )
+        self._schema_instruction = (
+            "\n\nYou MUST respond with ONLY a valid JSON object.  "
+            "No markdown fences, no explanation, no extra text before "
+            "or after the JSON.  The JSON MUST conform to this schema:\n"
+            f"{schema_json}"
+        )
+
+    async def ainvoke(self, input_: Any) -> Any:  # noqa: ANN401
+        """Accept a messages list *or* raw text; return a Pydantic model."""
+        if isinstance(input_, list):
+            prompt = _messages_to_prompt(input_)
+        else:
+            prompt = str(input_)
+
+        prompt += self._schema_instruction
+
+        raw = await self._wrapper._raw_complete(prompt)
+        json_str = _extract_json_object(raw)
+        return self._schema_class.model_validate_json(json_str)
+
+
+class CompletionsLLMWrapper:
+    """
+    Wraps the ``/v1/completions`` endpoint behind the same interface
+    that :pymod:`fast_pipeline` expects from ``ChatOpenAI``.
+
+    Returned by :func:`build_llm` when ``FORCE_COMPLETIONS_API=true``.
+    The pipeline calls ``llm.with_structured_output(Schema)`` which
+    returns a :class:`_StructuredCompletionsLLM` — fully transparent
+    to callers.
+
+    Supports async context-manager protocol for proper resource cleanup::
+
+        async with build_llm() as llm:
+            structured = llm.with_structured_output(HeadlineScores)
+            ...
+
+    If used without ``async with``, call :meth:`aclose` explicitly or
+    rely on process exit for cleanup (acceptable for batch scripts).
+    """
+
+    __slots__ = ("_client", "_cfg", "_url")
+
+    def __init__(self, client: Any, cfg: OpenAIConfig) -> None:
+        self._client = client
+        self._cfg = cfg
+
+        base = cfg.base_url.rstrip("/")
+        # Guard against /chat/completions misconfiguration
+        if base.endswith("/chat/completions"):
+            logger.warning(
+                "base_url ends with /chat/completions — stripping to use "
+                "/v1/completions instead (FORCE_COMPLETIONS_API is active).",
+            )
+            base = base.rsplit("/chat/completions", 1)[0]
+
+        self._url = (
+            base
+            if base.endswith("/v1/completions") or base.endswith("/completions")
+            else f"{base}/completions"
+        )
+        logger.debug("CompletionsLLMWrapper → {}", self._url)
+
+    async def __aenter__(self) -> "CompletionsLLMWrapper":
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx.AsyncClient."""
+        await self._client.aclose()
+
+    async def _raw_complete(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Send a raw text prompt and return the completion text."""
+        payload: dict[str, Any] = {
+            "model": self._cfg.model,
+            "prompt": prompt,
+            "max_tokens": max_tokens or COMPLETIONS_MAX_TOKENS,
+            "temperature": self._cfg.temperature,
+        }
+
+        resp = await self._client.post(self._url, json=payload)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise ValueError(
+                f"Empty or missing 'choices' in completions response: "
+                f"{json.dumps(data)[:500]}"
+            )
+        text = choices[0].get("text")
+        if text is None:
+            raise ValueError(
+                f"Missing 'text' in first choice: "
+                f"{json.dumps(choices[0])[:300]}"
+            )
+        return text
+
+    def with_structured_output(
+        self,
+        schema_class: type,
+    ) -> _StructuredCompletionsLLM:
+        """Return a wrapper that parses completions into *schema_class*."""
+        return _StructuredCompletionsLLM(self, schema_class)
+
+
+def _build_openai_completions_llm(cfg: OpenAIConfig | None = None):
+    """
+    Build a :class:`CompletionsLLMWrapper` for ``/v1/completions``.
+
+    Used when the inference server only exposes the legacy completions
+    endpoint (e.g. vLLM with Mistral architectures that block
+    ``/v1/chat/completions``).
+    """
+    import httpx
+
+    cfg = cfg if isinstance(cfg, OpenAIConfig) else OpenAIConfig()
+
+    if not cfg.verify_ssl:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    headers: dict[str, str] = {}
+    if cfg.host_header:
+        headers["Host"] = cfg.host_header
+    if cfg.api_key and cfg.api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+
+    http_timeout = httpx.Timeout(cfg.request_timeout, connect=30.0)
+    client = httpx.AsyncClient(
+        verify=cfg.verify_ssl,
+        headers=headers,
+        timeout=http_timeout,
+    )
+
+    return CompletionsLLMWrapper(client, cfg)
 
 
 # ═══════════════════════════════════════════════════════════════════════

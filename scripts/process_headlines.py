@@ -570,10 +570,13 @@ def main() -> None:
     else:
         mode = "standard"
 
+    completions_mode = os.environ.get("SENTISENSE_FORCE_COMPLETIONS_API", "").lower() in ("true", "1", "yes")
     logger.info("SentiSense — Batch Headline Processing")
     logger.info("  LLM backend: {}", os.environ.get("SENTISENSE_LLM_BACKEND", "ollama"))
     logger.info("  Model:       {}", model_name)
     logger.info("  Mode:        {}", mode)
+    if completions_mode:
+        logger.info("  API:         /v1/completions (raw text)")
     if args.fast:
         logger.info("  Concurrency: {}", args.concurrency)
     if hpc > 1:

@@ -114,6 +114,17 @@ RATE_LIMIT_RPM: int = int(_env("RATE_LIMIT_RPM", "0"))
 # Default: auto-detect (only Nemotron/Dicta use ManualToolAgent).
 FORCE_MANUAL_TOOLS: bool = _env("FORCE_MANUAL_TOOLS", "false").lower() in ("true", "1", "yes")
 
+# Force use of /v1/completions endpoint instead of /v1/chat/completions.
+# Required when the inference server (e.g. vLLM with certain Mistral
+# architectures) does not expose the chat completions API.
+# When enabled, the pipeline formats prompts as raw text with [INST] tokens
+# and parses JSON from the completion output.
+FORCE_COMPLETIONS_API: bool = _env("FORCE_COMPLETIONS_API", "false").lower() in ("true", "1", "yes")
+
+# Maximum tokens to generate when using the completions endpoint.
+# Only relevant when FORCE_COMPLETIONS_API=true.
+COMPLETIONS_MAX_TOKENS: int = int(_env("COMPLETIONS_MAX_TOKENS", "4096"))
+
 
 # ---------------------------------------------------------------------------
 # Retry / resilience settings
