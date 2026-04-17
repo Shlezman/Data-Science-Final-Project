@@ -236,14 +236,32 @@ class _StructuredCompletionsLLM:
     async def ainvoke(self, input_: Any) -> Any:  # noqa: ANN401
         """Accept a messages list *or* raw text; return a Pydantic model."""
         if isinstance(input_, list):
-            prompt = _messages_to_prompt(input_)
+            # Inject JSON schema instruction into the messages so it
+            # ends up INSIDE the [INST]…[/INST] block — not after it.
+            # Text after [/INST] is treated as already-generated output
+            # by instruction-tuned models, causing empty completions.
+            augmented = list(input_)
+            augmented.append({
+                "role": "user",
+                "content": self._schema_instruction,
+            })
+            prompt = _messages_to_prompt(augmented)
         else:
-            prompt = str(input_)
-
-        prompt += self._schema_instruction
+            prompt = str(input_) + self._schema_instruction
 
         raw = await self._wrapper._raw_complete(prompt)
-        json_str = _extract_json_object(raw)
+        logger.debug(
+            "Completions raw response ({} chars): {}",
+            len(raw), raw[:500],
+        )
+        try:
+            json_str = _extract_json_object(raw)
+        except ValueError:
+            logger.error(
+                "No JSON in completion ({} chars). Full text: {}",
+                len(raw), raw[:1000],
+            )
+            raise
         return self._schema_class.model_validate_json(json_str)
 
 
@@ -316,6 +334,12 @@ class CompletionsLLMWrapper:
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
 
+        # Log full response envelope for debugging empty completions
+        logger.info(
+            "Completions response (status={}): {}",
+            resp.status_code, json.dumps(data, ensure_ascii=False)[:800],
+        )
+
         choices = data.get("choices") or []
         if not choices:
             raise ValueError(
@@ -323,10 +347,11 @@ class CompletionsLLMWrapper:
                 f"{json.dumps(data)[:500]}"
             )
         text = choices[0].get("text")
-        if text is None:
+        if text is None or text.strip() == "":
+            finish = choices[0].get("finish_reason", "unknown")
             raise ValueError(
-                f"Missing 'text' in first choice: "
-                f"{json.dumps(choices[0])[:300]}"
+                f"Empty completion text (finish_reason={finish}). "
+                f"Full choice: {json.dumps(choices[0], ensure_ascii=False)[:500]}"
             )
         return text
 
