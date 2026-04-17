@@ -177,11 +177,13 @@ def _extract_json_object(text: str) -> str:
 
 def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
     """
-    Convert a chat-style messages list into a single text prompt.
+    Convert a chat-style messages list into a plain-text prompt.
 
-    Uses Mistral-style ``[INST]…[/INST]`` markers — compatible with
-    Mistral, Mixtral, and most instruction-tuned models served via vLLM's
-    ``/v1/completions`` endpoint.
+    Uses simple concatenation with no special instruction tokens.
+    Newer Mistral models (Small 4, etc.) do NOT recognise the legacy
+    ``[INST]…[/INST]`` markers and produce empty completions when they
+    are present.  Plain text prompts work reliably across model families
+    when served via vLLM's ``/v1/completions`` endpoint.
 
     Message ordering is preserved: system messages come first (grouped),
     then remaining messages in their original order.
@@ -200,7 +202,7 @@ def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
             logger.warning("Unsupported role '{}' in _messages_to_prompt; skipping.", role)
 
     body = "\n\n".join(system_parts + rest_parts)
-    return f"[INST] {body} [/INST]"
+    return body + "\n\n"
 
 
 class _StructuredCompletionsLLM:
