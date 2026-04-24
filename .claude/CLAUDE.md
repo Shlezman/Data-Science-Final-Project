@@ -95,7 +95,7 @@ cd processing_engine && uv run python ../scripts/backfill_history.py \
 # (those with validation_passed=FALSE in nlp_vectors for the active model).
 # Deletes the stale failure rows, then re-runs through the same pipeline.
 cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
-    --fast --headlines-per-call 50 --concurrency 32
+    --fast --headlines-per-call 50 --concurrency 50
 
 # Retry including never-processed headlines (superset of unprocessed + failed)
 cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \

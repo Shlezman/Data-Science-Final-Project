@@ -588,9 +588,10 @@ def main() -> None:
     args = parser.parse_args()
 
     # Safety bounds — prevent accidental resource exhaustion.
-    # These caps match what the inference server can comfortably handle;
-    # raise them only after load-testing the vLLM backend.
-    _MAX_CONCURRENCY = 32
+    # 128 comfortably accommodates the production vLLM mistral-small-4
+    # deployment (observed stable at 50 concurrent).  Lower it via
+    # shell alias if targeting a smaller backend (e.g. Ollama qwen2.5).
+    _MAX_CONCURRENCY = 128
     _MAX_HEADLINES_PER_CALL = 150
     if args.concurrency < 1 or args.concurrency > _MAX_CONCURRENCY:
         parser.error(
