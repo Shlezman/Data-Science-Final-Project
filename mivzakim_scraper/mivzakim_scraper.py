@@ -65,15 +65,19 @@ class Scraper:
         os.makedirs("cookies", exist_ok=True)
         os.makedirs("sessions", exist_ok=True)
 
-        context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-            viewport=random.choice(VIEWPORTS),
-            storage_state=session,
-            ignore_https_errors=True
-        )
-
+        # Assign context inside try so that if browser.new_context() raises
+        # (e.g. the browser process crashed), the finally clause does not
+        # attempt to call .close() on an undefined name and mask the original error.
+        context = None
         page = None
         try:
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+                viewport=random.choice(VIEWPORTS),
+                storage_state=session,
+                ignore_https_errors=True
+            )
+
             if headers:
                 await context.set_extra_http_headers(headers)
             if cookies:
@@ -106,7 +110,8 @@ class Scraper:
             # סגירת העמוד וה-context בלבד. לא סוגרים את ה-browser!
             if page:
                 await page.close()
-            await context.close()
+            if context:
+                await context.close()
 
     def _get_data(self, page_source: str) -> pd.DataFrame:
         """Extract table data from page source using XPath"""
@@ -182,13 +187,18 @@ class Scraper:
                 print(f"    Error scraping page {page_num}: {e}")
                 break
 
+        # Guard against every page timing out — pd.concat([]) raises ValueError.
+        if not all_dataframes:
+            print("No pages returned data — nothing to write")
+            return pd.DataFrame()
+
         df = pd.concat(all_dataframes, ignore_index=True).drop_duplicates(
         ).reset_index(drop=True).dropna(subset=["headline"])
         if not df.empty:
             # Check if file exists
             if os.path.exists(output_file):
-                # Read existing data
-                existing_df = pd.read_csv(output_file)
+                # Read existing data (explicit UTF-8 for Hebrew text)
+                existing_df = pd.read_csv(output_file, encoding="utf-8")
 
                 # Combine with new data and remove duplicates
                 combined_df = pd.concat([existing_df, df], ignore_index=True)
@@ -197,15 +207,15 @@ class Scraper:
                 # Calculate how many new records were added
                 new_records = len(combined_df) - len(existing_df)
 
-                # Save back to file
+                # Save back to file (explicit UTF-8 for Hebrew)
                 combined_df.to_csv(output_file, mode='w',
-                                   header=True, index=False)
+                                   header=True, index=False, encoding="utf-8")
                 print(
                     f"Added {new_records} new records to {output_file} (total: {len(combined_df)})")
             else:
-                # Create new file with header
+                # Create new file with header (explicit UTF-8 for Hebrew)
                 df = df.drop_duplicates().reset_index(drop=True)
-                df.to_csv(output_file, mode='w', header=True, index=False)
+                df.to_csv(output_file, mode='w', header=True, index=False, encoding="utf-8")
                 print(f"Created {output_file} with {len(df)} records")
 
             print(

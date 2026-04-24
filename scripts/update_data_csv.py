@@ -28,8 +28,13 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from loguru import logger
+
+# Israel timezone — the scraper site is anchored to Israeli dates.
+# Using datetime.now() on a UTC host would roll over at 02:00 IST.
+_IL_TZ = ZoneInfo("Asia/Jerusalem")
 
 # ─────────────────────────────────────────────────────────────────────
 # Constants
@@ -212,13 +217,17 @@ def scrape_new_dates(
 
     # Scraper writes to ../headlines.csv relative to mivzakim_scraper/
     scraper_output = project_root / "headlines.csv"
-    if scraper_output.exists():
-        _, new_rows = read_csv(scraper_output)
-        scraper_output.unlink()  # clean up temp file
-        return new_rows
-    else:
+    if not scraper_output.exists():
         logger.warning("Scraper did not produce output file")
         return []
+
+    # Always remove the temp file — even if read_csv raises — so a malformed
+    # file is not re-ingested as "new data" on the next run.
+    try:
+        _, new_rows = read_csv(scraper_output)
+    finally:
+        scraper_output.unlink(missing_ok=True)
+    return new_rows
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -251,7 +260,9 @@ def update_dataset(data_file: Path, *, dry_run: bool = False) -> None:
         write_csv(data_file, existing_rows)
 
     # Determine scrape range
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now(_IL_TZ).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
     if latest:
         start_scrape = latest + timedelta(days=1)
     else:

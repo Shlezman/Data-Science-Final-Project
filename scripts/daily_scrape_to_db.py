@@ -52,8 +52,14 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from loguru import logger
+
+# Israel timezone — the scraper target site reports Israeli dates.
+# Using the system clock (datetime.now()) on a UTC-hosted container would
+# cross the day boundary ~02:00 Israel time and request yesterday's page.
+_IL_TZ = ZoneInfo("Asia/Jerusalem")
 
 # ─────────────────────────────────────────────────────────────────────
 # Constants
@@ -151,17 +157,20 @@ def scrape_dates(
         logger.warning("Scraper produced no output file")
         return []
 
-    with open(output_file, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+    # Always remove the temp file, even if CSV parsing raises — otherwise a
+    # malformed output would be re-read on the next cron run as "new data".
+    try:
+        with open(output_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
 
-    # Apply column renames
-    for row in rows:
-        if "importance_level" in row and "popularity" not in row:
-            row["popularity"] = row.pop("importance_level")
+        # Apply column renames
+        for row in rows:
+            if "importance_level" in row and "popularity" not in row:
+                row["popularity"] = row.pop("importance_level")
+    finally:
+        output_file.unlink(missing_ok=True)
 
-    # Clean up
-    output_file.unlink()
     logger.info("Scraped {:,} rows", len(rows))
     return rows
 
@@ -246,7 +255,10 @@ def daily_update(
     *,
     dry_run: bool = False,
 ) -> None:
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Anchor to Israel time so the "today" boundary matches the news site.
+    today = datetime.now(_IL_TZ).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
     t_start = time.perf_counter()
 
     logger.info("SentiSense Daily Scrape — {} day(s) ending {}", days, today.strftime("%Y-%m-%d"))

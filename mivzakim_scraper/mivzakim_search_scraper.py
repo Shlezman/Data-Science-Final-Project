@@ -56,7 +56,9 @@ class SearchScraper(Scraper):
                     formatted_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
                 else:
                     formatted_date = self.date
-            except:
+            except (ValueError, IndexError, AttributeError):
+                # Malformed date token — fall back to the instance date but
+                # never swallow KeyboardInterrupt/SystemExit.
                 formatted_date = self.date
 
             # Find the next table after this date div
@@ -99,15 +101,17 @@ class SearchScraper(Scraper):
         os.makedirs("cookies", exist_ok=True)
         os.makedirs("sessions", exist_ok=True)
 
-        context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-            viewport=random.choice(VIEWPORTS),
-            storage_state=session,
-            ignore_https_errors=True
-        )
-
+        # See mivzakim_scraper.py for why context must be created inside try/finally.
+        context = None
         page = None
         try:
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+                viewport=random.choice(VIEWPORTS),
+                storage_state=session,
+                ignore_https_errors=True
+            )
+
             if headers:
                 await context.set_extra_http_headers(headers)
             if cookies:
@@ -159,7 +163,8 @@ class SearchScraper(Scraper):
         finally:
             if page:
                 await page.close()
-            await context.close()
+            if context:
+                await context.close()
 
     async def _get_page_source_from_url(self, browser, url: str, headers: dict = None) -> str:
         """
@@ -171,15 +176,17 @@ class SearchScraper(Scraper):
         session = read_session(session_name=self.__str__())
         cookies = read_cookies(cookies_name=self.__str__())
 
-        context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-            viewport=random.choice(VIEWPORTS),
-            storage_state=session,
-            ignore_https_errors=True
-        )
-
+        # See mivzakim_scraper.py for why context must be created inside try/finally.
+        context = None
         page = None
         try:
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+                viewport=random.choice(VIEWPORTS),
+                storage_state=session,
+                ignore_https_errors=True
+            )
+
             if headers:
                 await context.set_extra_http_headers(headers)
             if cookies:
@@ -206,7 +213,8 @@ class SearchScraper(Scraper):
         finally:
             if page:
                 await page.close()
-            await context.close()
+            if context:
+                await context.close()
 
     async def scrape_from_search(self, browser, output_file: str = "../headlines_search.csv") -> pd.DataFrame:
         """
@@ -289,14 +297,20 @@ class SearchScraper(Scraper):
 
             if not df.empty:
                 if os.path.exists(output_file):
-                    existing_df = pd.read_csv(output_file)
+                    # Explicit UTF-8 — default locale on non-UTF-8 systems
+                    # silently corrupts Hebrew text.
+                    existing_df = pd.read_csv(output_file, encoding="utf-8")
                     combined_df = pd.concat([existing_df, df], ignore_index=True)
                     combined_df = combined_df.drop_duplicates().reset_index(drop=True)
                     new_records = len(combined_df) - len(existing_df)
-                    combined_df.to_csv(output_file, mode='w', header=True, index=False)
+                    combined_df.to_csv(
+                        output_file, mode='w', header=True, index=False, encoding="utf-8"
+                    )
                     print(f"Added {new_records} new records to {output_file} (total: {len(combined_df)})")
                 else:
-                    df.to_csv(output_file, mode='w', header=True, index=False)
+                    df.to_csv(
+                        output_file, mode='w', header=True, index=False, encoding="utf-8"
+                    )
                     print(f"Created {output_file} with {len(df)} records")
 
             print(f"Total headlines found across all keywords and pages: {len(df)}")
