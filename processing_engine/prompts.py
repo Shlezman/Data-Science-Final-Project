@@ -336,8 +336,9 @@ class CompletionsLLMWrapper:
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
 
-        # Log full response envelope for debugging empty completions
-        logger.info(
+        # Log full response envelope at DEBUG — INFO is too verbose for
+        # batch runs (one line per headline × millions of rows).
+        logger.debug(
             "Completions response (status={}): {}",
             resp.status_code, json.dumps(data, ensure_ascii=False)[:800],
         )
@@ -365,7 +366,9 @@ class CompletionsLLMWrapper:
         return _StructuredCompletionsLLM(self, schema_class)
 
 
-def _build_openai_completions_llm(cfg: OpenAIConfig | None = None):
+def _build_openai_completions_llm(
+    cfg: OpenAIConfig | None = None,
+) -> "CompletionsLLMWrapper":
     """
     Build a :class:`CompletionsLLMWrapper` for ``/v1/completions``.
 

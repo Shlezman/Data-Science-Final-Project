@@ -183,6 +183,27 @@ headline on 7 dimensions in a single assessment.
 # ═══════════════════════════════════════════════════════════════════════
 
 
+async def _score_headline_with_evidence(
+    headline: str,
+    evidence: str,
+    *,
+    structured_llm,
+) -> HeadlineScores:
+    """Invoke the structured LLM with a pre-computed evidence block.
+
+    Split out of :func:`score_headline` so callers that run evidence
+    pre-computation in a worker thread can reuse the LLM call path.
+    """
+    user_message = (
+        f"## Headline\n{headline}\n\n"
+        f"## Pre-computed Tool Analysis\n{evidence}"
+    )
+    return await structured_llm.ainvoke([
+        {"role": "system", "content": _FAST_SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ])
+
+
 async def score_headline(
     headline: str,
     llm=None,
@@ -208,17 +229,14 @@ async def score_headline(
         llm = llm or build_llm()
         _structured_llm = llm.with_structured_output(HeadlineScores)
 
-    # Pre-compute all tool evidence locally (instant)
+    # Pre-compute all tool evidence locally (instant, CPU-bound).
+    # Public single-headline path stays synchronous — the hot path in
+    # score_headlines_concurrent() wraps precompute_tool_evidence in
+    # asyncio.to_thread directly to avoid blocking the event loop.
     evidence = precompute_tool_evidence(headline)
-
-    user_message = f"## Headline\n{headline}\n\n## Pre-computed Tool Analysis\n{evidence}"
-
-    result = await _structured_llm.ainvoke([
-        {"role": "system", "content": _FAST_SYSTEM_PROMPT},
-        {"role": "user", "content": user_message},
-    ])
-
-    return result
+    return await _score_headline_with_evidence(
+        headline, evidence, structured_llm=_structured_llm,
+    )
 
 
 async def score_headlines_concurrent(
@@ -254,8 +272,13 @@ async def score_headlines_concurrent(
 
         try:
             async with semaphore:
-                scores = await score_headline(
-                    headline, _structured_llm=structured_llm,
+                # Run CPU-bound tool scanning off the event loop so other
+                # coroutines (already past the semaphore) can progress.
+                evidence = await asyncio.to_thread(
+                    precompute_tool_evidence, headline,
+                )
+                scores = await _score_headline_with_evidence(
+                    headline, evidence, structured_llm=structured_llm,
                 )
             elapsed = time.perf_counter() - t0
 
@@ -305,8 +328,18 @@ async def score_headlines_concurrent(
 # Batch mode — multiple headlines per single LLM call
 # ═══════════════════════════════════════════════════════════════════════
 
-# Token budget constants (for Mistral-Large-2 / 32K context)
-_CONTEXT_WINDOW = 32_768
+# Token budget constants.
+#
+# The default context window matches current production targets:
+#   - Mistral-Small-4-119b on vLLM: 128K context (default)
+#   - Mistral-Large-2 / 32K context: set SENTISENSE_CONTEXT_WINDOW=32768
+#   - Ollama qwen2.5:14b / 8K context: set SENTISENSE_CONTEXT_WINDOW=8192
+#
+# Override via the ``SENTISENSE_CONTEXT_WINDOW`` environment variable when
+# switching to a smaller-context model.
+import os as _os
+
+_CONTEXT_WINDOW = int(_os.getenv("SENTISENSE_CONTEXT_WINDOW", "131072"))
 _SYSTEM_PROMPT_TOKENS = 800       # measured ~750, padded
 _PER_HEADLINE_INPUT_TOKENS = 650  # evidence + headline text + formatting
 _PER_HEADLINE_OUTPUT_TOKENS = 250  # scores + chain_of_thought
@@ -315,7 +348,7 @@ _SAFETY_FACTOR = 0.75             # 25% safety margin
 MAX_BATCH_SIZE = int(
     (_CONTEXT_WINDOW * _SAFETY_FACTOR - _SYSTEM_PROMPT_TOKENS)
     / (_PER_HEADLINE_INPUT_TOKENS + _PER_HEADLINE_OUTPUT_TOKENS)
-)  # ≈ 25
+)  # ≈ 109 on 128K context, ≈ 26 on 32K context
 
 
 _BATCH_SYSTEM_PROMPT = f"""\
@@ -361,12 +394,29 @@ on 7 dimensions.
 """
 
 
+def _sanitize_for_batch_delimiter(text: str) -> str:
+    """Neutralise characters that collide with the batch prompt delimiters.
+
+    Hebrew headlines almost never contain these patterns, but we harden the
+    prompt so a single malformed headline cannot corrupt an entire batch —
+    which would cause scores to be swapped between neighbouring entries.
+    """
+    if not text:
+        return text
+    # Replace structural markers that would otherwise split a headline.
+    text = text.replace("---", "— — —")
+    text = text.replace("## Headline [", "## H [")
+    text = text.replace("### Tool Analysis [", "### T [")
+    return text
+
+
 def _build_batch_user_message(headlines: list[str], evidences: list[str]) -> str:
     """Format N headlines + their tool evidence into a single user message."""
     parts: list[str] = []
     for i, (headline, evidence) in enumerate(zip(headlines, evidences)):
+        safe_headline = _sanitize_for_batch_delimiter(headline)
         parts.append(
-            f"---\n## Headline [{i}]\n{headline}\n\n"
+            f"---\n## Headline [{i}]\n{safe_headline}\n\n"
             f"### Tool Analysis [{i}]\n{evidence}"
         )
     return "\n\n".join(parts)
@@ -460,9 +510,14 @@ async def score_headlines_batch(
         headline_texts = [obs.get("headline", "") for obs in batch_obs]
         t0 = time.perf_counter()
 
-        # Pre-compute all tool evidence locally (instant)
-        evidences = [precompute_tool_evidence(h) for h in headline_texts]
-        user_message = _build_batch_user_message(headline_texts, evidences)
+        # Pre-compute tool evidence on a worker thread so the event loop
+        # stays responsive for other concurrent batch coroutines waiting
+        # on HTTP responses.  Tools are stateless regex / dict lookups —
+        # thread-safe by construction.
+        evidences = await asyncio.gather(
+            *[asyncio.to_thread(precompute_tool_evidence, h) for h in headline_texts]
+        )
+        user_message = _build_batch_user_message(headline_texts, list(evidences))
 
         try:
             async with semaphore:
@@ -472,10 +527,20 @@ async def score_headlines_batch(
                 ])
             elapsed = time.perf_counter() - t0
 
-            # Map results by headline_index for safe ordering
-            entries_by_idx: dict[int, HeadlineScoreEntry] = {
-                entry.headline_index: entry for entry in batch_result.results
-            }
+            # Map results by headline_index for safe ordering.
+            # Collisions are logged loudly — a duplicate index from the LLM
+            # would silently overwrite a neighbouring headline's scores.
+            entries_by_idx: dict[int, HeadlineScoreEntry] = {}
+            for entry in batch_result.results:
+                idx = entry.headline_index
+                if idx in entries_by_idx:
+                    logger.warning(
+                        "Batch duplicate headline_index {} returned by LLM; "
+                        "keeping first, dropping later entry.",
+                        idx,
+                    )
+                    continue
+                entries_by_idx[idx] = entry
 
             results: list[dict[str, Any]] = []
             for i, obs in enumerate(batch_obs):

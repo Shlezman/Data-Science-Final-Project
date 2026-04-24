@@ -81,24 +81,32 @@ def setup_logging() -> None:
 
 
 def get_connection(db_url: str) -> Any:
-    """Create a psycopg connection."""
-    try:
-        import psycopg
+    """Create a psycopg connection.
 
-        return psycopg.connect(db_url, autocommit=False)
+    Tries psycopg v3 first, then psycopg2 as a fallback.  Only a missing
+    driver (ImportError) triggers the fallback — any other connection
+    failure (bad URL, auth, network) propagates immediately so the user
+    sees the real error instead of a misleading "driver not installed"
+    message.
+    """
+    try:
+        import psycopg  # noqa: F401
     except ImportError:
         pass
+    else:
+        import psycopg as _psycopg
+
+        return _psycopg.connect(db_url, autocommit=False)
 
     try:
         import psycopg2
-
-        return psycopg2.connect(db_url)
     except ImportError:
         logger.error(
             "Neither psycopg nor psycopg2 is installed.\n"
             "  Install with: pip install 'psycopg[binary]'"
         )
         sys.exit(1)
+    return psycopg2.connect(db_url)
 
 
 def get_active_model_name() -> str:
@@ -257,7 +265,25 @@ async def run_batch_standard(
     model_name: str,
     batch_size: int,
 ) -> None:
-    """Process headlines one-at-a-time through the 7-agent pipeline."""
+    """Process headlines one-at-a-time through the 7-agent pipeline.
+
+    .. deprecated::
+        The standard multi-agent path depends on native function-/tool-
+        calling via ``/v1/chat/completions``.  It is incompatible with
+        ``FORCE_COMPLETIONS_API=true`` (vLLM Mistral-Small 4) and only
+        works against Ollama or an OpenAI-compatible chat endpoint that
+        supports ``bind_tools``.  Prefer ``--fast`` for all new runs.
+    """
+    if os.environ.get("SENTISENSE_FORCE_COMPLETIONS_API", "").lower() in (
+        "true", "1", "yes",
+    ):
+        logger.warning(
+            "Standard multi-agent mode is incompatible with "
+            "FORCE_COMPLETIONS_API=true (no tool-calling on /v1/completions). "
+            "Use --fast instead; aborting."
+        )
+        sys.exit(2)
+
     from processing_engine import reset_graph
     reset_graph()
 
@@ -554,10 +580,28 @@ def main() -> None:
         help=(
             "Pack N headlines into each LLM call (batch mode). "
             "Requires --fast. 0=disabled (1 headline per call). "
-            "Recommended: 15-20 for 32K context models. Max: ~25."
+            "Recommended: 15-20 on 32K-context models, 50-80 on 128K. "
+            "Upper bound auto-derived from SENTISENSE_CONTEXT_WINDOW "
+            "(fast_pipeline.MAX_BATCH_SIZE). Exceeding the bound is clamped."
         ),
     )
     args = parser.parse_args()
+
+    # Safety bounds — prevent accidental resource exhaustion.
+    # These caps match what the inference server can comfortably handle;
+    # raise them only after load-testing the vLLM backend.
+    _MAX_CONCURRENCY = 32
+    _MAX_HEADLINES_PER_CALL = 150
+    if args.concurrency < 1 or args.concurrency > _MAX_CONCURRENCY:
+        parser.error(
+            f"--concurrency must be between 1 and {_MAX_CONCURRENCY} "
+            f"(got {args.concurrency})."
+        )
+    if args.headlines_per_call < 0 or args.headlines_per_call > _MAX_HEADLINES_PER_CALL:
+        parser.error(
+            f"--headlines-per-call must be between 0 and "
+            f"{_MAX_HEADLINES_PER_CALL} (got {args.headlines_per_call})."
+        )
 
     setup_logging()
 

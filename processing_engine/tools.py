@@ -493,11 +493,8 @@ def assess_threat_level(text: str) -> str:
     moderate = {"מבצע", "כוננות", "גיוס", "גבול", "רחפנים", "מנהרה"}
     low = {"תקציב ביטחון", "ותיקי צבא", "תרגיל", "אימון"}
 
-    words = set(text.split())
-    headline_set = set()
-    for w in words:
-        headline_set.add(w)
-    # Also check multi-word patterns against full text
+    # Keyword matching uses substring search (``kw in text``) to handle
+    # Hebrew morphology — prefix/suffix attached to the keyword root.
     for kw in critical:
         if kw in text:
             return f"Threat level: CRITICAL (matched: '{kw}')"

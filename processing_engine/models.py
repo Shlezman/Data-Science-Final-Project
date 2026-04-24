@@ -223,6 +223,7 @@ class HeadlineScoreEntry(BaseModel):
 
     headline_index: int = Field(
         ...,
+        ge=0,
         description="0-based index matching the headline's position in the input list.",
     )
     chain_of_thought: str = Field(
