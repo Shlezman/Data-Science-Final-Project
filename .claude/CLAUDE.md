@@ -82,6 +82,27 @@ cd processing_engine && uv run python ../scripts/update_data_csv.py
 
 # Daily cronjob: scrape today's headlines directly into DB
 cd processing_engine && uv run python ../scripts/daily_scrape_to_db.py
+
+# Backfill history: scrape backwards from the oldest stored date until
+# the site returns no more data (stops after 2 consecutive empty windows)
+cd processing_engine && uv run python ../scripts/backfill_history.py
+
+# Backfill with custom window / cap
+cd processing_engine && uv run python ../scripts/backfill_history.py \
+    --window 30 --max-days 365
+
+# Retry headlines that previously failed NLP processing
+# (those with validation_passed=FALSE in nlp_vectors for the active model).
+# Deletes the stale failure rows, then re-runs through the same pipeline.
+cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
+    --fast --headlines-per-call 50 --concurrency 50
+
+# Retry including never-processed headlines (superset of unprocessed + failed)
+cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
+    --fast --headlines-per-call 50 --include-missing
+
+# Dry run: show how many would be retried without touching the DB
+cd processing_engine && uv run python ../scripts/retry_failed_headlines.py --dry-run
 ```
 
 ### Full pipeline init (Ubuntu)
@@ -155,6 +176,9 @@ Located in `scripts/`:
 - **`update_data_csv.py`** — scrapes new dates, merges into `data.csv`, renames legacy columns, logs summary
 - **`migrate_csv_to_db.py`** — one-time bulk import of `data.csv` → `raw_headlines` table (idempotent)
 - **`daily_scrape_to_db.py`** — cronjob: scrape today + yesterday → insert directly to DB
+- **`backfill_history.py`** — scrapes backwards from the oldest stored date until the site returns no more data
+- **`process_headlines.py`** — runs unprocessed `raw_headlines` through the LLM pipeline, writing to `nlp_vectors`
+- **`retry_failed_headlines.py`** — re-runs headlines whose previous `nlp_vectors` row was marked `validation_passed=FALSE` (DELETE + re-INSERT, since `ON CONFLICT DO NOTHING` would otherwise skip them)
 
 All scripts use loguru (stderr + `logs/` directory) and support `--dry-run`.
 
