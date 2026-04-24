@@ -32,11 +32,11 @@ Usage
 
     # Retry all failed headlines using fast-batch mode (recommended)
     cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \\
-        --fast --headlines-per-call 50 --concurrency 50
+        --fast --headlines-per-call 50 --concurrency 32
 
     # Also retry headlines that were never processed at all
     cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \\
-        --fast --headlines-per-call 50 --concurrency 50 --include-missing
+        --fast --headlines-per-call 50 --concurrency 32 --include-missing
 
     # Only retry failures in a date window
     cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \\
@@ -322,7 +322,7 @@ def main() -> None:
             "Examples:\n"
             "  # Retry all failed headlines (recommended)\n"
             "  cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \\\n"
-            "      --fast --headlines-per-call 50 --concurrency 50\n\n"
+            "      --fast --headlines-per-call 50 --concurrency 32\n\n"
             "  # Also retry headlines that were never processed\n"
             "  cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \\\n"
             "      --fast --headlines-per-call 50 --include-missing\n\n"
