@@ -333,7 +333,17 @@ class CompletionsLLMWrapper:
         }
 
         resp = await self._client.post(self._url, json=payload)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Surface the server's error body — httpx's raise_for_status()
+            # hides it by default and the caller only sees the status line,
+            # which obscures the real reason (most commonly max_tokens
+            # exceeds the server's configured max-model-len).
+            body = resp.text[:2000] if resp.text else "<empty body>"
+            logger.error(
+                "Completions HTTP {} from {} (payload max_tokens={}): {}",
+                resp.status_code, self._url, payload["max_tokens"], body,
+            )
+            resp.raise_for_status()
         data: dict[str, Any] = resp.json()
 
         # Log full response envelope at DEBUG — INFO is too verbose for
