@@ -123,7 +123,16 @@ FORCE_COMPLETIONS_API: bool = _env("FORCE_COMPLETIONS_API", "false").lower() in 
 
 # Maximum tokens to generate when using the completions endpoint.
 # Only relevant when FORCE_COMPLETIONS_API=true.
-COMPLETIONS_MAX_TOKENS: int = int(_env("COMPLETIONS_MAX_TOKENS", "4096"))
+#
+# Default sized for fast-batch mode with up to ~60 headlines per call,
+# each emitting ~250 output tokens (chain_of_thought + 7 scores + JSON
+# wrapping).  4096 (the previous default) silently truncated any batch
+# with more than ~15 headlines and bricked the whole batch.
+#
+# Override via ``SENTISENSE_COMPLETIONS_MAX_TOKENS`` when targeting a
+# smaller context window (e.g. 32K models → set to 8192) or when you
+# want to push batch size past 60.
+COMPLETIONS_MAX_TOKENS: int = int(_env("COMPLETIONS_MAX_TOKENS", "16384"))
 
 
 # ---------------------------------------------------------------------------

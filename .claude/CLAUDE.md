@@ -135,6 +135,17 @@ relevance_category_1..6, global_sentiment, validation_passed, errors, processing
 
 **LLM backend:** Local Ollama (default model `qwen2.5:14b`, temperature 0.1). Configurable via `SENTISENSE_*` environment variables (base_url, model, temperature, timeout, context window, recursion limit, retry settings).
 
+**Production (vLLM mistral-small-4, completions-only):**
+```bash
+export SENTISENSE_LLM_BACKEND=openai
+export SENTISENSE_OPENAI_BASE_URL=https://10.10.248.21/v1
+export SENTISENSE_OPENAI_MODEL=mistral-small-4
+export SENTISENSE_OPENAI_HOST_HEADER=mistral-small-4-119b-nvfp4-runai-model-120b.cs.colman.ac.il
+export SENTISENSE_FORCE_COMPLETIONS_API=true
+export SENTISENSE_COMPLETIONS_MAX_TOKENS=32768   # safe for --headlines-per-call up to ~100
+```
+With these set, `get_active_model_name()` returns `mistral-small-4` and both `process_headlines.py` and `retry_failed_headlines.py` target the correct `nlp_vectors.model_name` rows.
+
 **Tools per agent:** Each agent has shared Hebrew text utilities (`clean_hebrew_text`, `transliterate_hebrew`, `detect_urgency_signals`, etc.) plus category-specific keyword scanners.
 
 **Entry point for programmatic use:**
