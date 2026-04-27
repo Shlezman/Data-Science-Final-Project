@@ -85,7 +85,7 @@ class OpenAIConfig:
     model: str = field(default_factory=lambda: _env("OPENAI_MODEL", "mistral-large-2"))
     temperature: float = field(default_factory=lambda: float(_env("OPENAI_TEMPERATURE", "0.1")))
     api_key: str = field(default_factory=lambda: _env("OPENAI_API_KEY", "not-needed"))
-    request_timeout: float = field(default_factory=lambda: float(_env("OPENAI_TIMEOUT", "120")))
+    request_timeout: float = field(default_factory=lambda: float(_env("OPENAI_TIMEOUT", "600")))
     max_retries: int = field(default_factory=lambda: int(_env("OPENAI_MAX_RETRIES", "2")))
     verify_ssl: bool = field(default_factory=lambda: _env("OPENAI_VERIFY_SSL", "false").lower() in ("true", "1", "yes"))
     host_header: str = field(default_factory=lambda: _env("OPENAI_HOST_HEADER", ""))
@@ -113,6 +113,26 @@ RATE_LIMIT_RPM: int = int(_env("RATE_LIMIT_RPM", "0"))
 # native tool/function calling (--enable-auto-tool-choice not set).
 # Default: auto-detect (only Nemotron/Dicta use ManualToolAgent).
 FORCE_MANUAL_TOOLS: bool = _env("FORCE_MANUAL_TOOLS", "false").lower() in ("true", "1", "yes")
+
+# Force use of /v1/completions endpoint instead of /v1/chat/completions.
+# Required when the inference server (e.g. vLLM with certain Mistral
+# architectures) does not expose the chat completions API.
+# When enabled, the pipeline formats prompts as raw text with [INST] tokens
+# and parses JSON from the completion output.
+FORCE_COMPLETIONS_API: bool = _env("FORCE_COMPLETIONS_API", "false").lower() in ("true", "1", "yes")
+
+# Maximum tokens to generate when using the completions endpoint.
+# Only relevant when FORCE_COMPLETIONS_API=true.
+#
+# Default sized for fast-batch mode with up to ~60 headlines per call,
+# each emitting ~250 output tokens (chain_of_thought + 7 scores + JSON
+# wrapping).  4096 (the previous default) silently truncated any batch
+# with more than ~15 headlines and bricked the whole batch.
+#
+# Override via ``SENTISENSE_COMPLETIONS_MAX_TOKENS`` when targeting a
+# smaller context window (e.g. 32K models → set to 8192) or when you
+# want to push batch size past 60.
+COMPLETIONS_MAX_TOKENS: int = int(_env("COMPLETIONS_MAX_TOKENS", "16384"))
 
 
 # ---------------------------------------------------------------------------

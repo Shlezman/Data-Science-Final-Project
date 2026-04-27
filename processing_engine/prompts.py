@@ -24,8 +24,15 @@ Relevance and sentiment are fully decoupled:
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
+from loguru import logger
+
 from .config import (
     CATEGORY_DISPLAY_NAMES,
+    COMPLETIONS_MAX_TOKENS,
+    FORCE_COMPLETIONS_API,
     LLM_BACKEND,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
@@ -47,13 +54,24 @@ def build_llm(cfg: OllamaConfig | OpenAIConfig | None = None):
 
     Backend selection:
       - ``SENTISENSE_LLM_BACKEND=ollama`` (default) → ``ChatOllama``
+      - ``SENTISENSE_LLM_BACKEND=openai`` + ``FORCE_COMPLETIONS_API=true``
+        → ``CompletionsLLMWrapper`` (raw ``/v1/completions`` endpoint)
       - ``SENTISENSE_LLM_BACKEND=openai`` → ``ChatOpenAI`` (works with
         any OpenAI-compatible API: Mistral, vLLM, etc.)
     """
     backend = LLM_BACKEND.lower()
 
     if backend == "openai" and not isinstance(cfg, OllamaConfig):
+        if FORCE_COMPLETIONS_API:
+            return _build_openai_completions_llm(cfg)
         return _build_openai_llm(cfg)
+
+    if FORCE_COMPLETIONS_API and backend != "openai":
+        logger.warning(
+            "FORCE_COMPLETIONS_API=true has no effect when LLM_BACKEND={}; "
+            "set SENTISENSE_LLM_BACKEND=openai to use /v1/completions.",
+            backend,
+        )
     return _build_ollama_llm(cfg)
 
 
@@ -94,9 +112,10 @@ def _build_openai_llm(cfg: OpenAIConfig | None = None):
     if cfg.host_header:
         headers["Host"] = cfg.host_header
 
-    # httpx clients for sync and async — handle SSL bypass + headers
-    http_client = httpx.Client(verify=cfg.verify_ssl, headers=headers)
-    http_async_client = httpx.AsyncClient(verify=cfg.verify_ssl, headers=headers)
+    # httpx clients for sync and async — handle SSL bypass + headers + timeout
+    http_timeout = httpx.Timeout(cfg.request_timeout, connect=30.0)
+    http_client = httpx.Client(verify=cfg.verify_ssl, headers=headers, timeout=http_timeout)
+    http_async_client = httpx.AsyncClient(verify=cfg.verify_ssl, headers=headers, timeout=http_timeout)
 
     return ChatOpenAI(
         base_url=cfg.base_url,
@@ -108,6 +127,288 @@ def _build_openai_llm(cfg: OpenAIConfig | None = None):
         http_client=http_client,
         http_async_client=http_async_client,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Raw /v1/completions wrapper  (FORCE_COMPLETIONS_API=true)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _extract_json_object(text: str) -> str:
+    """
+    Extract the first complete JSON object from LLM output.
+
+    Uses brace-depth counting that respects string literals so it
+    won't be tripped up by ``{`` or ``}`` inside quoted values.
+    """
+    text = text.strip()
+    start = text.find("{")
+    if start == -1:
+        raise ValueError(f"No JSON object found in completion: {text[:300]}…")
+
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    raise ValueError(f"Unterminated JSON object in completion: {text[:300]}…")
+
+
+def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
+    """
+    Convert a chat-style messages list into a plain-text prompt.
+
+    Uses simple concatenation with no special instruction tokens.
+    Newer Mistral models (Small 4, etc.) do NOT recognise the legacy
+    ``[INST]…[/INST]`` markers and produce empty completions when they
+    are present.  Plain text prompts work reliably across model families
+    when served via vLLM's ``/v1/completions`` endpoint.
+
+    Message ordering is preserved: system messages come first (grouped),
+    then remaining messages in their original order.
+    """
+    system_parts: list[str] = []
+    rest_parts: list[str] = []
+
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            system_parts.append(content)
+        elif role in ("user", "assistant"):
+            rest_parts.append(content)
+        else:
+            logger.warning("Unsupported role '{}' in _messages_to_prompt; skipping.", role)
+
+    body = "\n\n".join(system_parts + rest_parts)
+    return body + "\n\n"
+
+
+class _StructuredCompletionsLLM:
+    """
+    Wraps a :class:`CompletionsLLMWrapper` to parse raw completions into
+    a validated Pydantic model.
+
+    Drop-in replacement for the object returned by
+    ``ChatOpenAI(...).with_structured_output(MyModel)``.
+    """
+
+    __slots__ = ("_wrapper", "_schema_class", "_schema_instruction")
+
+    def __init__(
+        self,
+        wrapper: "CompletionsLLMWrapper",
+        schema_class: type,
+    ) -> None:
+        self._wrapper = wrapper
+        self._schema_class = schema_class
+
+        # Build the JSON schema instruction once (cached across calls).
+        schema_json = json.dumps(
+            schema_class.model_json_schema(), indent=2,
+        )
+        self._schema_instruction = (
+            "\n\nYou MUST respond with ONLY a valid JSON object.  "
+            "No markdown fences, no explanation, no extra text before "
+            "or after the JSON.  The JSON MUST conform to this schema:\n"
+            f"{schema_json}"
+        )
+
+    async def ainvoke(self, input_: Any) -> Any:  # noqa: ANN401
+        """Accept a messages list *or* raw text; return a Pydantic model."""
+        if isinstance(input_, list):
+            # Inject JSON schema instruction into the messages so it
+            # ends up INSIDE the [INST]…[/INST] block — not after it.
+            # Text after [/INST] is treated as already-generated output
+            # by instruction-tuned models, causing empty completions.
+            augmented = list(input_)
+            augmented.append({
+                "role": "user",
+                "content": self._schema_instruction,
+            })
+            prompt = _messages_to_prompt(augmented)
+        else:
+            prompt = str(input_) + self._schema_instruction
+
+        raw = await self._wrapper._raw_complete(prompt)
+        logger.debug(
+            "Completions raw response ({} chars): {}",
+            len(raw), raw[:500],
+        )
+        try:
+            json_str = _extract_json_object(raw)
+        except ValueError:
+            logger.error(
+                "No JSON in completion ({} chars). Full text: {}",
+                len(raw), raw[:1000],
+            )
+            raise
+        return self._schema_class.model_validate_json(json_str)
+
+
+class CompletionsLLMWrapper:
+    """
+    Wraps the ``/v1/completions`` endpoint behind the same interface
+    that :pymod:`fast_pipeline` expects from ``ChatOpenAI``.
+
+    Returned by :func:`build_llm` when ``FORCE_COMPLETIONS_API=true``.
+    The pipeline calls ``llm.with_structured_output(Schema)`` which
+    returns a :class:`_StructuredCompletionsLLM` — fully transparent
+    to callers.
+
+    Supports async context-manager protocol for proper resource cleanup::
+
+        async with build_llm() as llm:
+            structured = llm.with_structured_output(HeadlineScores)
+            ...
+
+    If used without ``async with``, call :meth:`aclose` explicitly or
+    rely on process exit for cleanup (acceptable for batch scripts).
+    """
+
+    __slots__ = ("_client", "_cfg", "_url")
+
+    def __init__(self, client: Any, cfg: OpenAIConfig) -> None:
+        self._client = client
+        self._cfg = cfg
+
+        base = cfg.base_url.rstrip("/")
+        # Guard against /chat/completions misconfiguration
+        if base.endswith("/chat/completions"):
+            logger.warning(
+                "base_url ends with /chat/completions — stripping to use "
+                "/v1/completions instead (FORCE_COMPLETIONS_API is active).",
+            )
+            base = base.rsplit("/chat/completions", 1)[0]
+
+        self._url = (
+            base
+            if base.endswith("/v1/completions") or base.endswith("/completions")
+            else f"{base}/completions"
+        )
+        logger.debug("CompletionsLLMWrapper → {}", self._url)
+
+    async def __aenter__(self) -> "CompletionsLLMWrapper":
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx.AsyncClient."""
+        await self._client.aclose()
+
+    async def _raw_complete(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Send a raw text prompt and return the completion text."""
+        payload: dict[str, Any] = {
+            "model": self._cfg.model,
+            "prompt": prompt,
+            "max_tokens": max_tokens or COMPLETIONS_MAX_TOKENS,
+            "temperature": self._cfg.temperature,
+        }
+
+        resp = await self._client.post(self._url, json=payload)
+        if resp.status_code >= 400:
+            # Surface the server's error body — httpx's raise_for_status()
+            # hides it by default and the caller only sees the status line,
+            # which obscures the real reason (most commonly max_tokens
+            # exceeds the server's configured max-model-len).
+            body = resp.text[:2000] if resp.text else "<empty body>"
+            logger.error(
+                "Completions HTTP {} from {} (payload max_tokens={}): {}",
+                resp.status_code, self._url, payload["max_tokens"], body,
+            )
+            resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+
+        # Log full response envelope at DEBUG — INFO is too verbose for
+        # batch runs (one line per headline × millions of rows).
+        logger.debug(
+            "Completions response (status={}): {}",
+            resp.status_code, json.dumps(data, ensure_ascii=False)[:800],
+        )
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise ValueError(
+                f"Empty or missing 'choices' in completions response: "
+                f"{json.dumps(data)[:500]}"
+            )
+        text = choices[0].get("text")
+        if text is None or text.strip() == "":
+            finish = choices[0].get("finish_reason", "unknown")
+            raise ValueError(
+                f"Empty completion text (finish_reason={finish}). "
+                f"Full choice: {json.dumps(choices[0], ensure_ascii=False)[:500]}"
+            )
+        return text
+
+    def with_structured_output(
+        self,
+        schema_class: type,
+    ) -> _StructuredCompletionsLLM:
+        """Return a wrapper that parses completions into *schema_class*."""
+        return _StructuredCompletionsLLM(self, schema_class)
+
+
+def _build_openai_completions_llm(
+    cfg: OpenAIConfig | None = None,
+) -> "CompletionsLLMWrapper":
+    """
+    Build a :class:`CompletionsLLMWrapper` for ``/v1/completions``.
+
+    Used when the inference server only exposes the legacy completions
+    endpoint (e.g. vLLM with Mistral architectures that block
+    ``/v1/chat/completions``).
+    """
+    import httpx
+
+    cfg = cfg if isinstance(cfg, OpenAIConfig) else OpenAIConfig()
+
+    if not cfg.verify_ssl:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    headers: dict[str, str] = {}
+    if cfg.host_header:
+        headers["Host"] = cfg.host_header
+    if cfg.api_key and cfg.api_key != "not-needed":
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+
+    http_timeout = httpx.Timeout(cfg.request_timeout, connect=30.0)
+    client = httpx.AsyncClient(
+        verify=cfg.verify_ssl,
+        headers=headers,
+        timeout=http_timeout,
+    )
+
+    return CompletionsLLMWrapper(client, cfg)
 
 
 # ═══════════════════════════════════════════════════════════════════════

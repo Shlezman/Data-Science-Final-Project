@@ -13,6 +13,25 @@ The full pipeline spans five modules (see `.claude/ROADMAP.md` for the complete 
 4. **Forecasting Engine** — LSTM/GRU deep learning model 🔜
 5. **Orchestration, Dashboard & DevOps** — scheduling, DB, UI, K8s 🔜
 
+## For collaborators / data consumers
+
+If someone is joining the project to do additional analysis or
+processing on top of the scored dataset (rather than to operate the
+LLM pipeline itself), point them at **[`DATA_HANDOFF.md`](../DATA_HANDOFF.md)**
+at the repo root. That file covers:
+
+- The two key tables (`raw_headlines`, `nlp_vectors`) with column-by-column meaning
+- Score scales (0–10 relevance, -10..+10 sentiment) and how to interpret them
+- Three options for getting the data: live DB access, `pg_dump` export, or CSV/Parquet snapshot
+- Loading patterns (raw psycopg + pandas, or the ready-made `eda.ipynb`)
+- Known data quirks (all-zero validated rows, the standardisation on `mistral-small-4`, possible orphans, Hebrew encoding)
+- Common SQL patterns for daily aggregation, sentiment time series, source breakdowns
+- A "what NOT to do" section to avoid breaking the shared dataset
+
+`CLAUDE.md` (this file) is the **operator-level** reference for running
+the pipeline. `DATA_HANDOFF.md` is the **consumer-level** reference for
+working with what the pipeline produced.
+
 ## Module Layout
 
 - `mivzakim_scraper/` — Playwright-based scraper for Hebrew news from mivzakim.net
@@ -82,7 +101,63 @@ cd processing_engine && uv run python ../scripts/update_data_csv.py
 
 # Daily cronjob: scrape today's headlines directly into DB
 cd processing_engine && uv run python ../scripts/daily_scrape_to_db.py
+
+# Backfill history: scrape backwards from the oldest stored date until
+# the site returns no more data (stops after 2 consecutive empty windows)
+cd processing_engine && uv run python ../scripts/backfill_history.py
+
+# Backfill with custom window / cap
+cd processing_engine && uv run python ../scripts/backfill_history.py \
+    --window 30 --max-days 365
+
+# Retry headlines that previously failed NLP processing
+# (those with validation_passed=FALSE in nlp_vectors for the active model).
+# Deletes the stale failure rows, then re-runs through the same pipeline.
+cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
+    --fast --headlines-per-call 50 --concurrency 50
+
+# Retry including never-processed headlines (superset of unprocessed + failed)
+cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
+    --fast --headlines-per-call 50 --include-missing
+
+# Dry run: show how many would be retried without touching the DB
+cd processing_engine && uv run python ../scripts/retry_failed_headlines.py --dry-run
+
+# Standardise the dataset on a single 'latest' model: any headline that
+# was only scored by an older model (e.g. mistral-large-2) or that
+# failed under the latest model gets re-processed under the active
+# model.  Legacy non-latest rows are deleted unless --keep-old-rows.
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --fast --headlines-per-call 50 --concurrency 50
+
+# Same but preserve the multi-model history (still re-scores under latest)
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --fast --headlines-per-call 50 --keep-old-rows
+
+# Pin the latest model name explicitly
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --latest-model mistral-small-4 --fast --headlines-per-call 50
+
+# Force-rescore EVERY headline that any non-latest model touched, even
+# if a successful latest-model row already exists.  Existing latest
+# rows for those headlines are deleted before re-scoring — use this
+# after rolling out a new model when you want a uniform re-scoring of
+# every legacy headline regardless of whether the latest already covered it.
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --fast --headlines-per-call 50 --concurrency 50 --rescore-legacy
 ```
+
+### Exploratory data analysis (`eda.ipynb`)
+```bash
+# One-time: install jupyter + pandas/matplotlib/seaborn into processing_engine's venv.
+# These are an optional extra so the production processing image stays slim.
+cd processing_engine && uv sync --extra notebook
+
+# Launch the notebook from the repo root (relative DB URL works there).
+cd .. && uv run --project processing_engine jupyter lab eda.ipynb
+```
+
+The notebook joins `raw_headlines` ⨝ `nlp_vectors` for a configurable `MODEL_NAME` and explores volume, validation health, score distributions, correlations, temporal patterns, and a preview of the daily aggregation that will feed the forecaster. Set `SAMPLE_LIMIT = None` in the first code cell to load the full dataset (≈ 1.9M rows; needs a few GB of RAM).
 
 ### Full pipeline init (Ubuntu)
 ```bash
@@ -113,6 +188,17 @@ relevance_category_1..6, global_sentiment, validation_passed, errors, processing
 ```
 
 **LLM backend:** Local Ollama (default model `qwen2.5:14b`, temperature 0.1). Configurable via `SENTISENSE_*` environment variables (base_url, model, temperature, timeout, context window, recursion limit, retry settings).
+
+**Production (vLLM mistral-small-4, completions-only):**
+```bash
+export SENTISENSE_LLM_BACKEND=openai
+export SENTISENSE_OPENAI_BASE_URL=https://10.10.248.21/v1
+export SENTISENSE_OPENAI_MODEL=mistral-small-4
+export SENTISENSE_OPENAI_HOST_HEADER=mistral-small-4-119b-nvfp4-runai-model-120b.cs.colman.ac.il
+export SENTISENSE_FORCE_COMPLETIONS_API=true
+export SENTISENSE_COMPLETIONS_MAX_TOKENS=32768   # safe for --headlines-per-call up to ~100
+```
+With these set, `get_active_model_name()` returns `mistral-small-4` and both `process_headlines.py` and `retry_failed_headlines.py` target the correct `nlp_vectors.model_name` rows.
 
 **Tools per agent:** Each agent has shared Hebrew text utilities (`clean_hebrew_text`, `transliterate_hebrew`, `detect_urgency_signals`, etc.) plus category-specific keyword scanners.
 
@@ -155,6 +241,10 @@ Located in `scripts/`:
 - **`update_data_csv.py`** — scrapes new dates, merges into `data.csv`, renames legacy columns, logs summary
 - **`migrate_csv_to_db.py`** — one-time bulk import of `data.csv` → `raw_headlines` table (idempotent)
 - **`daily_scrape_to_db.py`** — cronjob: scrape today + yesterday → insert directly to DB
+- **`backfill_history.py`** — scrapes backwards from the oldest stored date until the site returns no more data
+- **`process_headlines.py`** — runs unprocessed `raw_headlines` through the LLM pipeline, writing to `nlp_vectors`
+- **`retry_failed_headlines.py`** — re-runs headlines whose previous `nlp_vectors` row was marked `validation_passed=FALSE` (DELETE + re-INSERT, since `ON CONFLICT DO NOTHING` would otherwise skip them)
+- **`standardize_to_latest_model.py`** — broader version of retry: re-scores every headline that lacks a successful row under the latest model (whether it was scored by an older model or failed under the latest). Optionally deletes legacy non-latest rows so the dataset ends up uniform on one model
 
 All scripts use loguru (stderr + `logs/` directory) and support `--dry-run`.
 

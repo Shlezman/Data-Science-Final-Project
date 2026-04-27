@@ -316,7 +316,7 @@ elif [ "$PG_MODE" = "native" ]; then
 
     # Load schema
     info "Loading schema from init_db.sql..."
-    su - postgres -c "psql -d $DB_NAME < $PROJECT_ROOT/scripts/init_db.sql" 2>/dev/null || true
+    su - postgres -c "psql -d $DB_NAME < '$PROJECT_ROOT/scripts/init_db.sql'" 2>/dev/null || true
 
     # Grant permissions (tables owned by postgres superuser need explicit grants)
     su - postgres -c "psql -d $DB_NAME -c 'GRANT ALL ON ALL TABLES IN SCHEMA public TO $DB_USER; GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;'" 2>/dev/null
