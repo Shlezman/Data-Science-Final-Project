@@ -118,6 +118,14 @@ cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py 
 # Pin the latest model name explicitly
 cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
     --latest-model mistral-small-4 --fast --headlines-per-call 50
+
+# Force-rescore EVERY headline that any non-latest model touched, even
+# if a successful latest-model row already exists.  Existing latest
+# rows for those headlines are deleted before re-scoring — use this
+# after rolling out a new model when you want a uniform re-scoring of
+# every legacy headline regardless of whether the latest already covered it.
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --fast --headlines-per-call 50 --concurrency 50 --rescore-legacy
 ```
 
 ### Exploratory data analysis (`eda.ipynb`)

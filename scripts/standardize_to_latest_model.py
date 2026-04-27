@@ -126,38 +126,60 @@ def find_headlines_to_standardize(
     conn: Any,
     latest_model: str,
     *,
+    rescore_legacy: bool,
     date_from: str,
     date_to: str,
     limit: int,
-) -> tuple[list[dict[str, Any]], int, int]:
+) -> tuple[list[dict[str, Any]], int, int, int]:
     """
-    Return ``(headlines, n_non_latest_rows, n_failed_latest_rows)``.
+    Return ``(headlines, n_non_latest, n_failed_latest, n_success_latest)``.
 
-    ``headlines``
-        ``raw_headlines`` rows ready to feed into a runner.  A headline
-        is included iff it has *some* ``nlp_vectors`` history but no
-        successful row under ``latest_model``.
+    Discovery semantics depend on ``rescore_legacy``:
 
-    ``n_non_latest_rows`` / ``n_failed_latest_rows``
-        Counts of stale rows that will be deleted during the cleanup
-        phase — surfaced before any DB writes so ``--dry-run`` shows
-        the exact impact.
+    * ``False`` (default) — include only headlines that have *some*
+      ``nlp_vectors`` history but no **successful** row under
+      ``latest_model``.  Skips headlines already standardised.
+    * ``True`` — include *every* headline that has at least one row
+      under a non-latest ``model_name``, even if a successful latest
+      row already exists.  All latest-model rows for these headlines
+      will be deleted before re-scoring.
+
+    The four count return values are the per-status row totals that
+    will be deleted during cleanup, surfaced upfront so ``--dry-run``
+    shows the exact impact:
+
+    * ``n_non_latest_rows`` — rows whose ``model_name <> latest``.
+    * ``n_failed_latest_rows`` — failed rows under ``latest_model``.
+    * ``n_success_latest_rows`` — successful rows under ``latest_model``
+      (only deleted when ``rescore_legacy`` is True).
     """
-    query = """
-        SELECT DISTINCT
-               rh.id, rh.date, rh.source, rh.hour, rh.popularity, rh.headline
-        FROM raw_headlines rh
-        WHERE EXISTS (
-            SELECT 1 FROM nlp_vectors nv
-            WHERE nv.headline_id = rh.id
-        )
-        AND NOT EXISTS (
-            SELECT 1 FROM nlp_vectors nv
-            WHERE nv.headline_id = rh.id
-              AND nv.model_name = %s
-              AND nv.validation_passed = TRUE
-        )
-    """
+    if rescore_legacy:
+        query = """
+            SELECT DISTINCT
+                   rh.id, rh.date, rh.source, rh.hour, rh.popularity, rh.headline
+            FROM raw_headlines rh
+            WHERE EXISTS (
+                SELECT 1 FROM nlp_vectors nv
+                WHERE nv.headline_id = rh.id
+                  AND nv.model_name <> %s
+            )
+        """
+    else:
+        query = """
+            SELECT DISTINCT
+                   rh.id, rh.date, rh.source, rh.hour, rh.popularity, rh.headline
+            FROM raw_headlines rh
+            WHERE EXISTS (
+                SELECT 1 FROM nlp_vectors nv
+                WHERE nv.headline_id = rh.id
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM nlp_vectors nv
+                WHERE nv.headline_id = rh.id
+                  AND nv.model_name = %s
+                  AND nv.validation_passed = TRUE
+            )
+        """
     params: list[Any] = [latest_model]
 
     if date_from:
@@ -180,7 +202,7 @@ def find_headlines_to_standardize(
     cur.close()
 
     if not rows:
-        return [], 0, 0
+        return [], 0, 0, 0
 
     # Pre-count what we'll delete so --dry-run is accurate.
     headline_ids = [r["id"] for r in rows]
@@ -193,16 +215,24 @@ def find_headlines_to_standardize(
             ), 0) AS non_latest,
             COALESCE(SUM(
                 CASE WHEN model_name = %s AND validation_passed = FALSE THEN 1 ELSE 0 END
-            ), 0) AS failed_latest
+            ), 0) AS failed_latest,
+            COALESCE(SUM(
+                CASE WHEN model_name = %s AND validation_passed = TRUE THEN 1 ELSE 0 END
+            ), 0) AS success_latest
         FROM nlp_vectors
         WHERE headline_id = ANY(%s)
         """,
-        (latest_model, latest_model, headline_ids),
+        (latest_model, latest_model, latest_model, headline_ids),
     )
-    n_non_latest, n_failed_latest = cur.fetchone()
+    n_non_latest, n_failed_latest, n_success_latest = cur.fetchone()
     cur.close()
 
-    return rows, int(n_non_latest), int(n_failed_latest)
+    return (
+        rows,
+        int(n_non_latest),
+        int(n_failed_latest),
+        int(n_success_latest),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -219,20 +249,25 @@ def delete_stale_rows(
     headline_ids: list[int],
     *,
     keep_non_latest: bool,
-) -> tuple[int, int]:
+    rescore_legacy: bool,
+) -> tuple[int, int, int]:
     """
     Delete the rows that block re-insertion.
 
-    * Failed latest-model rows: always deleted (otherwise the runner's
+    * Failed latest-model rows — always deleted (otherwise the runner's
       ``ON CONFLICT DO NOTHING`` would skip the retry insert).
-    * Non-latest rows: deleted unless ``keep_non_latest`` is True.
+    * Successful latest-model rows — deleted only when
+      ``rescore_legacy`` is True; the user explicitly opted to re-score
+      headlines that already have a latest score.
+    * Non-latest rows — deleted unless ``keep_non_latest`` is True.
 
-    Returns ``(n_failed_deleted, n_non_latest_deleted)``.
+    Returns ``(n_failed_deleted, n_success_deleted, n_non_latest_deleted)``.
     """
     if not headline_ids:
-        return 0, 0
+        return 0, 0, 0
 
     n_failed_deleted = 0
+    n_success_deleted = 0
     n_non_latest_deleted = 0
     cur = conn.cursor()
     try:
@@ -249,6 +284,18 @@ def delete_stale_rows(
                 (latest_model, chunk),
             )
             n_failed_deleted += cur.rowcount
+
+            if rescore_legacy:
+                cur.execute(
+                    """
+                    DELETE FROM nlp_vectors
+                    WHERE model_name = %s
+                      AND validation_passed = TRUE
+                      AND headline_id = ANY(%s)
+                    """,
+                    (latest_model, chunk),
+                )
+                n_success_deleted += cur.rowcount
 
             if not keep_non_latest:
                 cur.execute(
@@ -267,7 +314,7 @@ def delete_stale_rows(
     finally:
         cur.close()
 
-    return n_failed_deleted, n_non_latest_deleted
+    return n_failed_deleted, n_success_deleted, n_non_latest_deleted
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -280,6 +327,7 @@ async def standardize(
     latest_model: str,
     *,
     keep_old_rows: bool,
+    rescore_legacy: bool,
     date_from: str,
     date_to: str,
     limit: int,
@@ -291,21 +339,34 @@ async def standardize(
 ) -> None:
     conn = get_connection(db_url)
     try:
-        logger.info(
-            "Scanning for headlines that lack a successful row under {!r}…",
-            latest_model,
+        scope = (
+            "every headline that has any non-latest row"
+            if rescore_legacy
+            else f"headlines lacking a successful row under {latest_model!r}"
         )
-        headlines, n_non_latest, n_failed_latest = find_headlines_to_standardize(
+        logger.info("Scanning for {}…", scope)
+        (
+            headlines,
+            n_non_latest,
+            n_failed_latest,
+            n_success_latest,
+        ) = find_headlines_to_standardize(
             conn,
             latest_model,
+            rescore_legacy=rescore_legacy,
             date_from=date_from,
             date_to=date_to,
             limit=limit,
         )
 
         total = len(headlines)
-        logger.info("Headlines to (re)process:                   {:,}", total)
-        logger.info("  ‣ failed latest rows that will be DELETEd: {:,}", n_failed_latest)
+        logger.info("Headlines to (re)process:                       {:,}", total)
+        logger.info("  ‣ failed latest rows that will be DELETEd:    {:,}", n_failed_latest)
+        if rescore_legacy:
+            logger.info(
+                "  ‣ successful latest rows that will be DELETEd: {:,}",
+                n_success_latest,
+            )
         logger.info(
             "  ‣ non-latest rows that will be {}: {:,}",
             "KEPT (--keep-old-rows)" if keep_old_rows else "DELETEd",
@@ -328,13 +389,24 @@ async def standardize(
         # Step 1: clean up stale rows so re-INSERT can proceed.
         ids = [h["id"] for h in headlines]
         logger.info("Deleting stale rows…")
-        n_f, n_nl = delete_stale_rows(
-            conn, latest_model, ids, keep_non_latest=keep_old_rows,
+        n_f, n_s, n_nl = delete_stale_rows(
+            conn,
+            latest_model,
+            ids,
+            keep_non_latest=keep_old_rows,
+            rescore_legacy=rescore_legacy,
         )
-        logger.info(
-            "Deleted {:,} failed-latest row(s) and {:,} non-latest row(s).",
-            n_f, n_nl,
-        )
+        if rescore_legacy:
+            logger.info(
+                "Deleted {:,} failed-latest, {:,} successful-latest, "
+                "and {:,} non-latest row(s).",
+                n_f, n_s, n_nl,
+            )
+        else:
+            logger.info(
+                "Deleted {:,} failed-latest row(s) and {:,} non-latest row(s).",
+                n_f, n_nl,
+            )
 
         # Step 2: re-run through the identical process_headlines pipeline.
         if fast and headlines_per_call > 1:
@@ -374,6 +446,11 @@ def main() -> None:
             "  # Standardise on the auto-detected active model (delete legacy)\n"
             "  cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \\\n"
             "      --fast --headlines-per-call 50 --concurrency 50\n\n"
+            "  # Force-rescore EVERY headline that any non-latest model touched,\n"
+            "  # even if a successful latest row already exists.  Existing latest\n"
+            "  # rows for those headlines are deleted before re-scoring.\n"
+            "  cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \\\n"
+            "      --fast --headlines-per-call 50 --concurrency 50 --rescore-legacy\n\n"
             "  # Dry run — show counts without touching the DB\n"
             "  cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py --dry-run\n\n"
             "  # Keep history (don't delete non-latest rows)\n"
@@ -388,6 +465,16 @@ def main() -> None:
     parser.add_argument(
         "--keep-old-rows", action="store_true",
         help="Don't delete non-latest rows after re-scoring (preserves multi-model history).",
+    )
+    parser.add_argument(
+        "--rescore-legacy", action="store_true",
+        help=(
+            "Re-score EVERY headline that has any row under a non-latest "
+            "model_name, even if a successful latest row already exists.  "
+            "Existing latest-model rows for those headlines are DELETEd "
+            "before re-scoring.  Use this to force a uniform re-scoring "
+            "after rolling out a new model."
+        ),
     )
     parser.add_argument(
         "--batch-size", type=int, default=50,
@@ -468,6 +555,12 @@ def main() -> None:
     if hpc > 1:
         logger.info("  Headlines/call: {}", hpc)
     logger.info(
+        "  Scope:          {}",
+        "every legacy headline (--rescore-legacy)"
+        if args.rescore_legacy
+        else "headlines without a successful latest row",
+    )
+    logger.info(
         "  Old rows:       {}",
         "kept" if args.keep_old_rows else "deleted after re-scoring",
     )
@@ -482,6 +575,7 @@ def main() -> None:
         db_url=args.db_url,
         latest_model=latest_model,
         keep_old_rows=args.keep_old_rows,
+        rescore_legacy=args.rescore_legacy,
         date_from=args.date_from,
         date_to=args.date_to,
         limit=args.limit,
