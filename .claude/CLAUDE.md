@@ -13,6 +13,25 @@ The full pipeline spans five modules (see `.claude/ROADMAP.md` for the complete 
 4. **Forecasting Engine** — LSTM/GRU deep learning model 🔜
 5. **Orchestration, Dashboard & DevOps** — scheduling, DB, UI, K8s 🔜
 
+## For collaborators / data consumers
+
+If someone is joining the project to do additional analysis or
+processing on top of the scored dataset (rather than to operate the
+LLM pipeline itself), point them at **[`DATA_HANDOFF.md`](../DATA_HANDOFF.md)**
+at the repo root. That file covers:
+
+- The two key tables (`raw_headlines`, `nlp_vectors`) with column-by-column meaning
+- Score scales (0–10 relevance, -10..+10 sentiment) and how to interpret them
+- Three options for getting the data: live DB access, `pg_dump` export, or CSV/Parquet snapshot
+- Loading patterns (raw psycopg + pandas, or the ready-made `eda.ipynb`)
+- Known data quirks (all-zero validated rows, the standardisation on `mistral-small-4`, possible orphans, Hebrew encoding)
+- Common SQL patterns for daily aggregation, sentiment time series, source breakdowns
+- A "what NOT to do" section to avoid breaking the shared dataset
+
+`CLAUDE.md` (this file) is the **operator-level** reference for running
+the pipeline. `DATA_HANDOFF.md` is the **consumer-level** reference for
+working with what the pipeline produced.
+
 ## Module Layout
 
 - `mivzakim_scraper/` — Playwright-based scraper for Hebrew news from mivzakim.net
