@@ -103,6 +103,21 @@ cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
 
 # Dry run: show how many would be retried without touching the DB
 cd processing_engine && uv run python ../scripts/retry_failed_headlines.py --dry-run
+
+# Standardise the dataset on a single 'latest' model: any headline that
+# was only scored by an older model (e.g. mistral-large-2) or that
+# failed under the latest model gets re-processed under the active
+# model.  Legacy non-latest rows are deleted unless --keep-old-rows.
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --fast --headlines-per-call 50 --concurrency 50
+
+# Same but preserve the multi-model history (still re-scores under latest)
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --fast --headlines-per-call 50 --keep-old-rows
+
+# Pin the latest model name explicitly
+cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py \
+    --latest-model mistral-small-4 --fast --headlines-per-call 50
 ```
 
 ### Exploratory data analysis (`eda.ipynb`)
@@ -202,6 +217,7 @@ Located in `scripts/`:
 - **`backfill_history.py`** — scrapes backwards from the oldest stored date until the site returns no more data
 - **`process_headlines.py`** — runs unprocessed `raw_headlines` through the LLM pipeline, writing to `nlp_vectors`
 - **`retry_failed_headlines.py`** — re-runs headlines whose previous `nlp_vectors` row was marked `validation_passed=FALSE` (DELETE + re-INSERT, since `ON CONFLICT DO NOTHING` would otherwise skip them)
+- **`standardize_to_latest_model.py`** — broader version of retry: re-scores every headline that lacks a successful row under the latest model (whether it was scored by an older model or failed under the latest). Optionally deletes legacy non-latest rows so the dataset ends up uniform on one model
 
 All scripts use loguru (stderr + `logs/` directory) and support `--dry-run`.
 
