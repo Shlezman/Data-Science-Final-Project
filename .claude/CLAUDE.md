@@ -105,6 +105,18 @@ cd processing_engine && uv run python ../scripts/retry_failed_headlines.py \
 cd processing_engine && uv run python ../scripts/retry_failed_headlines.py --dry-run
 ```
 
+### Exploratory data analysis (`eda.ipynb`)
+```bash
+# One-time: install jupyter + pandas/matplotlib/seaborn into processing_engine's venv.
+# These are an optional extra so the production processing image stays slim.
+cd processing_engine && uv sync --extra notebook
+
+# Launch the notebook from the repo root (relative DB URL works there).
+cd .. && uv run --project processing_engine jupyter lab eda.ipynb
+```
+
+The notebook joins `raw_headlines` ⨝ `nlp_vectors` for a configurable `MODEL_NAME` and explores volume, validation health, score distributions, correlations, temporal patterns, and a preview of the daily aggregation that will feed the forecaster. Set `SAMPLE_LIMIT = None` in the first code cell to load the full dataset (≈ 1.9M rows; needs a few GB of RAM).
+
 ### Full pipeline init (Ubuntu)
 ```bash
 chmod +x scripts/init_pipeline.sh
