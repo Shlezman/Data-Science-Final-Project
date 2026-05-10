@@ -147,17 +147,31 @@ cd processing_engine && uv run python ../scripts/standardize_to_latest_model.py 
     --fast --headlines-per-call 50 --concurrency 50 --rescore-legacy
 ```
 
-### Exploratory data analysis (`eda.ipynb`)
+### Notebooks
+
+Three notebooks live at the repo root, each with a different purpose:
+
+| Notebook | Purpose | Feature shape |
+|---|---|---|
+| `eda.ipynb` | Exploratory data analysis — volume, validation health, score distributions, correlations, temporal patterns, daily-aggregation preview. | One row per (headline, model). |
+| `poc.ipynb` | Tree-model proof-of-concept (XGB / LGBM / CatBoost) for next-day TA-125 direction.  Includes chronological 80/20 holdout + four statistical tests (binomial / bootstrap / permutation / McNemar). | One row per trading day with **mean** scores across all sources. |
+| `lstm_forecaster.ipynb` | Recurrent LSTM next-day predictor with the per-source dataset shape: per-(date, source) **sum** of every score dimension pivoted wide, plus headline counts per source, plus finance / market / FX. | One row per TA-125 trading day with `<dim>_<source>` columns. |
+
 ```bash
 # One-time: install jupyter + pandas/matplotlib/seaborn into processing_engine's venv.
 # These are an optional extra so the production processing image stays slim.
 cd processing_engine && uv sync --extra notebook
 
-# Launch the notebook from the repo root (relative DB URL works there).
-cd .. && uv run --project processing_engine jupyter lab eda.ipynb
+# Launch from the repo root (relative DB URL works there).
+cd .. && uv run --project processing_engine jupyter lab eda.ipynb            # exploration
+cd .. && uv run --project processing_engine jupyter lab poc.ipynb            # tree models
+cd .. && uv run --project processing_engine jupyter lab lstm_forecaster.ipynb # LSTM
 ```
 
-The notebook joins `raw_headlines` ⨝ `nlp_vectors` for a configurable `MODEL_NAME` and explores volume, validation health, score distributions, correlations, temporal patterns, and a preview of the daily aggregation that will feed the forecaster. Set `SAMPLE_LIMIT = None` in the first code cell to load the full dataset (≈ 1.9M rows; needs a few GB of RAM).
+Notes:
+
+* `eda.ipynb` — set `SAMPLE_LIMIT = None` in the first code cell to load the full ~1.9M rows; needs a few GB of RAM.
+* `lstm_forecaster.ipynb` — anchors everything to the TA-125 trading calendar (Sun–Thu) and rolls non-trading-day news (Fri / Sat) into the next Sunday's row so weekend headlines aren't lost.  Lazy-installs TensorFlow on first run if missing.
 
 ### Full pipeline init (Ubuntu)
 ```bash
