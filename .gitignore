@@ -12,6 +12,11 @@ __pycache__/
 /cookies
 /sessions
 /headlines.csv
+# ML training artifacts
+/catboost_info/
+/tuning_results/
+*.optuna_journal
+.ipynb_checkpoints/
 # C extensions
 *.so
 
