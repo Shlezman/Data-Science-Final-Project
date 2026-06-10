@@ -40,6 +40,8 @@ class _RecurrentClassifier(nn.Module):
             bidirectional=bidirectional,
         )
         out_dim = hidden * (2 if bidirectional else 1)
+        # Learned attention pooling: a scorer over timesteps → softmax-weighted sum.
+        self.attn = nn.Linear(out_dim, 1) if pooling == "attn" else None
         act = _ACT.get(dense_act, nn.ReLU)
         self.head = nn.Sequential(
             nn.Linear(out_dim, d_dense), act(), nn.Dropout(dropout),
@@ -48,7 +50,11 @@ class _RecurrentClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         seq, _ = self.rnn(x)            # (B, T, H)
-        pooled = _pool(seq, self.pooling)
+        if self.attn is not None:
+            weights = torch.softmax(self.attn(seq), dim=1)   # (B, T, 1)
+            pooled = (seq * weights).sum(dim=1)
+        else:
+            pooled = _pool(seq, self.pooling)
         return self.head(pooled).squeeze(-1)
 
 

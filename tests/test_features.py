@@ -106,3 +106,31 @@ def test_chronological_split_scaler_fit_on_train_only():
 def ds_split(df):
     # Torch-free split — exercises the train-only scaler without importing torch.
     return ds.chronological_split(df)
+
+
+def test_add_cross_asset_features_is_leak_free():
+    idx = pd.date_range("2022-01-01", periods=30, freq="D")
+    s = pd.Series(np.linspace(100, 130, 30), index=idx)
+    df = pd.DataFrame({"Market_SP500": s, "Market_VIX": s * 0.2,
+                       "Market_Brent_Oil": s * 0.8, "FX_USD_ILS": s * 0.03,
+                       "VTA35_Price": s * 0.1}, index=idx)
+    out = ds.add_cross_asset_features(df)
+    logret = np.log(df["Market_SP500"] / df["Market_SP500"].shift(1))
+    expected = logret.shift(1)            # lag1 uses strictly past data
+    got = out["SP500_logret_lag1"]
+    m = expected.notna() & got.notna()
+    assert m.sum() > 0 and np.allclose(got[m].values, expected[m].values)
+    for col in ("VIX_logret_lag1", "Brent_logret_5d_mean", "USDILS_logret_lag3", "VTA35_logret_lag1"):
+        assert col in out.columns
+
+
+def test_pca_prefix_only_reduces_centroid_block():
+    pytest.importorskip("sklearn")
+    idx = pd.date_range("2021-01-01", periods=200, freq="D")
+    rng = np.random.default_rng(1)
+    cols = {f"embc_{i:03d}": rng.normal(size=200) for i in range(40)}
+    cols.update({f"fin_{i}": rng.normal(size=200) for i in range(6)})
+    df = pd.DataFrame(cols, index=idx)
+    df["Target"] = rng.integers(0, 2, 200)
+    _, _, _, _, _, _, nf = ds.chronological_split(df, pca_components=10, pca_prefix="embc_")
+    assert nf == 10 + 6   # 40 centroid → 10 PCA comps, 6 finance passthrough

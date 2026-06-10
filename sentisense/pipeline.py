@@ -177,7 +177,7 @@ def main() -> None:
             if mle is not None:
                 logger.info("Tuning LSTM on EMBEDDING features (PCA→{}) …", EMBED_PCA_COMPONENTS)
                 state["study_emb"] = run_hpo(mle, n_trials=n_trials, study_name=STUDY_EMB,
-                                             pca_components=EMBED_PCA_COMPONENTS)
+                                             pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
             else:
                 logger.warning("No embeddings cached → skipping the embedding-LSTM study "
                                "(run the 'embed' stage to enable it).")
@@ -192,17 +192,33 @@ def main() -> None:
             if not has_completed_trials(s):
                 raise RuntimeError("No completed score-LSTM trials — run the 'tune' stage first.")
             logger.info("Final holdout — SCORE LSTM:")
-            final_holdout_eval(ml, s.best_params)
+            _, score_proba, score_labels = final_holdout_eval(ml, s.best_params)
 
+            emb_proba = None
             mle = embedding_dataset()
             if mle is not None:
                 se = state["study_emb"] or run_hpo(mle, n_trials=0, study_name=STUDY_EMB,
-                                                   pca_components=EMBED_PCA_COMPONENTS)
+                                                   pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
                 if has_completed_trials(se):
                     logger.info("Final holdout — EMBEDDING LSTM:")
-                    final_holdout_eval(mle, se.best_params, pca_components=EMBED_PCA_COMPONENTS)
+                    _, emb_proba, _ = final_holdout_eval(
+                        mle, se.best_params, pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
                 else:
                     logger.warning("No completed embedding-LSTM trials — skipping its final eval.")
+
+            # Soft-vote ensemble: average the two models' calibrated test probs on the
+            # dates they share, score at 0.5 (no test-set threshold tuning).
+            if emb_proba is not None:
+                import pandas as pd
+                from sentisense.models.train import metrics_at
+                common = score_proba.index.intersection(emb_proba.index)
+                if len(common) > 0:
+                    avg = (score_proba.reindex(common) + emb_proba.reindex(common)) / 2.0
+                    lbl = score_labels.reindex(common)
+                    m = metrics_at(avg.values, lbl.values, 0.5)
+                    logger.info("Final holdout — SOFT-VOTE ENSEMBLE (scores+embeddings, {} days):", len(common))
+                    for k, v in m.items():
+                        logger.info("  {:18s} {:.4f}", k, v)
 
         clock.end_stage(stage, remaining=selected[i + 1:])
 

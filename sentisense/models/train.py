@@ -120,6 +120,31 @@ def train_model(model: nn.Module, dl_tr: DataLoader, dl_va: DataLoader, *,
     return {"model": model.cpu(), "history": history, "best_val_loss": best_val_loss}
 
 
+def proba_and_labels(model: nn.Module, dl: DataLoader) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(probabilities, labels)`` over a loader (sigmoid of the logit)."""
+    model = model.to(DEVICE)
+    model.eval()
+    probs, labels = [], []
+    with torch.no_grad():
+        for X, y in dl:
+            X = X.to(DEVICE)
+            probs.extend(torch.sigmoid(model(X)).cpu().numpy())
+            labels.extend(y.numpy())
+    return np.asarray(probs), np.asarray(labels)
+
+
+def metrics_at(probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5) -> dict[str, float]:
+    """Classification metrics at a given decision threshold (+ ROC-AUC, threshold-free)."""
+    preds = (probs > threshold).astype(int)
+    return {
+        "accuracy": float(accuracy_score(labels, preds)),
+        "balanced_accuracy": float(balanced_accuracy_score(labels, preds)),
+        "f1": float(f1_score(labels, preds, average="macro")),
+        "roc_auc": float(roc_auc_score(labels, probs)) if len(np.unique(labels)) > 1 else 0.5,
+        "mcc": float(matthews_corrcoef(labels, preds)),
+    }
+
+
 def evaluate_on_test(model: nn.Module, dl_te: DataLoader) -> dict[str, float]:
     """Test metrics: accuracy, balanced accuracy, macro-F1, ROC-AUC, MCC."""
     model = model.to(DEVICE)

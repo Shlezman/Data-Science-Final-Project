@@ -56,7 +56,7 @@ def _dev_test_split(df: pd.DataFrame):
 
 
 def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3,
-              pca_components: int | None = None) -> float:
+              pca_components: int | None = None, pca_prefix: str | None = None) -> float:
     """Mean fold ROC-AUC for one param set + seed, TimeSeriesSplit on dev (no leak)."""
     import torch  # noqa: F401
     from sentisense.models.lstm import LSTMClassifier
@@ -65,8 +65,13 @@ def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3,
 
     window = params["window"]
     batch_size = params.get("batch_size", 64)
+    feat_cols = dev.drop(columns=["Target"]).columns
     y = dev["Target"].values.astype(np.float32)
     X = dev.drop(columns=["Target"]).values.astype(np.float32)
+    # PCA scope mask (centroid block only when pca_prefix given).
+    pca_mask = (np.array([c.startswith(pca_prefix) for c in feat_cols])
+                if (pca_components and pca_prefix) else
+                (np.ones(len(feat_cols), dtype=bool) if pca_components else None))
     tss = TimeSeriesSplit(n_splits=n_splits)
 
     aucs: list[float] = []
@@ -77,10 +82,11 @@ def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3,
             continue
         scaler = StandardScaler().fit(X[tr_idx])
         Xtr, Xva = scaler.transform(X[tr_idx]), scaler.transform(X[va_idx])
-        if pca_components and pca_components < Xtr.shape[1]:
+        if pca_mask is not None and pca_components < int(pca_mask.sum()):
             from sklearn.decomposition import PCA
-            pca = PCA(n_components=pca_components, random_state=0).fit(Xtr)  # TRAIN-only
-            Xtr, Xva = pca.transform(Xtr), pca.transform(Xva)
+            pca = PCA(n_components=pca_components, random_state=0).fit(Xtr[:, pca_mask])  # TRAIN-only
+            Xtr = np.hstack([pca.transform(Xtr[:, pca_mask]), Xtr[:, ~pca_mask]])
+            Xva = np.hstack([pca.transform(Xva[:, pca_mask]), Xva[:, ~pca_mask]])
         dl_tr = windowed_loader(Xtr, y[tr_idx], window, batch_size=batch_size,
                                 shuffle=False, drop_last=True)
         dl_va = windowed_loader(Xva, y[va_idx], window, batch_size=batch_size, shuffle=False)
@@ -99,11 +105,13 @@ def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3,
 
 
 def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
-            study_name: str = _STUDY_NAME, pca_components: int | None = None):
+            study_name: str = _STUDY_NAME, pca_components: int | None = None,
+            pca_prefix: str | None = None):
     """Run/resume the Optuna study against RDBStorage. Returns the study.
 
     ``pca_components`` (e.g. 50 for the embedding centroid dataset) reduces dims
-    inside each CV fold, TRAIN-fit only.
+    inside each CV fold, TRAIN-fit only. ``pca_prefix`` scopes PCA to the centroid
+    block (e.g. 'embc_') so finance/TA-125 features pass through un-reduced.
     """
     import optuna
     from optuna.pruners import MedianPruner
@@ -134,7 +142,7 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
             "grad_clip": trial.suggest_categorical("grad_clip", [0.5, 1.0, 5.0]),
             # head + optimisation
             "dense_act": trial.suggest_categorical("dense_act", ["relu", "elu", "tanh", "gelu"]),
-            "pooling": trial.suggest_categorical("pooling", ["last", "avg", "max"]),
+            "pooling": trial.suggest_categorical("pooling", ["last", "avg", "max", "attn"]),
             "lr": trial.suggest_float("lr", 5e-5, 1e-2, log=True),
             "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64]),
         }
@@ -142,7 +150,8 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
         seed_scores: list[float] = []
         for step, seed in enumerate(HPO_SEEDS):
             _set_seeds(seed)
-            seed_scores.append(_fold_auc(dev, params, seed, pca_components=pca_components))
+            seed_scores.append(_fold_auc(dev, params, seed, pca_components=pca_components,
+                                         pca_prefix=pca_prefix))
             trial.report(float(np.mean(seed_scores)), step)  # running mean → pruner
             if trial.should_prune():
                 import optuna as _o
@@ -194,30 +203,52 @@ def has_completed_trials(study) -> bool:
     return len(study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))) > 0
 
 
-def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
-                       n_seeds: int = 3, pca_components: int | None = None) -> dict:
-    """Phase 7 — retrain on train+val with best params, evaluate ONCE on the sacred test.
+def _youden_threshold(labels: np.ndarray, probs: np.ndarray) -> float:
+    """Decision threshold maximising Youden's J (TPR − FPR). 0.5 if single-class."""
+    from sklearn.metrics import roc_curve
+    if len(np.unique(labels)) < 2:
+        return 0.5
+    fpr, tpr, thr = roc_curve(labels, probs)
+    return float(thr[int(np.argmax(tpr - fpr))])
 
-    Multi-seed (mean±std) so the headline number isn't a single-seed lottery.
-    ``pca_components`` matches the dim reduction used during HPO (embedding dataset).
+
+def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *, n_seeds: int = 3,
+                       pca_components: int | None = None, pca_prefix: str | None = None):
+    """Phase 7 — retrain on train+val, evaluate ONCE on the sacred test.
+
+    Per seed: isotonic-calibrate test probs (fit on a disjoint dev tail) and pick a
+    Youden-J threshold on that same dev tail (never the test). Reports metrics at the
+    default 0.5 threshold AND at the tuned threshold, plus Brier (raw vs calibrated).
+
+    Returns ``(summary, proba_series, label_series)`` — the date-indexed MEAN calibrated
+    test probability (averaged over seeds) + aligned labels, for soft-vote ensembling.
     """
+    import pandas as pd
+    from sklearn.isotonic import IsotonicRegression
+    from sklearn.metrics import brier_score_loss
+
     from sentisense.models.lstm import LSTMClassifier
     from sentisense.models.sequence import chronological_split, windowed_loader
-    from sentisense.models.train import evaluate_on_test, train_model
+    from sentisense.models.train import metrics_at, proba_and_labels, train_model
 
     window = best_params["window"]
     bs = best_params.get("batch_size", 64)
-    runs: list[dict] = []
+
+    n = len(df_lstm)
+    n_val, n_test = int(n * 0.15), int(n * 0.15)
+    n_train = n - n_val - n_test
+    test_index = df_lstm.index[n_train + n_val:]  # rows in the sacred test slice
+
+    raw_runs, tuned_runs, brier_raw, brier_cal = [], [], [], []
+    proba_accum, labels_ref = None, None
+
     for seed in list(HPO_SEEDS)[:n_seeds]:
         _set_seeds(seed)
-        # Train on train+val (everything before the sacred test tail), eval on test.
         X_tr, y_tr, X_va, y_va, X_te, y_te, nf = chronological_split(
-            df_lstm, pca_components=pca_components)
+            df_lstm, pca_components=pca_components, pca_prefix=pca_prefix)
         X_dev = np.vstack([X_tr, X_va])
         y_dev = np.concatenate([y_tr, y_va])
-        # Carve a disjoint chronological tail of dev for the early-stop monitor so it
-        # is NOT part of the fit (the prior code monitored on data it trained on —
-        # optimistic). Test tail stays sacred (only evaluate_on_test sees dl_te).
+        # Disjoint dev tail for early-stop monitor + calibration + threshold (never test).
         cut = int(len(X_dev) * 0.9)
         dl_fit = windowed_loader(X_dev[:cut], y_dev[:cut], window, batch_size=bs,
                                  shuffle=False, drop_last=True)
@@ -234,15 +265,40 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
                     weight_decay=best_params["weight_decay"],
                     max_grad_norm=best_params.get("grad_clip", 1.0),
                     model_name=f"lstm_final_s{seed}")
-        runs.append(evaluate_on_test(model, dl_te))
 
-    keys = runs[0].keys()
-    summary = {k: {"mean": float(np.mean([r[k] for r in runs])),
-                   "std": float(np.std([r[k] for r in runs]))} for k in keys}
+        mon_p, mon_y = proba_and_labels(model, dl_mon)
+        te_p, te_y = proba_and_labels(model, dl_te)
+        # Isotonic calibration fit on the dev tail; applied to monitor + test.
+        if len(np.unique(mon_y)) > 1:
+            cal = IsotonicRegression(out_of_bounds="clip").fit(mon_p, mon_y)
+            mon_p_cal, te_p_cal = cal.transform(mon_p), cal.transform(te_p)
+        else:
+            mon_p_cal, te_p_cal = mon_p, te_p
+        thr = _youden_threshold(mon_y, mon_p_cal)
+
+        raw_runs.append(metrics_at(te_p, te_y, 0.5))
+        tuned_runs.append(metrics_at(te_p_cal, te_y, thr))
+        brier_raw.append(float(brier_score_loss(te_y, te_p)) if len(np.unique(te_y)) > 1 else float("nan"))
+        brier_cal.append(float(brier_score_loss(te_y, te_p_cal)) if len(np.unique(te_y)) > 1 else float("nan"))
+        proba_accum = te_p_cal if proba_accum is None else proba_accum + te_p_cal
+        labels_ref = te_y
+
+    mean_proba = proba_accum / n_seeds
+    dates = test_index[window - 1: window - 1 + len(mean_proba)]
+    proba_series = pd.Series(mean_proba, index=dates, name="proba")
+    label_series = pd.Series(labels_ref, index=dates, name="label")
+
+    def _agg(runs, suffix):
+        return {f"{k}{suffix}": {"mean": float(np.mean([r[k] for r in runs])),
+                                 "std": float(np.std([r[k] for r in runs]))} for k in runs[0]}
+    summary = {**_agg(raw_runs, "@0.5"), **_agg(tuned_runs, "@tuned")}
+    summary["brier_raw"] = {"mean": float(np.nanmean(brier_raw)), "std": float(np.nanstd(brier_raw))}
+    summary["brier_cal"] = {"mean": float(np.nanmean(brier_cal)), "std": float(np.nanstd(brier_cal))}
+
     logger.info("Phase 7 holdout (mean±std over {} seeds):", n_seeds)
     for k, v in summary.items():
-        logger.info("  {:18s} {:.4f} ± {:.4f}", k, v["mean"], v["std"])
-    return summary
+        logger.info("  {:22s} {:.4f} ± {:.4f}", k, v["mean"], v["std"])
+    return summary, proba_series, label_series
 
 
 def main() -> None:

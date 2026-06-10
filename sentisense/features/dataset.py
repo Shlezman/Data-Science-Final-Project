@@ -228,6 +228,61 @@ def add_ta125_features(df: pd.DataFrame, price_series: pd.Series) -> pd.DataFram
     return df.join(dow)
 
 
+# Cross-asset price columns → leak-free lagged-return features. Index direction is
+# often driven more by global moves than local news, so these usually add real signal.
+_CROSS_ASSETS = {
+    "SP500": "Market_SP500",
+    "VIX": "Market_VIX",
+    "Brent": "Market_Brent_Oil",
+    "USDILS": "FX_USD_ILS",
+    "VTA35": "VTA35_Price",
+}
+
+
+def add_cross_asset_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Lagged log-returns + short rolling stats for S&P/VIX/Brent/USDILS/VTA-35.
+
+    All use ``.shift(>=1)`` (causal). 0-sentinels (e.g. pre-inception VTA-35) are
+    treated as missing so we never take log(0); _finalize fills the resulting NaNs.
+    """
+    df = df.copy()
+    for name, col in _CROSS_ASSETS.items():
+        if col not in df.columns:
+            continue
+        s = df[col].astype(float).replace(0.0, np.nan)  # 0 = missing sentinel → avoid log(0)
+        logret = np.log(s / s.shift(1))
+        df[f"{name}_logret_lag1"] = logret.shift(1)
+        df[f"{name}_logret_lag2"] = logret.shift(2)
+        df[f"{name}_logret_lag3"] = logret.shift(3)
+        df[f"{name}_logret_5d_mean"] = logret.shift(1).rolling(5).mean()
+        df[f"{name}_logret_5d_std"] = logret.shift(1).rolling(5).std()
+    return df
+
+
+def _build_interactions(raw: pd.DataFrame) -> pd.DataFrame:
+    """Global daily sentiment×relevance interaction features (per raw date).
+
+    Domain prior: sentiment matters more when economy/security relevance is high, and
+    headline *volume* + sentiment *intensity* carry signal beyond the means. Joined into
+    both modeling frames so every model can use them.
+    """
+    relevance_cols = [c for c in SCORE_COLUMNS if c != "global_sentiment"]
+    g = raw.groupby("date", observed=True)
+    econ = g["relevance_economy"].mean()
+    sec = g["relevance_security"].mean()
+    pol = g["relevance_politics"].mean()
+    sent = g["global_sentiment"].mean()
+    out = pd.DataFrame({
+        "ix_econ_sent": econ * sent,
+        "ix_sec_sent": sec * sent,
+        "ix_pol_sent": pol * sent,
+        "ix_total_relevance": g[relevance_cols].mean().sum(axis=1),
+        "ix_sent_intensity": g["global_sentiment"].apply(lambda s: s.abs().mean()),
+        "ix_sent_dispersion": g["global_sentiment"].std(),
+    })
+    return out
+
+
 def _finalize(df: pd.DataFrame) -> pd.DataFrame:
     """Compute target, leak-free VTA-35 handling, NaN/inf cleanup, cutoff slice."""
     df = df.copy()
@@ -258,15 +313,19 @@ def _finalize(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: float = 0.15,
-                        pca_components: int | None = None):
+                        pca_components: int | None = None, pca_prefix: str | None = None):
     """Train-only-scaled chronological split (torch-free; sklearn lazy-imported).
 
-    Returns ``(X_tr, y_tr, X_va, y_va, X_te, y_te, n_features)`` with the StandardScaler
-    (and optional PCA) fit on the TRAIN slice only — no future leak. ``pca_components``
-    reduces dimensionality after scaling (used for the high-dim embedding dataset).
+    StandardScaler (and optional PCA) is fit on the TRAIN slice only — no future leak.
+
+    ``pca_components`` reduces dimensionality after scaling. ``pca_prefix`` scopes PCA
+    to only the columns whose name starts with that prefix (e.g. 'embc_' — the embedding
+    centroid block), passing finance/TA-125/dispersion features through un-reduced.
+    Without a prefix, PCA applies to all features.
     """
     from sklearn.preprocessing import StandardScaler
 
+    feat_cols = df.drop(columns=["Target"]).columns
     y = df["Target"].values.astype(np.float32)
     X = df.drop(columns=["Target"]).values.astype(np.float32)
     n = len(df)
@@ -281,10 +340,22 @@ def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: 
     X_va = scaler.transform(X_va)
     X_te = scaler.transform(X_te)
 
-    if pca_components and pca_components < X_tr.shape[1]:
+    if pca_components:
+        import numpy as _np
         from sklearn.decomposition import PCA
-        pca = PCA(n_components=pca_components, random_state=0).fit(X_tr)  # TRAIN-only fit
-        X_tr, X_va, X_te = pca.transform(X_tr), pca.transform(X_va), pca.transform(X_te)
+
+        if pca_prefix:
+            mask = _np.array([c.startswith(pca_prefix) for c in feat_cols])
+        else:
+            mask = _np.ones(len(feat_cols), dtype=bool)
+        if mask.sum() > pca_components:
+            pca = PCA(n_components=pca_components, random_state=0).fit(X_tr[:, mask])  # TRAIN-only
+            def _reduce(a):
+                return _np.hstack([pca.transform(a[:, mask]), a[:, ~mask]])
+            X_tr, X_va, X_te = _reduce(X_tr), _reduce(X_va), _reduce(X_te)
+        else:
+            logger.warning("PCA skipped: block to reduce ({}) <= pca_components ({}) — "
+                           "running un-reduced.", int(mask.sum()), pca_components)
 
     return (X_tr.astype(np.float32), y_tr, X_va.astype(np.float32), y_va,
             X_te.astype(np.float32), y_te, X_tr.shape[1])
@@ -315,11 +386,19 @@ def build_datasets(
 
     base, trading_days, price_full = _finance_base(extra_daily_features)
 
+    # Global sentiment×relevance interactions → both frames (rolled mean to trading days).
+    interactions_td = _roll_to_trading_days(_build_interactions(raw), trading_days, agg="mean")
+    base = base.join(interactions_td, how="left")
+
     dm_td = _roll_mean_and_count(daily_mean, trading_days)
     ps_td = _roll_to_trading_days(per_source, trading_days, agg="sum")
 
-    mt = _finalize(add_ta125_features(base.join(dm_td, how="left"), price_full))
-    ml = _finalize(add_ta125_features(base.join(ps_td, how="left"), price_full))
+    def _assemble(news_td):
+        return _finalize(add_cross_asset_features(
+            add_ta125_features(base.join(news_td, how="left"), price_full)))
+
+    mt = _assemble(dm_td)
+    ml = _assemble(ps_td)
 
     logger.info("Datasets built (<= {}): mt={}, ml={}", CUTOFF_DATE_ISO, mt.shape, ml.shape)
     logger.info("  trading-day rows: mt={:,}, ml={:,}  (LSTM-viability bar ~750)", len(mt), len(ml))
@@ -372,14 +451,23 @@ def build_embedding_dataset(engine=None) -> pd.DataFrame:
         return pd.DataFrame()
 
     dim = vectors.shape[1]
+    # Centroid columns are 'embc_*' so PCA (pca_prefix='embc_') reduces ONLY the
+    # centroid block — the scalar dispersion/count + finance/TA-125 features stay raw.
     centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
-                            columns=[f"emb_{i:03d}" for i in range(dim)])
-    centroid_by_date = centroid.groupby(level=0).mean()  # raw date → 768-d centroid
+                            columns=[f"embc_{i:03d}" for i in range(dim)])
+    grp = centroid.groupby(level=0)
+    centroid_by_date = grp.mean()
+    # Intra-day dispersion (mean per-dim std) + headline count — signal the centroid drops.
+    extras = pd.DataFrame({
+        "emb_dispersion": grp.std().mean(axis=1).fillna(0.0),
+        "emb_count": grp.size(),
+    })
 
     base, trading_days, price_full = _finance_base()
     emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
-    merged = base.join(emb_td, how="left")
-    df = _finalize(add_ta125_features(merged, price_full))
-    logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + finance)",
+    extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
+    merged = base.join(emb_td, how="left").join(extras_td, how="left")
+    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)))
+    logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + dispersion/count + finance)",
                 CUTOFF_DATE_ISO, df.shape, dim)
     return df
