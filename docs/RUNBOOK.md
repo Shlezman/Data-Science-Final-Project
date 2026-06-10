@@ -107,6 +107,11 @@ uv run --extra dev --with pytest pytest tests/ -q     # all tests green
 # Dry-run the whole chain (prints plan; ingest/embed stages no-op):
 uv run python -m sentisense.pipeline --dry-run
 
+# Backfill + score knobs are forwarded from the orchestrator:
+uv run python -m sentisense.pipeline \
+    --backfill-window 30 --backfill-batch-size 15 \   # 15 dates scraped in parallel
+    --score-concurrency 4                             # local Ollama scoring
+
 # Run individual stages or ranges:
 uv run python -m sentisense.pipeline --only embed                 # Phase 4 embed
 uv run python -m sentisense.pipeline --only cluster,features,baselines

@@ -63,7 +63,18 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Pass-through to ingest/embed stages.")
     parser.add_argument("--trials", type=int, default=0, help="Override Optuna trials for the tune stage.")
     parser.add_argument("--skip-final", action="store_true", help="Skip Phase 7 holdout eval.")
+    # backfill-stage knobs forwarded to sentisense.ingest.backfill
+    parser.add_argument("--backfill-window", type=int, default=7,
+                        help="Backfill: days per scrape window (default 7).")
+    parser.add_argument("--backfill-batch-size", type=int, default=5,
+                        help="Backfill: dates scraped CONCURRENTLY per batch (default 5).")
+    parser.add_argument("--backfill-max-days", type=int, default=0,
+                        help="Backfill: cap total days walked back (0 = until exhausted).")
+    parser.add_argument("--score-concurrency", type=int, default=4,
+                        help="Score stage: concurrent headlines (local Ollama default 4).")
     args = parser.parse_args()
+    if args.backfill_window < 1 or args.backfill_batch_size < 1:
+        parser.error("--backfill-window and --backfill-batch-size must be >= 1")
 
     selected = _select_stages(args)
     for s in selected:
@@ -125,10 +136,14 @@ def main() -> None:
         clock.start_stage(stage)
 
         if stage == "backfill":
-            _run_module("sentisense.ingest.backfill", dry)
+            bf = [*dry, "--window", str(args.backfill_window),
+                  "--batch-size", str(args.backfill_batch_size)]
+            if args.backfill_max_days:
+                bf += ["--max-days", str(args.backfill_max_days)]
+            _run_module("sentisense.ingest.backfill", bf)
 
         elif stage == "score":
-            _run_module("sentisense.ingest.score", dry)
+            _run_module("sentisense.ingest.score", [*dry, "--concurrency", str(args.score_concurrency)])
 
         elif stage == "coverage":
             _run_module("sentisense.ingest.coverage_report", [])
