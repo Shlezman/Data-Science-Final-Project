@@ -125,19 +125,36 @@ def get_unprocessed_headlines(
     limit: int = 0,
     date_from: str = "",
     date_to: str = "",
+    any_model: bool = False,
 ) -> list[dict[str, Any]]:
     """
-    Query raw_headlines that have no nlp_vectors entry for the given model.
+    Query raw_headlines lacking a score.
+
+    By default: no nlp_vectors row for ``model_name`` (re-scores under a new model).
+    With ``any_model=True``: no *validated* row from ANY model — i.e. truly-unscored
+    headlines only. Use this to fill gaps (e.g. score freshly-backfilled olds locally)
+    WITHOUT re-scoring headlines another model already covered.
     """
-    query = """
-        SELECT rh.id, rh.date, rh.source, rh.hour, rh.popularity, rh.headline
-        FROM raw_headlines rh
-        LEFT JOIN nlp_vectors nv
-            ON nv.headline_id = rh.id
-            AND nv.model_name = %s
-        WHERE nv.id IS NULL
-    """
-    params: list[Any] = [model_name]
+    if any_model:
+        query = """
+            SELECT rh.id, rh.date, rh.source, rh.hour, rh.popularity, rh.headline
+            FROM raw_headlines rh
+            WHERE NOT EXISTS (
+                SELECT 1 FROM nlp_vectors nv
+                WHERE nv.headline_id = rh.id AND nv.validation_passed = TRUE
+            )
+        """
+        params: list[Any] = []
+    else:
+        query = """
+            SELECT rh.id, rh.date, rh.source, rh.hour, rh.popularity, rh.headline
+            FROM raw_headlines rh
+            LEFT JOIN nlp_vectors nv
+                ON nv.headline_id = rh.id
+                AND nv.model_name = %s
+            WHERE nv.id IS NULL
+        """
+        params = [model_name]
 
     if date_from:
         query += " AND rh.date >= %s"
@@ -475,15 +492,18 @@ async def run_batch(
     fast: bool = False,
     concurrency: int = 4,
     headlines_per_call: int = 0,
+    any_model: bool = False,
 ) -> None:
     """Main entry point — dispatches to standard, fast, or fast-batch runner."""
     conn = get_connection(db_url)
     headlines = get_unprocessed_headlines(
         conn, model_name, limit=limit, date_from=date_from, date_to=date_to,
+        any_model=any_model,
     )
 
     total = len(headlines)
-    logger.info("Found {:,} unprocessed headlines for model '{}'", total, model_name)
+    scope = "truly-unscored (any model)" if any_model else f"unprocessed for '{model_name}'"
+    logger.info("Found {:,} headlines — scope: {}", total, scope)
 
     if total == 0:
         logger.info("Nothing to process. Done.")
@@ -563,6 +583,12 @@ def main() -> None:
         help="Show count of unprocessed headlines without processing.",
     )
     parser.add_argument(
+        "--unscored-any-model",
+        action="store_true",
+        help="Score only headlines with NO validated row from ANY model (fill gaps; "
+             "never re-score headlines another model already covered).",
+    )
+    parser.add_argument(
         "--fast",
         action="store_true",
         help="Use fast single-prompt mode (1 LLM call per headline instead of ~21). ~10-15x faster.",
@@ -638,6 +664,7 @@ def main() -> None:
         fast=args.fast,
         concurrency=args.concurrency,
         headlines_per_call=hpc,
+        any_model=args.unscored_any_model,
     ))
 
 
