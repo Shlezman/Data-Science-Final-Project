@@ -150,9 +150,17 @@
   - 5 transformer architectures + tree baselines (XGB/LGBM/CatBoost) + ElasticNet + MajorityClass.
   - **Optuna scaffold wired but DISABLED** (`OPTUNA_TRIALS=50`, run skipped) → no real HPO done yet.
   - `ModelD_MultiResolutionHierarchical` is a **stub** (runs day-level, not true per-headline).
-- **`poc.ipynb`** — currently in an **UNRESOLVED git merge conflict** (96 markers, does not
-  parse as JSON). Has leakage (`StratifiedKFold(shuffle=True)`, `shift(-1)` LastDay features,
-  ambiguous `shift(1)` target). **Do not port its features; it must be resolved separately.**
+  > As of the merge of PR #15/#17 into `main`, `lstm_forecaster.ipynb` and
+  > `tuning.ipynb` also live at the repo root (per-source LSTM + a long-running
+  > Optuna/calibration tuning notebook). The `sentisense/` package generalises this
+  > same machinery into importable, server-runnable modules — see §7 and `RUNBOOK.md`.
+- **`poc.ipynb`** — tree-model proof-of-concept (resolved on `main`; earlier had a
+  leaky `StratifiedKFold(shuffle=True)` + `shift(-1)` LastDay features). The
+  `sentisense` package deliberately does **not** port those leaky features; it uses
+  the chronological, leak-free path from `transformer_forecaster.ipynb`.
+- **`lstm_forecaster.ipynb` / `tuning.ipynb`** — per-source LSTM and the Optuna +
+  isotonic-calibration tuning notebook (on `main`). The package's `models/` + `hpo/`
+  cover the same ground as importable modules with leakage/cutoff hardening.
 - **`eda.ipynb`** — exploratory only; no finance, no target, no training.
 
 ### Implication for Phase 6 (LSTM HPO)
