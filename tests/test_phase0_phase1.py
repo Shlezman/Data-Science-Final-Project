@@ -173,6 +173,39 @@ def test_connection_url_normalises_to_psycopg_v3(monkeypatch, raw, expected):
     assert connection.get_connection_url() == expected
 
 
+def test_resolve_active_model_env_override(monkeypatch):
+    """Explicit SENTISENSE_ACTIVE_MODEL wins without touching the DB."""
+    from sentisense import constants
+
+    monkeypatch.setenv("SENTISENSE_ACTIVE_MODEL", "explicit-model")
+    assert constants.resolve_active_model(engine=None) == "explicit-model"
+
+
+def test_resolve_active_model_falls_back_on_db_error(monkeypatch):
+    """No override + unreachable DB → static fallback (never crashes the run)."""
+    from sentisense import constants
+
+    monkeypatch.delenv("SENTISENSE_ACTIVE_MODEL", raising=False)
+
+    class _BadEngine:
+        def connect(self):
+            raise RuntimeError("db down")
+
+    assert constants.resolve_active_model(_BadEngine(), fallback="fb-model") == "fb-model"
+
+
+def test_scoring_model_tracks_backend(monkeypatch):
+    """scoring_model_name() (NEW-score writer) follows the LLM backend."""
+    from sentisense import constants
+
+    monkeypatch.setenv("SENTISENSE_LLM_BACKEND", "ollama")
+    monkeypatch.setenv("SENTISENSE_OLLAMA_MODEL", "qwen2.5:14b")
+    assert constants.scoring_model_name() == "qwen2.5:14b"
+    monkeypatch.setenv("SENTISENSE_LLM_BACKEND", "openai")
+    monkeypatch.setenv("SENTISENSE_OPENAI_MODEL", "mistral-small-4")
+    assert constants.scoring_model_name() == "mistral-small-4"
+
+
 def test_connection_url_never_embeds_default_password(monkeypatch):
     """Regression guard: unset env must NOT silently return a dev-password DSN."""
     pytest.importorskip("sqlalchemy")

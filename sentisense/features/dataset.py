@@ -26,11 +26,11 @@ from sentisense.config import TOP_N_SOURCES
 from sentisense.constants import (
     CUTOFF_DATE,
     CUTOFF_DATE_ISO,
-    ACTIVE_MODEL_NAME,
     SCORE_COLUMNS,
     TA125_CSV,
     VTA35_CSV,
     VTA35_INCEPTION,
+    resolve_active_model,
 )
 from sentisense.db import get_engine
 
@@ -59,12 +59,13 @@ _RAW_SCORES_SQL = text(
 
 def _load_raw_scores(engine) -> pd.DataFrame:
     """Load validated, cutoff-bound, single-model news scores into a DataFrame."""
+    model = resolve_active_model(engine)
     with engine.connect() as conn:
         df = pd.read_sql(_RAW_SCORES_SQL, conn,
-                         params={"model": ACTIVE_MODEL_NAME, "cutoff": CUTOFF_DATE})
+                         params={"model": model, "cutoff": CUTOFF_DATE})
     df["date"] = pd.to_datetime(df["date"])
-    logger.info("Loaded {:,} validated rows (<= {}), {} sources",
-                len(df), CUTOFF_DATE_ISO, df["source"].nunique())
+    logger.info("Loaded {:,} validated rows for model '{}' (<= {}), {} sources",
+                len(df), model, CUTOFF_DATE_ISO, df["source"].nunique())
     return df
 
 

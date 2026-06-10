@@ -16,7 +16,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from sentisense import config
-from sentisense.constants import ACTIVE_MODEL_NAME, CUTOFF_DATE
+from sentisense.constants import CUTOFF_DATE, resolve_active_model
 from sentisense.config import EMBED_MODEL
 
 
@@ -47,13 +47,14 @@ def _scalar(engine, sql: str, params: dict) -> int:
         return int(conn.execute(text(sql), params).scalar_one())
 
 
-def count_unscored(engine) -> int:
-    """Headlines ≤ cutoff with no nlp_vectors row for the active model."""
+def count_unscored(engine, model: str | None = None) -> int:
+    """Headlines ≤ cutoff with no nlp_vectors row for the dataset (read) model."""
+    model = model or resolve_active_model(engine)
     return _scalar(engine, """
         SELECT COUNT(*) FROM raw_headlines rh
         LEFT JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
         WHERE nv.id IS NULL AND rh.date <= :cutoff
-    """, {"model": ACTIVE_MODEL_NAME, "cutoff": CUTOFF_DATE})
+    """, {"model": model, "cutoff": CUTOFF_DATE})
 
 
 def count_unembedded(engine) -> int:
@@ -78,9 +79,21 @@ def estimate(stages: list[str], engine) -> dict[str, float | None]:
     DB-count stages (score/embed) query live counts; others use fixed priors.
     """
     fixed = config.ETA_SECS_FIXED_STAGE
+    dataset_model = resolve_active_model(engine)
+    logger.info("Dataset (read) model: '{}'", dataset_model)
+
     counts: dict[str, int] = {}
     if "score" in stages:
-        counts["unscored"] = count_unscored(engine)
+        counts["unscored"] = count_unscored(engine, dataset_model)
+        from sentisense.constants import scoring_model_name
+        scoring = scoring_model_name()
+        if scoring != dataset_model:
+            logger.warning(
+                "score stage would write '{}' but the corpus is modelled on '{}'. "
+                "Your data is already scored — skip scoring with `--from embed` (or "
+                "`--from features`), or re-score everything under '{}' on purpose.",
+                scoring, dataset_model, scoring,
+            )
     if "embed" in stages:
         counts["unembedded"] = count_unembedded(engine)
 

@@ -27,12 +27,25 @@ from loguru import logger
 from sqlalchemy import text
 
 from sentisense.constants import (
-    ACTIVE_MODEL_NAME,
     CUTOFF_DATE,
     CUTOFF_DATE_ISO,
     REPORTS_DIR,
+    resolve_active_model,
 )
 from sentisense.db import get_engine
+
+# Full per-model breakdown so the operator immediately sees an already-scored corpus.
+_MODELS_SQL = text(
+    """
+    SELECT nv.model_name,
+           COUNT(*) FILTER (WHERE nv.validation_passed) AS validated,
+           COUNT(*)                                     AS total
+    FROM nlp_vectors nv
+    JOIN raw_headlines rh ON rh.id = nv.headline_id AND rh.date <= :cutoff
+    GROUP BY nv.model_name
+    ORDER BY validated DESC
+    """
+)
 
 # Parameterized; :cutoff and :model are bound, never string-concatenated.
 _SUMMARY_SQL = text(
@@ -106,7 +119,8 @@ def build_report() -> str:
         RuntimeError: If ``SENTISENSE_DATABASE_URL`` is unset (via get_engine).
     """
     engine = get_engine()
-    params = {"cutoff": CUTOFF_DATE, "model": ACTIVE_MODEL_NAME}
+    active_model = resolve_active_model(engine)
+    params = {"cutoff": CUTOFF_DATE, "model": active_model}
 
     with engine.connect() as conn:
         summary = conn.execute(_SUMMARY_SQL, params).mappings().one()
@@ -114,6 +128,7 @@ def build_report() -> str:
         news_dates = conn.execute(_NEWS_DATES_SQL, {"cutoff": CUTOFF_DATE}).mappings().one()
         balance = conn.execute(_CLASS_BALANCE_SQL, {"cutoff": CUTOFF_DATE}).mappings().one()
         per_month = pd.read_sql(_PER_MONTH_SQL, conn, params=params)
+        models = pd.read_sql(_MODELS_SQL, conn, params={"cutoff": CUTOFF_DATE})
 
     raw_total = int(summary["raw_total"] or 0)
     scored_total = int(scored["scored_total"] or 0)
@@ -121,14 +136,26 @@ def build_report() -> str:
 
     lines: list[str] = []
     lines.append(f"# SentiSense — Phase 1 Backfill Coverage Report (Gate A)\n")
-    lines.append(f"- Active model: `{ACTIVE_MODEL_NAME}`")
+    lines.append(f"- Dataset (read) model — auto-resolved: `{active_model}`")
     lines.append(f"- Hard cutoff: `<= {CUTOFF_DATE_ISO}` (applied to `raw_headlines.date`)\n")
+
+    lines.append("## Scored-model breakdown (<= cutoff)")
+    if models.empty:
+        lines.append("_No nlp_vectors rows yet._\n")
+    else:
+        lines.append("| model_name | validated | total |")
+        lines.append("|---|---:|---:|")
+        for _, r in models.iterrows():
+            lines.append(f"| `{r['model_name']}` | {int(r['validated'] or 0):,} | {int(r['total']):,} |")
+        lines.append("\n_The pipeline models on the top-validated model above. If your corpus "
+                     "is already scored, do NOT re-run the `score` stage locally (it would write "
+                     "a different model_name); start at `--from embed`._\n")
 
     lines.append("## Corpus reach (<= cutoff)")
     lines.append(f"- Earliest headline date reached: **{summary['earliest_date']}**")
     lines.append(f"- Latest headline date (<= cutoff): **{summary['latest_date']}**")
     lines.append(f"- Raw headlines: **{raw_total:,}**")
-    lines.append(f"- Successfully scored ({ACTIVE_MODEL_NAME}, validation_passed): "
+    lines.append(f"- Successfully scored ({active_model}, validation_passed): "
                  f"**{scored_total:,}** ({scored_pct:.1f}% of raw)")
     lines.append(f"- Distinct news dates: **{int(news_dates['distinct_news_dates'] or 0):,}** "
                  "(proxy for trading-day coverage; true TASE Sun–Thu count computed in Phase 2)\n")

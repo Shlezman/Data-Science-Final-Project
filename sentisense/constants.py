@@ -25,24 +25,61 @@ CUTOFF_DATE_ISO: str = CUTOFF_DATE.isoformat()  # "2023-10-07"
 # ─────────────────────────────────────────────────────────────────────
 import os as _os
 
+# ─────────────────────────────────────────────────────────────────────
+# TWO distinct model identities — do NOT conflate them:
+#
+#   * DATASET / READ model — the model_name the analytical queries (features,
+#     embeddings join, coverage, ETA) train on. Should be whatever model actually
+#     scored the corpus. Resolved at runtime by resolve_active_model() (auto-detect
+#     the most-populated model), env-overridable via SENTISENSE_ACTIVE_MODEL.
+#
+#   * SCORING model — what a NEW score-run writes, derived from the LLM backend
+#     (local ollama → qwen2.5:14b; openai → mistral-small-4). See scoring_model_name().
+#
+# Conflating them is exactly what made an already-scored (mistral-small-4) corpus look
+# "unscored" while running a local qwen2.5:14b backend.
+# ─────────────────────────────────────────────────────────────────────
 
-def _active_model_default() -> str:
-    """Mirror scripts/process_headlines.get_active_model_name() so the feature/embed
-    queries filter the SAME model_name the scorer actually wrote.
+# Static fallback for the DATASET (read) model — used only when there is no override
+# and the DB is empty/unavailable. resolve_active_model() is the real entry point.
+ACTIVE_MODEL_NAME: str = _os.environ.get("SENTISENSE_ACTIVE_MODEL", "mistral-small-4")
 
-    Local (``SENTISENSE_LLM_BACKEND=ollama``, the .env default) → the Ollama model
-    (qwen2.5:14b); production (``=openai``) → the vLLM model (mistral-small-4).
-    Without this a local run would score rows as 'qwen2.5:14b' while every query
-    looked for 'mistral-small-4' and silently found zero rows.
-    """
+
+def scoring_model_name() -> str:
+    """The model a NEW score-run writes, mirroring process_headlines.get_active_model_name()."""
     backend = _os.environ.get("SENTISENSE_LLM_BACKEND", "ollama").lower()
     if backend == "openai":
         return _os.environ.get("SENTISENSE_OPENAI_MODEL", "mistral-large-2")
     return _os.environ.get("SENTISENSE_OLLAMA_MODEL", "qwen2.5:14b")
 
 
-# Explicit SENTISENSE_ACTIVE_MODEL wins; otherwise track the active backend's model.
-ACTIVE_MODEL_NAME: str = _os.environ.get("SENTISENSE_ACTIVE_MODEL") or _active_model_default()
+def resolve_active_model(engine, *, fallback: str = ACTIVE_MODEL_NAME) -> str:
+    """Resolve the DATASET (read) model for the analytical queries.
+
+    Priority:
+      1. ``SENTISENSE_ACTIVE_MODEL`` env override (explicit operator choice).
+      2. The ``model_name`` with the most ``validation_passed=TRUE`` rows in
+         ``nlp_vectors`` — so an already-scored corpus is used as-is, regardless of
+         which LLM backend is configured locally.
+      3. ``fallback`` (mistral-small-4) when the DB is empty/unavailable.
+    """
+    override = _os.environ.get("SENTISENSE_ACTIVE_MODEL")
+    if override:
+        return override
+    try:
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT model_name, COUNT(*) AS n FROM nlp_vectors "
+                    "WHERE validation_passed = TRUE "
+                    "GROUP BY model_name ORDER BY n DESC LIMIT 1"
+                )
+            ).first()
+        return row[0] if row and row[0] else fallback
+    except Exception:
+        return fallback
 
 # ─────────────────────────────────────────────────────────────────────
 # Score-column contract. DB column order is canonical (matches init_db.sql and

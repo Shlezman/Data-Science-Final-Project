@@ -14,9 +14,12 @@ Idempotency: re-runs skip already-scored rows. NOTE — a previously *failed*
 Backend: this wrapper always passes ``--fast`` (the single-prompt path), which works
 with BOTH backends:
   * **Local (default, .env):** ``SENTISENSE_LLM_BACKEND=ollama`` + ``SENTISENSE_OLLAMA_MODEL``
-    (qwen2.5:14b). Do NOT set ``SENTISENSE_FORCE_COMPLETIONS_API``. Rows are written
-    under ``model_name='qwen2.5:14b'`` and the feature/embed queries follow suit
-    (``ACTIVE_MODEL_NAME`` tracks the backend — see sentisense/constants.py).
+    (qwen2.5:14b). Do NOT set ``SENTISENSE_FORCE_COMPLETIONS_API``. New rows are written
+    under ``model_name='qwen2.5:14b'``. IMPORTANT: if the corpus is already scored under
+    a different model (e.g. mistral-small-4), do NOT run this stage — the analytical
+    queries auto-resolve to the most-populated model (resolve_active_model), so just
+    start the pipeline at ``--from embed``. Only score locally to build a fresh
+    qwen2.5:14b dataset.
   * **Production vLLM:** ``SENTISENSE_LLM_BACKEND=openai`` + ``mistral-small-4`` +
     ``SENTISENSE_FORCE_COMPLETIONS_API=true`` (the multi-agent path sys.exit(2)s
     under that flag, which is why we force ``--fast``).
