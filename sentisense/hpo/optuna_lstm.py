@@ -36,7 +36,9 @@ from sentisense.config import (
 from sentisense.db import get_connection_url
 
 _HPO_EPOCHS = 40  # reduced per-trial budget; final retrain uses full MAX_EPOCHS
-_STUDY_NAME = "sentisense_lstm_hpo"
+STUDY_SCORES = "sentisense_lstm_scores"   # score-feature LSTM study
+STUDY_EMB = "sentisense_lstm_emb"         # embedding-centroid LSTM study
+_STUDY_NAME = STUDY_SCORES                # default for the standalone CLI
 
 
 def _set_seeds(seed: int) -> None:
@@ -53,7 +55,8 @@ def _dev_test_split(df: pd.DataFrame):
     return df.iloc[:-n_test].copy(), df.iloc[-n_test:].copy()
 
 
-def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3) -> float:
+def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3,
+              pca_components: int | None = None) -> float:
     """Mean fold ROC-AUC for one param set + seed, TimeSeriesSplit on dev (no leak)."""
     import torch  # noqa: F401
     from sentisense.models.lstm import LSTMClassifier
@@ -71,10 +74,14 @@ def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3) -> 
             continue  # fold too short to window
         scaler = StandardScaler().fit(X[tr_idx])
         Xtr, Xva = scaler.transform(X[tr_idx]), scaler.transform(X[va_idx])
+        if pca_components and pca_components < Xtr.shape[1]:
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=pca_components, random_state=0).fit(Xtr)  # TRAIN-only
+            Xtr, Xva = pca.transform(Xtr), pca.transform(Xva)
         dl_tr = windowed_loader(Xtr, y[tr_idx], window, shuffle=False, drop_last=True)
         dl_va = windowed_loader(Xva, y[va_idx], window, shuffle=False)
         model = LSTMClassifier(
-            X.shape[1], hidden=params["units"], n_layers=params["n_layers"],
+            Xtr.shape[1], hidden=params["units"], n_layers=params["n_layers"],
             dropout=params["dropout"], recurrent_dropout=params["recurrent_dropout"],
             dense_act=params["dense_act"], pooling=params["pooling"],
         )
@@ -86,8 +93,12 @@ def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3) -> 
 
 
 def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
-            study_name: str = _STUDY_NAME):
-    """Run/resume the Optuna study against RDBStorage. Returns the study."""
+            study_name: str = _STUDY_NAME, pca_components: int | None = None):
+    """Run/resume the Optuna study against RDBStorage. Returns the study.
+
+    ``pca_components`` (e.g. 50 for the embedding centroid dataset) reduces dims
+    inside each CV fold, TRAIN-fit only.
+    """
     import optuna
     from optuna.pruners import MedianPruner
     from optuna.samplers import TPESampler
@@ -116,7 +127,7 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
         seed_scores: list[float] = []
         for step, seed in enumerate(HPO_SEEDS):
             _set_seeds(seed)
-            seed_scores.append(_fold_auc(dev, params, seed))
+            seed_scores.append(_fold_auc(dev, params, seed, pca_components=pca_components))
             trial.report(float(np.mean(seed_scores)), step)  # running mean → pruner
             if trial.should_prune():
                 import optuna as _o
@@ -166,10 +177,11 @@ def has_completed_trials(study) -> bool:
 
 
 def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
-                       n_seeds: int = 3) -> dict:
+                       n_seeds: int = 3, pca_components: int | None = None) -> dict:
     """Phase 7 — retrain on train+val with best params, evaluate ONCE on the sacred test.
 
     Multi-seed (mean±std) so the headline number isn't a single-seed lottery.
+    ``pca_components`` matches the dim reduction used during HPO (embedding dataset).
     """
     from sentisense.models.lstm import LSTMClassifier
     from sentisense.models.sequence import chronological_split, windowed_loader
@@ -180,7 +192,8 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
     for seed in list(HPO_SEEDS)[:n_seeds]:
         _set_seeds(seed)
         # Train on train+val (everything before the sacred test tail), eval on test.
-        X_tr, y_tr, X_va, y_va, X_te, y_te, nf = chronological_split(df_lstm)
+        X_tr, y_tr, X_va, y_va, X_te, y_te, nf = chronological_split(
+            df_lstm, pca_components=pca_components)
         X_dev = np.vstack([X_tr, X_va])
         y_dev = np.concatenate([y_tr, y_va])
         # Carve a disjoint chronological tail of dev for the early-stop monitor so it

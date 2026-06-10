@@ -16,7 +16,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from sentisense import config
-from sentisense.constants import CUTOFF_DATE, resolve_active_model
+from sentisense.constants import CUTOFF_DATE
 from sentisense.config import EMBED_MODEL
 
 
@@ -47,14 +47,20 @@ def _scalar(engine, sql: str, params: dict) -> int:
         return int(conn.execute(text(sql), params).scalar_one())
 
 
-def count_unscored(engine, model: str | None = None) -> int:
-    """Headlines ≤ cutoff with no nlp_vectors row for the dataset (read) model."""
-    model = model or resolve_active_model(engine)
+def count_unscored(engine) -> int:
+    """Headlines ≤ cutoff with NO validated score from ANY model (truly unscored).
+
+    Matches the score stage's default scope (--unscored-any-model): only these get
+    scored locally; an already-scored corpus shows ~0 here.
+    """
     return _scalar(engine, """
         SELECT COUNT(*) FROM raw_headlines rh
-        LEFT JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
-        WHERE nv.id IS NULL AND rh.date <= :cutoff
-    """, {"model": model, "cutoff": CUTOFF_DATE})
+        WHERE rh.date <= :cutoff
+          AND NOT EXISTS (
+              SELECT 1 FROM nlp_vectors nv
+              WHERE nv.headline_id = rh.id AND nv.validation_passed = TRUE
+          )
+    """, {"cutoff": CUTOFF_DATE})
 
 
 def count_unembedded(engine) -> int:
@@ -79,21 +85,14 @@ def estimate(stages: list[str], engine) -> dict[str, float | None]:
     DB-count stages (score/embed) query live counts; others use fixed priors.
     """
     fixed = config.ETA_SECS_FIXED_STAGE
-    dataset_model = resolve_active_model(engine)
-    logger.info("Dataset (read) model: '{}'", dataset_model)
-
     counts: dict[str, int] = {}
     if "score" in stages:
-        counts["unscored"] = count_unscored(engine, dataset_model)
+        # Truly-unscored headlines (any model). The score stage writes these under
+        # the local backend model; an already-scored corpus → ~0.
+        counts["unscored"] = count_unscored(engine)
         from sentisense.constants import scoring_model_name
-        scoring = scoring_model_name()
-        if scoring != dataset_model:
-            logger.warning(
-                "score stage would write '{}' but the corpus is modelled on '{}'. "
-                "Your data is already scored — skip scoring with `--from embed` (or "
-                "`--from features`), or re-score everything under '{}' on purpose.",
-                scoring, dataset_model, scoring,
-            )
+        logger.info("score stage will write new rows under '{}' (truly-unscored only).",
+                    scoring_model_name())
     if "embed" in stages:
         counts["unembedded"] = count_unembedded(engine)
 

@@ -30,17 +30,23 @@ from sentisense.constants import (
     TA125_CSV,
     VTA35_CSV,
     VTA35_INCEPTION,
-    resolve_active_model,
 )
 from sentisense.db import get_engine
 
 _SCORE_COLS = list(SCORE_COLUMNS)
 
-# Cutoff pushed into SQL; model + validation filters match the standardised dataset.
+# Combine ALL validated scores regardless of model_name, one row per headline (the
+# latest by created_at). The corpus mixes models on disjoint date ranges
+# (mistral-small-4 recent + locally-backfilled mistral-small3.2 olds); this uses the
+# whole corpus. DISTINCT ON (rh.id) + ORDER BY created_at DESC = latest score per
+# headline. Cutoff pushed into SQL.
 _RAW_SCORES_SQL = text(
     """
-    SELECT rh.date::date AS date,
+    SELECT DISTINCT ON (rh.id)
+           rh.id          AS headline_id,
+           rh.date::date  AS date,
            rh.source,
+           nv.model_name,
            nv.relevance_politics,
            nv.relevance_economy,
            nv.relevance_security,
@@ -51,22 +57,28 @@ _RAW_SCORES_SQL = text(
     FROM raw_headlines rh
     JOIN nlp_vectors nv ON nv.headline_id = rh.id
     WHERE nv.validation_passed = TRUE
-      AND nv.model_name = :model
       AND rh.date <= :cutoff
+    ORDER BY rh.id, nv.created_at DESC, nv.id DESC
     """
 )
 
 
 def _load_raw_scores(engine) -> pd.DataFrame:
-    """Load validated, cutoff-bound, single-model news scores into a DataFrame."""
-    model = resolve_active_model(engine)
+    """Load validated, cutoff-bound news scores — all models, one row per headline.
+
+    NOTE: scores from different LLM models (mistral-small-4 vs mistral-small3.2) may
+    differ in scale/quality, so the feature distribution can shift at the date where
+    the scoring model changes. This is an accepted trade-off for using the full
+    backfilled corpus (operator chose 'combine all models').
+    """
     with engine.connect() as conn:
-        df = pd.read_sql(_RAW_SCORES_SQL, conn,
-                         params={"model": model, "cutoff": CUTOFF_DATE})
+        df = pd.read_sql(_RAW_SCORES_SQL, conn, params={"cutoff": CUTOFF_DATE})
     df["date"] = pd.to_datetime(df["date"])
-    logger.info("Loaded {:,} validated rows for model '{}' (<= {}), {} sources",
-                len(df), model, CUTOFF_DATE_ISO, df["source"].nunique())
-    return df
+    models = sorted(df["model_name"].unique()) if not df.empty else []
+    logger.info("Loaded {:,} validated headlines (<= {}), {} sources, models={}",
+                len(df), CUTOFF_DATE_ISO, df["source"].nunique(), models)
+    # model_name was only for dedupe/logging; drop before aggregation.
+    return df.drop(columns=["model_name", "headline_id"])
 
 
 def _safe_col(name: str) -> str:
@@ -245,12 +257,13 @@ def _finalize(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: float = 0.15):
+def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: float = 0.15,
+                        pca_components: int | None = None):
     """Train-only-scaled chronological split (torch-free; sklearn lazy-imported).
 
-    Returns ``(X_tr, y_tr, X_va, y_va, X_te, y_te, n_features)`` with the
-    StandardScaler fit on the training slice only — no future leak. Lives here (not
-    in models.sequence) so it can be used without importing torch.
+    Returns ``(X_tr, y_tr, X_va, y_va, X_te, y_te, n_features)`` with the StandardScaler
+    (and optional PCA) fit on the TRAIN slice only — no future leak. ``pca_components``
+    reduces dimensionality after scaling (used for the high-dim embedding dataset).
     """
     from sklearn.preprocessing import StandardScaler
 
@@ -267,7 +280,14 @@ def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: 
     X_tr = scaler.fit_transform(X_tr)
     X_va = scaler.transform(X_va)
     X_te = scaler.transform(X_te)
-    return X_tr, y_tr, X_va, y_va, X_te, y_te, X.shape[1]
+
+    if pca_components and pca_components < X_tr.shape[1]:
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=pca_components, random_state=0).fit(X_tr)  # TRAIN-only fit
+        X_tr, X_va, X_te = pca.transform(X_tr), pca.transform(X_va), pca.transform(X_te)
+
+    return (X_tr.astype(np.float32), y_tr, X_va.astype(np.float32), y_va,
+            X_te.astype(np.float32), y_te, X_tr.shape[1])
 
 
 def build_datasets(
@@ -293,6 +313,25 @@ def build_datasets(
     daily_mean = _build_daily_mean(raw)
     per_source = _build_per_source_wide(raw, top_n)
 
+    base, trading_days, price_full = _finance_base(extra_daily_features)
+
+    dm_td = _roll_mean_and_count(daily_mean, trading_days)
+    ps_td = _roll_to_trading_days(per_source, trading_days, agg="sum")
+
+    mt = _finalize(add_ta125_features(base.join(dm_td, how="left"), price_full))
+    ml = _finalize(add_ta125_features(base.join(ps_td, how="left"), price_full))
+
+    logger.info("Datasets built (<= {}): mt={}, ml={}", CUTOFF_DATE_ISO, mt.shape, ml.shape)
+    logger.info("  trading-day rows: mt={:,}, ml={:,}  (LSTM-viability bar ~750)", len(mt), len(ml))
+    return mt, ml
+
+
+def _finance_base(extra_daily_features: pd.DataFrame | None = None):
+    """Build the finance/market base frame on the TA-125 trading calendar.
+
+    Returns ``(base, trading_days, price_full)`` — shared by the score dataset and
+    the embedding dataset so both sit on the identical calendar + finance block.
+    """
     ta125, vta35, market, fx = _load_finance()
     trading_days = pd.DatetimeIndex(ta125.index).sort_values()
 
@@ -306,19 +345,41 @@ def build_datasets(
     base[ffill_cols] = base[ffill_cols].ffill()
 
     if extra_daily_features is not None and not extra_daily_features.empty:
-        extra = extra_daily_features.reindex(trading_days)
-        base = base.join(extra, how="left")
-
-    dm_td = _roll_mean_and_count(daily_mean, trading_days)
-    ps_td = _roll_to_trading_days(per_source, trading_days, agg="sum")
-
-    merged_trees = base.join(dm_td, how="left")
-    merged_lstm = base.join(ps_td, how="left")
+        base = base.join(extra_daily_features.reindex(trading_days), how="left")
 
     price_full = ta125["TA125_Price"].reindex(trading_days)
-    mt = _finalize(add_ta125_features(merged_trees, price_full))
-    ml = _finalize(add_ta125_features(merged_lstm, price_full))
+    return base, trading_days, price_full
 
-    logger.info("Datasets built (<= {}): mt={}, ml={}", CUTOFF_DATE_ISO, mt.shape, ml.shape)
-    logger.info("  trading-day rows: mt={:,}, ml={:,}  (LSTM-viability bar ~750)", len(mt), len(ml))
-    return mt, ml
+
+def build_embedding_dataset(engine=None) -> pd.DataFrame:
+    """Daily e5-centroid dataset for the 'embedded data' LSTM (PCA applied at train time).
+
+    Per trading day: the MEAN of that day's headline embeddings (rolled Fri/Sat → Sun
+    like the news), giving an ``emb_000..emb_NNN`` daily centroid, merged with the same
+    finance/calendar block + leak-free TA-125 features + next-day target + cutoff.
+
+    Dimensionality reduction (PCA → ~50-d) is NOT done here; it is fit on the TRAIN
+    fold only inside the HPO/eval split (see sentisense.models.sequence) to stay
+    leakage-safe. Returns an empty frame if no embeddings are cached.
+    """
+    engine = engine or get_engine()
+    from sentisense.embed import load_embeddings
+
+    meta, vectors = load_embeddings(engine)
+    if len(meta) == 0 or vectors.size == 0:
+        logger.warning("No embeddings cached — run the 'embed' stage first. "
+                       "Returning empty embedding dataset.")
+        return pd.DataFrame()
+
+    dim = vectors.shape[1]
+    centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
+                            columns=[f"emb_{i:03d}" for i in range(dim)])
+    centroid_by_date = centroid.groupby(level=0).mean()  # raw date → 768-d centroid
+
+    base, trading_days, price_full = _finance_base()
+    emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
+    merged = base.join(emb_td, how="left")
+    df = _finalize(add_ta125_features(merged, price_full))
+    logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + finance)",
+                CUTOFF_DATE_ISO, df.shape, dim)
+    return df

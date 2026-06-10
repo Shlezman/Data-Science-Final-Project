@@ -89,7 +89,17 @@ def main() -> None:
     # regardless of which stages are selected. This guarantees `tune` and a later
     # `--only final` see the SAME feature width (the narrative skew bug): narrative
     # is always derived from the cached embeddings (no GPU) before any features build.
-    state: dict = {"narrative": None, "narrative_built": False, "mt": None, "ml": None, "study": None}
+    state: dict = {"narrative": None, "narrative_built": False, "mt": None, "ml": None,
+                   "ml_emb": None, "ml_emb_built": False, "study_scores": None, "study_emb": None}
+
+    def embedding_dataset():
+        """Daily e5-centroid dataset (memoised). None if no embeddings cached."""
+        if not state["ml_emb_built"]:
+            from sentisense.features import build_embedding_dataset
+            df = build_embedding_dataset()
+            state["ml_emb"] = df if (df is not None and not df.empty) else None
+            state["ml_emb_built"] = True
+        return state["ml_emb"]
 
     def narrative_features():
         if not state["narrative_built"]:
@@ -140,21 +150,44 @@ def main() -> None:
 
         elif stage == "tune":
             _, ml = datasets()
-            from sentisense.config import OPTUNA_TRIALS
+            from sentisense.config import EMBED_PCA_COMPONENTS, OPTUNA_TRIALS
             from sentisense.hpo import run_hpo
+            from sentisense.hpo.optuna_lstm import STUDY_EMB, STUDY_SCORES
             n_trials = args.trials if args.trials > 0 else OPTUNA_TRIALS
-            state["study"] = run_hpo(ml, n_trials=n_trials)
+
+            logger.info("Tuning LSTM on SCORE features …")
+            state["study_scores"] = run_hpo(ml, n_trials=n_trials, study_name=STUDY_SCORES)
+
+            mle = embedding_dataset()
+            if mle is not None:
+                logger.info("Tuning LSTM on EMBEDDING features (PCA→{}) …", EMBED_PCA_COMPONENTS)
+                state["study_emb"] = run_hpo(mle, n_trials=n_trials, study_name=STUDY_EMB,
+                                             pca_components=EMBED_PCA_COMPONENTS)
+            else:
+                logger.warning("No embeddings cached → skipping the embedding-LSTM study "
+                               "(run the 'embed' stage to enable it).")
 
         elif stage == "final":
             _, ml = datasets()
+            from sentisense.config import EMBED_PCA_COMPONENTS
             from sentisense.hpo import final_holdout_eval, run_hpo
-            from sentisense.hpo.optuna_lstm import has_completed_trials
-            study = state["study"] or run_hpo(ml, n_trials=0)  # resume study without re-tuning
-            if not has_completed_trials(study):
-                raise RuntimeError(
-                    "No completed Optuna trials — run the 'tune' stage before 'final'."
-                )
-            final_holdout_eval(ml, study.best_params)
+            from sentisense.hpo.optuna_lstm import STUDY_EMB, STUDY_SCORES, has_completed_trials
+
+            s = state["study_scores"] or run_hpo(ml, n_trials=0, study_name=STUDY_SCORES)
+            if not has_completed_trials(s):
+                raise RuntimeError("No completed score-LSTM trials — run the 'tune' stage first.")
+            logger.info("Final holdout — SCORE LSTM:")
+            final_holdout_eval(ml, s.best_params)
+
+            mle = embedding_dataset()
+            if mle is not None:
+                se = state["study_emb"] or run_hpo(mle, n_trials=0, study_name=STUDY_EMB,
+                                                   pca_components=EMBED_PCA_COMPONENTS)
+                if has_completed_trials(se):
+                    logger.info("Final holdout — EMBEDDING LSTM:")
+                    final_holdout_eval(mle, se.best_params, pca_components=EMBED_PCA_COMPONENTS)
+                else:
+                    logger.warning("No completed embedding-LSTM trials — skipping its final eval.")
 
         clock.end_stage(stage, remaining=selected[i + 1:])
 

@@ -32,10 +32,49 @@ Run (server-side, operator) — local Ollama, with .env loaded automatically:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import time
+import urllib.request
 
 from loguru import logger
+
+_OLLAMA_LOG = "ollama_server.log"
+
+
+def _ollama_managed(args: argparse.Namespace) -> bool:
+    """Manage the local Ollama daemon only for the ollama backend (and unless opted out)."""
+    backend = os.environ.get("SENTISENSE_LLM_BACKEND", "ollama").lower()
+    return backend == "ollama" and not args.no_manage_ollama
+
+
+def _start_ollama() -> subprocess.Popen | None:
+    """`ollama serve` (backgrounded → log). Best-effort: if one is already up it just logs."""
+    log = open(REPO_ROOT / _OLLAMA_LOG, "ab")
+    try:
+        return subprocess.Popen(["ollama", "serve"], stdout=log, stderr=subprocess.STDOUT)
+    except FileNotFoundError:
+        logger.warning("`ollama` not on PATH — assuming a server is already reachable.")
+        return None
+
+
+def _wait_ollama_ready(timeout: int = 90) -> bool:
+    base = os.environ.get("SENTISENSE_OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{base}/api/tags", timeout=3) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            time.sleep(2)
+    return False
+
+
+def _stop_ollama() -> None:
+    """Kill Ollama to free GPU memory for the embedding / LSTM stages."""
+    subprocess.run(["pkill", "-9", "ollama"], check=False)
 
 from sentisense.constants import CUTOFF_DATE, CUTOFF_DATE_ISO, REPO_ROOT, parse_iso_date
 
@@ -60,6 +99,10 @@ def build_command(args: argparse.Namespace) -> list[str]:
         "--concurrency", str(args.concurrency),
         "--headlines-per-call", str(args.headlines_per_call),
     ]
+    if not args.rescore_all_under_model:
+        # Default: only score headlines with NO validated score from ANY model
+        # (fill backfilled gaps; never re-score the existing mistral-small-4 corpus).
+        cmd += ["--unscored-any-model"]
     if args.date_from:
         cmd += ["--date-from", args.date_from]
     if args.limit:
@@ -81,7 +124,14 @@ def main() -> None:
     parser.add_argument("--date-from", type=str, default="",
                         help="Only score on/after this date YYYY-MM-DD (default: earliest).")
     parser.add_argument("--limit", type=int, default=0, help="Max headlines to score (0 = all).")
+    parser.add_argument("--rescore-all-under-model", action="store_true",
+                        help="Score every headline lacking THIS backend's model row "
+                             "(re-scores the whole corpus under the local model). "
+                             "Default: only truly-unscored headlines.")
     parser.add_argument("--dry-run", action="store_true", help="Show count; no LLM calls, no writes.")
+    parser.add_argument("--no-manage-ollama", action="store_true",
+                        help="Don't start/stop the Ollama daemon around scoring "
+                             "(use when Ollama is already running or remote).")
     args = parser.parse_args()
 
     if not (1 <= args.concurrency <= 128):
@@ -99,8 +149,25 @@ def main() -> None:
     cmd = build_command(args)
     logger.info("Phase 1.2 scoring → delegating to process_headlines.py (cutoff <= {})", CUTOFF_DATE_ISO)
     logger.info("  command: {}", " ".join(cmd))
-    completed = subprocess.run(cmd, cwd=str(REPO_ROOT))
-    sys.exit(completed.returncode)
+
+    # Manage the local Ollama daemon around scoring: start it before, kill it after
+    # so the GPU is freed for the embedding / LSTM stages. Skipped on --dry-run,
+    # for non-ollama backends, or with --no-manage-ollama.
+    manage = _ollama_managed(args) and not args.dry_run
+    if manage:
+        logger.info("Starting `ollama serve` (log: {}) …", _OLLAMA_LOG)
+        _start_ollama()
+        if not _wait_ollama_ready():
+            logger.warning("Ollama not ready after timeout — proceeding (it may already be up).")
+
+    try:
+        completed = subprocess.run(cmd, cwd=str(REPO_ROOT))
+        returncode = completed.returncode
+    finally:
+        if manage:
+            logger.info("Shutting down Ollama (`pkill -9 ollama`) to free GPU memory …")
+            _stop_ollama()
+    sys.exit(returncode)
 
 
 if __name__ == "__main__":

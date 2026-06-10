@@ -44,13 +44,27 @@ def test_score_command_always_enforces_cutoff():
 
     args = argparse.Namespace(
         concurrency=50, headlines_per_call=20, date_from="", limit=0, dry_run=True,
+        rescore_all_under_model=False,
     )
     cmd = score.build_command(args)
     # --date-to 2023-10-07 must be present and adjacent.
     assert "--date-to" in cmd
     assert cmd[cmd.index("--date-to") + 1] == "2023-10-07"
-    assert "--fast" in cmd  # production vLLM requires the fast path
+    assert "--fast" in cmd
     assert "--dry-run" in cmd
+    # Default scope = only truly-unscored headlines (don't re-score other models).
+    assert "--unscored-any-model" in cmd
+
+
+def test_score_command_rescore_all_drops_unscored_flag():
+    from sentisense.ingest import score
+
+    args = argparse.Namespace(
+        concurrency=4, headlines_per_call=20, date_from="", limit=0, dry_run=True,
+        rescore_all_under_model=True,
+    )
+    cmd = score.build_command(args)
+    assert "--unscored-any-model" not in cmd
 
 
 def test_score_command_passes_optional_window():
@@ -58,6 +72,7 @@ def test_score_command_passes_optional_window():
 
     args = argparse.Namespace(
         concurrency=32, headlines_per_call=0, date_from="2015-01-01", limit=100, dry_run=False,
+        rescore_all_under_model=False,
     )
     cmd = score.build_command(args)
     assert cmd[cmd.index("--date-from") + 1] == "2015-01-01"
@@ -128,13 +143,14 @@ def test_coverage_sql_is_cutoff_parameterized():
         assert "2023-10-07" not in rendered
 
 
-def test_scored_sql_filters_active_model_and_validation():
+def test_scored_sql_counts_any_validated_model():
     pytest.importorskip("sqlalchemy")
     from sentisense.ingest import coverage_report as cov
 
     rendered = str(cov._SCORED_SQL)
-    assert ":model" in rendered
+    # Combine-all-models: validated-by-any, no single-model filter.
     assert "validation_passed = TRUE" in rendered
+    assert ":model" not in rendered
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -54,10 +54,18 @@ uv run pytest tests/test_phase0_phase1.py -v
 uv run python -m sentisense.ingest.backfill --window 7 --dry-run
 uv run python -m sentisense.ingest.backfill --window 7            # real run
 
-# 1.2 score unscored headlines, HARD-capped at <= 2023-10-07. Dry-run shows the count.
+# 1.2 score ONLY truly-unscored headlines (no validated row from ANY model),
+#     HARD-capped at <= 2023-10-07. New rows are written under your local backend
+#     model (SENTISENSE_OLLAMA_MODEL). It will NOT re-score your existing
+#     mistral-small-4 corpus — only the freshly-backfilled olds.
 uv run python -m sentisense.ingest.score --dry-run
 uv run python -m sentisense.ingest.score --headlines-per-call 20 --concurrency 4    # local Ollama
-# (production vLLM can take --concurrency 50)
+# (--rescore-all-under-model forces re-scoring the whole corpus under the local model)
+#
+# The score stage AUTO-manages Ollama on the ollama backend: it runs
+# `ollama serve > ollama_server.log 2>&1` before scoring and `pkill -9 ollama`
+# after, freeing the GPU for the embedding / LSTM stages. Pass --no-manage-ollama
+# if Ollama is already running or remote.
 
 # 1.3 GATE A artifact — coverage report. Paste the printed report (and the file) back.
 uv run python -m sentisense.ingest.coverage_report
@@ -65,9 +73,18 @@ uv run python -m sentisense.ingest.coverage_report
 ```
 
 ### Gate A — paste back `sentisense_reports/phase1_coverage_report.md`
-Implementer verifies: cutoff held (latest date ≤ 2023-10-07), backfill saturated
-(earliest date as far back as the source allows), scored % high, and the distinct
-news-date count (LSTM-viability signal — true TASE trading-day count comes in Phase 2).
+The report's **scored-model breakdown** shows every model_name + its validated count
+(e.g. `mistral-small-4` 1.3M, `mistral-small3.2` N). Modeling combines ALL of them
+(one score per headline, latest). Implementer verifies: cutoff held, backfill
+saturated, validated-% high, distinct news-date count vs the ~750 LSTM bar.
+
+### Your flow (already-scored corpus + local backfill)
+```
+backfill (scrape olds) → score (fills only the new olds, locally) → embed (ALL
+headlines) → cluster → features → baselines → tune (scores + embeddings) → final
+```
+`uv run python -m sentisense.pipeline` runs it all with the live ETA. Because the
+score stage is truly-unscored-only, it won't touch your mistral-small-4 rows.
 
 ## Notes
 - `python -m sentisense.X` runs from the **repo root** (the root `pyproject.toml`
@@ -100,8 +117,12 @@ uv run python -m sentisense.pipeline --only final
 ```
 
 Stage order: `backfill → score → coverage → embed → cluster → features → baselines → tune → final`.
-The Optuna study persists to the project DB (RDBStorage via `SENTISENSE_DATABASE_URL`),
-so a killed 7-day run resumes on relaunch (`create_study(load_if_exists=True)`).
+
+The `tune` stage runs **two** Optuna studies (compared on the sacred holdout in `final`):
+  * `sentisense_lstm_scores` — LSTM on the per-source SCORE features.
+  * `sentisense_lstm_emb` — LSTM on the daily e5-centroid EMBEDDING features (PCA→`SENTISENSE_EMBED_PCA`, default 50, train-fit). Skipped if no embeddings cached.
+Both persist to the project DB (RDBStorage via `SENTISENSE_DATABASE_URL`), so a killed
+run resumes on relaunch (`create_study(load_if_exists=True)`).
 
 Migration: `sentisense/db/migrations/001_headline_embeddings.sql` (the embedding cache
 table) is applied automatically by the embed stage (`ensure_table`, idempotent).

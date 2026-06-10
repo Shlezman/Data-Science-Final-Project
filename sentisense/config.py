@@ -37,6 +37,8 @@ EMBED_BATCH: int = _int("SENTISENSE_EMBED_BATCH", 128)
 # Clustering refit cadence (days) for the expanding-window MiniBatchKMeans.
 CLUSTER_K: int = _int("SENTISENSE_CLUSTER_K", 8)
 CLUSTER_REFIT_EVERY: int = _int("SENTISENSE_CLUSTER_REFIT_EVERY", 30)
+# Daily-centroid embedding dataset: PCA target dim (train-fit). 0 = no PCA.
+EMBED_PCA_COMPONENTS: int = _int("SENTISENSE_EMBED_PCA", 50)
 
 SEED: int = _int("SENTISENSE_SEED", 42)
 

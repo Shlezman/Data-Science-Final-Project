@@ -30,7 +30,6 @@ from sentisense.constants import (
     CUTOFF_DATE,
     CUTOFF_DATE_ISO,
     REPORTS_DIR,
-    resolve_active_model,
 )
 from sentisense.db import get_engine
 
@@ -59,15 +58,16 @@ _SUMMARY_SQL = text(
     """
 )
 
+# "scored" = headline has a validated row from ANY model (the corpus combines models).
 _SCORED_SQL = text(
     """
     SELECT COUNT(*) AS scored_total
     FROM raw_headlines rh
-    JOIN nlp_vectors nv
-        ON nv.headline_id = rh.id
-       AND nv.model_name = :model
-       AND nv.validation_passed = TRUE
     WHERE rh.date <= :cutoff
+      AND EXISTS (
+          SELECT 1 FROM nlp_vectors nv
+          WHERE nv.headline_id = rh.id AND nv.validation_passed = TRUE
+      )
     """
 )
 
@@ -75,13 +75,12 @@ _PER_MONTH_SQL = text(
     """
     SELECT
         to_char(date_trunc('month', rh.date), 'YYYY-MM') AS month,
-        COUNT(*) AS raw_count,
-        COUNT(nv.id) AS scored_count
+        COUNT(*)            AS raw_count,
+        COUNT(v.headline_id) AS scored_count
     FROM raw_headlines rh
-    LEFT JOIN nlp_vectors nv
-        ON nv.headline_id = rh.id
-       AND nv.model_name = :model
-       AND nv.validation_passed = TRUE
+    LEFT JOIN (
+        SELECT DISTINCT headline_id FROM nlp_vectors WHERE validation_passed = TRUE
+    ) v ON v.headline_id = rh.id
     WHERE rh.date <= :cutoff
     GROUP BY 1
     ORDER BY 1
@@ -119,16 +118,15 @@ def build_report() -> str:
         RuntimeError: If ``SENTISENSE_DATABASE_URL`` is unset (via get_engine).
     """
     engine = get_engine()
-    active_model = resolve_active_model(engine)
-    params = {"cutoff": CUTOFF_DATE, "model": active_model}
+    params = {"cutoff": CUTOFF_DATE}
 
     with engine.connect() as conn:
         summary = conn.execute(_SUMMARY_SQL, params).mappings().one()
         scored = conn.execute(_SCORED_SQL, params).mappings().one()
-        news_dates = conn.execute(_NEWS_DATES_SQL, {"cutoff": CUTOFF_DATE}).mappings().one()
-        balance = conn.execute(_CLASS_BALANCE_SQL, {"cutoff": CUTOFF_DATE}).mappings().one()
+        news_dates = conn.execute(_NEWS_DATES_SQL, params).mappings().one()
+        balance = conn.execute(_CLASS_BALANCE_SQL, params).mappings().one()
         per_month = pd.read_sql(_PER_MONTH_SQL, conn, params=params)
-        models = pd.read_sql(_MODELS_SQL, conn, params={"cutoff": CUTOFF_DATE})
+        models = pd.read_sql(_MODELS_SQL, conn, params=params)
 
     raw_total = int(summary["raw_total"] or 0)
     scored_total = int(scored["scored_total"] or 0)
@@ -136,7 +134,7 @@ def build_report() -> str:
 
     lines: list[str] = []
     lines.append(f"# SentiSense — Phase 1 Backfill Coverage Report (Gate A)\n")
-    lines.append(f"- Dataset (read) model — auto-resolved: `{active_model}`")
+    lines.append("- Modeling combines ALL validated models (one score per headline).")
     lines.append(f"- Hard cutoff: `<= {CUTOFF_DATE_ISO}` (applied to `raw_headlines.date`)\n")
 
     lines.append("## Scored-model breakdown (<= cutoff)")
@@ -147,16 +145,15 @@ def build_report() -> str:
         lines.append("|---|---:|---:|")
         for _, r in models.iterrows():
             lines.append(f"| `{r['model_name']}` | {int(r['validated'] or 0):,} | {int(r['total']):,} |")
-        lines.append("\n_The pipeline models on the top-validated model above. If your corpus "
-                     "is already scored, do NOT re-run the `score` stage locally (it would write "
-                     "a different model_name); start at `--from embed`._\n")
+        lines.append("\n_The pipeline models on ALL validated rows (one per headline, latest). "
+                     "The `score` stage only fills truly-unscored headlines; it will NOT "
+                     "re-score headlines another model already covered._\n")
 
     lines.append("## Corpus reach (<= cutoff)")
     lines.append(f"- Earliest headline date reached: **{summary['earliest_date']}**")
     lines.append(f"- Latest headline date (<= cutoff): **{summary['latest_date']}**")
     lines.append(f"- Raw headlines: **{raw_total:,}**")
-    lines.append(f"- Successfully scored ({active_model}, validation_passed): "
-                 f"**{scored_total:,}** ({scored_pct:.1f}% of raw)")
+    lines.append(f"- Validated (any model): **{scored_total:,}** ({scored_pct:.1f}% of raw)")
     lines.append(f"- Distinct news dates: **{int(news_dates['distinct_news_dates'] or 0):,}** "
                  "(proxy for trading-day coverage; true TASE Sun–Thu count computed in Phase 2)\n")
 
