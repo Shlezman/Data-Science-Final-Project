@@ -58,6 +58,34 @@ news-date count (LSTM-viability signal — true TASE trading-day count comes in 
   `ON CONFLICT DO NOTHING`). To re-score failures the operator runs the existing
   `scripts/retry_failed_headlines.py` (documented in the main CLAUDE.md).
 
+## Full pipeline (Phases 4–7) — the "run all features" orchestrator
+
+```bash
+uv sync --extra ml --extra embed --extra finance     # heavy deps for modeling
+uv run --extra dev --with pytest pytest tests/ -q     # all tests green
+
+# Dry-run the whole chain (prints plan; ingest/embed stages no-op):
+uv run python -m sentisense.pipeline --dry-run
+
+# Run individual stages or ranges:
+uv run python -m sentisense.pipeline --only embed                 # Phase 4 embed
+uv run python -m sentisense.pipeline --only cluster,features,baselines
+uv run python -m sentisense.pipeline --from features              # skip ingest+embed
+
+# GATE C — review BEFORE the long HPO run, then launch under tmux/nohup (resumable):
+tmux new -s hpo
+uv run python -m sentisense.hpo.optuna_lstm --trials 100          # resumes if killed
+# Phase 7 sacred-holdout eval of the best trial:
+uv run python -m sentisense.pipeline --only final
+```
+
+Stage order: `backfill → score → coverage → embed → cluster → features → baselines → tune → final`.
+The Optuna study persists to the project DB (RDBStorage via `SENTISENSE_DATABASE_URL`),
+so a killed 7-day run resumes on relaunch (`create_study(load_if_exists=True)`).
+
+Migration: `sentisense/db/migrations/001_headline_embeddings.sql` (the embedding cache
+table) is applied automatically by the embed stage (`ensure_table`, idempotent).
+
 ## Gate sequence (whole project)
 - **Gate A** (here): Phase 1 coverage report.
 - **Gate B**: Phase 2 schema/feasibility report (trading-day count, class balance).
