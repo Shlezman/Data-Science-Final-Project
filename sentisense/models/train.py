@@ -43,9 +43,9 @@ def cleanup_gpu() -> None:
 
 def train_model(model: nn.Module, dl_tr: DataLoader, dl_va: DataLoader, *,
                 lr: float = LR, max_epochs: int = MAX_EPOCHS, patience: int = PATIENCE,
-                weight_decay: float = 1e-4, model_name: str = "model",
-                save_dir: Path | None = None) -> dict[str, Any]:
-    """Train with class-weighted BCE, AMP, cosine LR, early stop on val_loss."""
+                weight_decay: float = 1e-4, max_grad_norm: float = 1.0,
+                model_name: str = "model", save_dir: Path | None = None) -> dict[str, Any]:
+    """Train with class-weighted BCE, AMP, cosine LR, gradient clipping, early stop."""
     from sentisense.models.sequence import compute_class_weights
 
     model = model.to(DEVICE)
@@ -70,6 +70,10 @@ def train_model(model: nn.Module, dl_tr: DataLoader, dl_va: DataLoader, *,
                     logits = model(X)
                     loss = F.binary_cross_entropy_with_logits(logits, y, weight=class_weights[y.long()])
                 scaler.scale(loss).backward()
+                if max_grad_norm and max_grad_norm > 0:
+                    # Unscale before clipping so the norm is in real (not AMP-scaled) space.
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 scaler.step(optimizer)
                 scaler.update()
                 train_loss += loss.item()

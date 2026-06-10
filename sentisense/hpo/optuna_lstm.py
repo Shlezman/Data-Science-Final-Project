@@ -64,28 +64,34 @@ def _fold_auc(dev: pd.DataFrame, params: dict, seed: int, n_splits: int = 3,
     from sentisense.models.train import evaluate_on_test, train_model
 
     window = params["window"]
+    batch_size = params.get("batch_size", 64)
     y = dev["Target"].values.astype(np.float32)
     X = dev.drop(columns=["Target"]).values.astype(np.float32)
     tss = TimeSeriesSplit(n_splits=n_splits)
 
     aucs: list[float] = []
     for tr_idx, va_idx in tss.split(X):
-        if len(va_idx) <= window or len(tr_idx) <= window:
-            continue  # fold too short to window
+        # Need at least one full batch of windows in train (drop_last=True), else the
+        # fold trains on nothing and scores an untrained net.
+        if (len(tr_idx) - window) < batch_size or (len(va_idx) - window) < 1:
+            continue
         scaler = StandardScaler().fit(X[tr_idx])
         Xtr, Xva = scaler.transform(X[tr_idx]), scaler.transform(X[va_idx])
         if pca_components and pca_components < Xtr.shape[1]:
             from sklearn.decomposition import PCA
             pca = PCA(n_components=pca_components, random_state=0).fit(Xtr)  # TRAIN-only
             Xtr, Xva = pca.transform(Xtr), pca.transform(Xva)
-        dl_tr = windowed_loader(Xtr, y[tr_idx], window, shuffle=False, drop_last=True)
-        dl_va = windowed_loader(Xva, y[va_idx], window, shuffle=False)
+        dl_tr = windowed_loader(Xtr, y[tr_idx], window, batch_size=batch_size,
+                                shuffle=False, drop_last=True)
+        dl_va = windowed_loader(Xva, y[va_idx], window, batch_size=batch_size, shuffle=False)
         model = LSTMClassifier(
             Xtr.shape[1], hidden=params["units"], n_layers=params["n_layers"],
             dropout=params["dropout"], recurrent_dropout=params["recurrent_dropout"],
             dense_act=params["dense_act"], pooling=params["pooling"],
+            d_dense=params.get("d_dense", 32), bidirectional=params.get("bidirectional", False),
         )
         train_model(model, dl_tr, dl_va, lr=params["lr"], weight_decay=params["weight_decay"],
+                    max_grad_norm=params.get("grad_clip", 1.0),
                     max_epochs=_HPO_EPOCHS, patience=6, model_name="hpo_trial")
         metrics = evaluate_on_test(model, dl_va)  # ROC-AUC on the fold's val slice
         aucs.append(metrics["roc_auc"])
@@ -105,23 +111,32 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
 
     dev, _ = _dev_test_split(df_lstm)
     small = len(dev) < LSTM_VIABILITY_MIN_DAYS
-    max_units = 64 if small else 128
+    # Capacity caps scale with data size to fight overfit on a short dev region.
+    max_units = 96 if small else 192
     max_layers = 2 if small else 3
+    window_choices = [5, 10, 15, 20] if small else [5, 10, 15, 20, 30]
     if small:
-        logger.warning("Dev region {} days < {} viability bar — capping units<={}, depth<={}.",
-                       len(dev), LSTM_VIABILITY_MIN_DAYS, max_units, max_layers)
+        logger.warning("Dev region {} days < {} viability bar — capping units<={}, depth<={}, "
+                       "window<=20.", len(dev), LSTM_VIABILITY_MIN_DAYS, max_units, max_layers)
 
     def objective(trial) -> float:
         params = {
-            "window": trial.suggest_int("window", 3, 14),
+            # memory / capacity
+            "window": trial.suggest_categorical("window", window_choices),
             "units": trial.suggest_int("units", 16, max_units, log=True),
             "n_layers": trial.suggest_int("n_layers", 1, max_layers),
-            "dropout": trial.suggest_float("dropout", 0.2, 0.6),
-            "recurrent_dropout": trial.suggest_float("recurrent_dropout", 0.1, 0.5),
+            "bidirectional": trial.suggest_categorical("bidirectional", [False, True]),
+            "d_dense": trial.suggest_categorical("d_dense", [16, 32, 64]),
+            # regularisation
+            "dropout": trial.suggest_float("dropout", 0.1, 0.6),
+            "recurrent_dropout": trial.suggest_float("recurrent_dropout", 0.0, 0.5),
+            "weight_decay": trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
+            "grad_clip": trial.suggest_categorical("grad_clip", [0.5, 1.0, 5.0]),
+            # head + optimisation
             "dense_act": trial.suggest_categorical("dense_act", ["relu", "elu", "tanh", "gelu"]),
             "pooling": trial.suggest_categorical("pooling", ["last", "avg", "max"]),
-            "lr": trial.suggest_float("lr", 1e-4, 5e-3, log=True),
-            "weight_decay": trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
+            "lr": trial.suggest_float("lr", 5e-5, 1e-2, log=True),
+            "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64]),
         }
         trial.set_user_attr("seeds", list(HPO_SEEDS))
         seed_scores: list[float] = []
@@ -132,7 +147,10 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
             if trial.should_prune():
                 import optuna as _o
                 raise _o.TrialPruned()
-        return float(np.mean(seed_scores))
+        # Variance-penalised: prefer configs that are good AND stable across seeds —
+        # a high-mean/high-variance config is a lucky-seed trap in finance.
+        mean, std = float(np.mean(seed_scores)), float(np.std(seed_scores))
+        return mean - 0.25 * std
 
     study = optuna.create_study(
         direction="maximize",
@@ -188,6 +206,7 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
     from sentisense.models.train import evaluate_on_test, train_model
 
     window = best_params["window"]
+    bs = best_params.get("batch_size", 64)
     runs: list[dict] = []
     for seed in list(HPO_SEEDS)[:n_seeds]:
         _set_seeds(seed)
@@ -200,16 +219,21 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
         # is NOT part of the fit (the prior code monitored on data it trained on —
         # optimistic). Test tail stays sacred (only evaluate_on_test sees dl_te).
         cut = int(len(X_dev) * 0.9)
-        dl_fit = windowed_loader(X_dev[:cut], y_dev[:cut], window, shuffle=False, drop_last=True)
-        dl_mon = windowed_loader(X_dev[cut:], y_dev[cut:], window, shuffle=False)
-        dl_te = windowed_loader(X_te, y_te, window, shuffle=False)
+        dl_fit = windowed_loader(X_dev[:cut], y_dev[:cut], window, batch_size=bs,
+                                 shuffle=False, drop_last=True)
+        dl_mon = windowed_loader(X_dev[cut:], y_dev[cut:], window, batch_size=bs, shuffle=False)
+        dl_te = windowed_loader(X_te, y_te, window, batch_size=bs, shuffle=False)
         model = LSTMClassifier(
             nf, hidden=best_params["units"], n_layers=best_params["n_layers"],
             dropout=best_params["dropout"], recurrent_dropout=best_params["recurrent_dropout"],
             dense_act=best_params["dense_act"], pooling=best_params["pooling"],
+            d_dense=best_params.get("d_dense", 32),
+            bidirectional=best_params.get("bidirectional", False),
         )
         train_model(model, dl_fit, dl_mon, lr=best_params["lr"],
-                    weight_decay=best_params["weight_decay"], model_name=f"lstm_final_s{seed}")
+                    weight_decay=best_params["weight_decay"],
+                    max_grad_norm=best_params.get("grad_clip", 1.0),
+                    model_name=f"lstm_final_s{seed}")
         runs.append(evaluate_on_test(model, dl_te))
 
     keys = runs[0].keys()

@@ -1,9 +1,10 @@
 """LSTM / GRU recurrent classifiers — same head + forward(x)->logit contract as the
 transformer zoo, so they drop into train_model()/evaluate_on_test() unchanged.
 
-Search dims exposed for Phase 6 HPO: hidden units, depth, head dropout, inter-layer
-(recurrent) dropout, dense activation, temporal pooling. Lookback (window) is a
-dataset-level dim handled in :mod:`sentisense.models.sequence`.
+Search dims exposed for Phase 6 HPO: hidden units, depth, bidirectionality, head
+width (d_dense), head dropout, inter-layer (recurrent) dropout, dense activation,
+temporal pooling. Lookback (window), batch size, lr, weight decay and grad-clip are
+threaded from the HPO objective (see :mod:`sentisense.hpo.optuna_lstm`).
 """
 
 from __future__ import annotations
@@ -28,17 +29,20 @@ class _RecurrentClassifier(nn.Module):
 
     def __init__(self, cell, n_features: int, *, hidden: int = 64, n_layers: int = 1,
                  dropout: float = 0.2, recurrent_dropout: float = 0.0,
-                 dense_act: str = "relu", pooling: str = "last", d_dense: int = 32):
+                 dense_act: str = "relu", pooling: str = "last", d_dense: int = 32,
+                 bidirectional: bool = False):
         super().__init__()
         self.pooling = pooling
         self.rnn = cell(
             input_size=n_features, hidden_size=hidden, num_layers=n_layers,
             batch_first=True,
             dropout=(recurrent_dropout if n_layers > 1 else 0.0),
+            bidirectional=bidirectional,
         )
+        out_dim = hidden * (2 if bidirectional else 1)
         act = _ACT.get(dense_act, nn.ReLU)
         self.head = nn.Sequential(
-            nn.Linear(hidden, d_dense), act(), nn.Dropout(dropout),
+            nn.Linear(out_dim, d_dense), act(), nn.Dropout(dropout),
             nn.Linear(d_dense, 1),
         )
 
