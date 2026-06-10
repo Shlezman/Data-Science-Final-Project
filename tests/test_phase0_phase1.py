@@ -88,11 +88,12 @@ def test_backfill_command_shape():
     from sentisense.ingest import backfill
 
     args = argparse.Namespace(
-        window=7, empty_streak=2, pages=100, max_days=3650,
+        window=14, empty_streak=2, pages=100, batch_size=12, max_days=3650,
         start_before="2023-10-08", dry_run=True,
     )
     cmd = backfill.build_command(args)
-    assert cmd[cmd.index("--window") + 1] == "7"
+    assert cmd[cmd.index("--window") + 1] == "14"
+    assert cmd[cmd.index("--batch-size") + 1] == "12"   # concurrent dates per batch
     assert cmd[cmd.index("--max-days") + 1] == "3650"
     assert cmd[cmd.index("--start-before") + 1] == "2023-10-08"
     assert "--dry-run" in cmd

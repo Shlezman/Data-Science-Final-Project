@@ -49,6 +49,7 @@ def build_command(args: argparse.Namespace) -> list[str]:
         "--window", str(args.window),
         "--empty-streak", str(args.empty_streak),
         "--pages", str(args.pages),
+        "--batch-size", str(args.batch_size),
     ]
     if args.max_days:
         cmd += ["--max-days", str(args.max_days)]
@@ -68,6 +69,9 @@ def main() -> None:
     parser.add_argument("--empty-streak", type=int, default=2,
                         help="Stop after N consecutive empty/all-dup windows (default 2).")
     parser.add_argument("--pages", type=int, default=100, help="Max pages per date (default 100).")
+    parser.add_argument("--batch-size", type=int, default=5,
+                        help="Dates scraped CONCURRENTLY per batch (default 5). Raise for "
+                             "more parallelism (also raise --window to fill the batch).")
     parser.add_argument("--max-days", type=int, default=0,
                         help="Cap total days walked back (0 = until exhausted).")
     parser.add_argument("--start-before", type=str, default="",
@@ -79,6 +83,8 @@ def main() -> None:
         parser.error("--window must be >= 1")
     if args.empty_streak < 1:
         parser.error("--empty-streak must be >= 1")
+    if args.batch_size < 1:
+        parser.error("--batch-size must be >= 1")
     if args.start_before:
         try:
             parse_iso_date(args.start_before)

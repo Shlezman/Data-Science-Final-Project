@@ -51,8 +51,11 @@ uv run pytest tests/test_phase0_phase1.py -v
 
 ```bash
 # 1.1 (optional) extend history backwards. Dry-run first to see the plan.
-uv run python -m sentisense.ingest.backfill --window 7 --dry-run
-uv run python -m sentisense.ingest.backfill --window 7            # real run
+#     --batch-size = dates scraped CONCURRENTLY (one Firefox each, default 5).
+#     Raise it for more parallelism, and raise --window so each iteration has
+#     enough dates to fill the larger batch (e.g. --window 30 --batch-size 15).
+uv run python -m sentisense.ingest.backfill --window 30 --batch-size 15 --dry-run
+uv run python -m sentisense.ingest.backfill --window 30 --batch-size 15
 
 # 1.2 score ONLY truly-unscored headlines (no validated row from ANY model),
 #     HARD-capped at <= 2023-10-07. New rows are written under your local backend
