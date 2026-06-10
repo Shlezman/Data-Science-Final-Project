@@ -73,6 +73,17 @@ def main() -> None:
         selected.remove("final")
     logger.info("Pipeline stages: {}", " → ".join(selected))
 
+    # Up-front ETA estimate (best-effort; needs the DB for score/embed counts).
+    from sentisense.eta import StageClock, estimate
+
+    estimates: dict = {s: None for s in selected}
+    try:
+        from sentisense.db import get_engine
+        estimates = estimate(selected, get_engine())
+    except Exception as exc:  # DB down / counts unavailable → run without the up-front ETA
+        logger.warning("ETA estimate unavailable ({}). Continuing without it.", exc)
+    clock = StageClock(estimates)
+
     dry = ["--dry-run"] if args.dry_run else []
     # Memoised so the narrative frame + datasets are built ONCE and consistently,
     # regardless of which stages are selected. This guarantees `tune` and a later
@@ -99,8 +110,9 @@ def main() -> None:
             state["mt"], state["ml"] = build_datasets(extra_daily_features=narrative_features())
         return state["mt"], state["ml"]
 
-    for stage in selected:
-        logger.info("══════ stage: {} ══════", stage)
+    for i, stage in enumerate(selected):
+        logger.info("══════ stage: {} ({}/{}) ══════", stage, i + 1, len(selected))
+        clock.start_stage(stage)
 
         if stage == "backfill":
             _run_module("sentisense.ingest.backfill", dry)
@@ -143,6 +155,8 @@ def main() -> None:
                     "No completed Optuna trials — run the 'tune' stage before 'final'."
                 )
             final_holdout_eval(ml, study.best_params)
+
+        clock.end_stage(stage, remaining=selected[i + 1:])
 
     logger.info("Pipeline complete: {}", " → ".join(selected))
 

@@ -16,7 +16,33 @@ Hard project invariants (enforced throughout):
 See ``docs/sentisense-understanding.md`` for the full schema + pipeline ground truth.
 """
 
-from sentisense.constants import (
+
+def _load_dotenv_once() -> None:
+    """Auto-load ``.env`` (then ``env``) from the repo root on first package import.
+
+    Runs BEFORE :mod:`sentisense.constants` reads the environment, so every
+    ``python -m sentisense.X`` entry point picks up the local config — and because
+    load_dotenv populates ``os.environ``, the vars also propagate to the scoring
+    subprocess (``scripts/process_headlines.py``). Real env vars win (override=False).
+    No-op if python-dotenv is absent or no file exists.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for name in (".env", "env"):
+        candidate = root / name
+        if candidate.exists():
+            load_dotenv(candidate, override=False)
+            break
+
+
+_load_dotenv_once()
+
+from sentisense.constants import (  # noqa: E402  (must follow dotenv load)
     ACTIVE_MODEL_NAME,
     CUTOFF_DATE,
     DB_RELEVANCE_COLUMNS,

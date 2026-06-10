@@ -39,3 +39,14 @@ CLUSTER_K: int = _int("SENTISENSE_CLUSTER_K", 8)
 CLUSTER_REFIT_EVERY: int = _int("SENTISENSE_CLUSTER_REFIT_EVERY", 30)
 
 SEED: int = _int("SENTISENSE_SEED", 42)
+
+# ─────────────────────────────────────────────────────────────────────
+# Live-ETA rate estimates (seconds). Rough priors used for the up-front
+# pipeline estimate; the live trackers (scoring subprocess log, HPO
+# callback, per-stage actuals) refine them during the run. Tune per host.
+# Defaults lean toward a local Ollama (qwen2.5:14b) + CPU box.
+# ─────────────────────────────────────────────────────────────────────
+ETA_SECS_PER_SCORED_HEADLINE: float = _float("SENTISENSE_ETA_SCORE_SECS", 1.0)
+ETA_SECS_PER_EMBEDDED_HEADLINE: float = _float("SENTISENSE_ETA_EMBED_SECS", 0.03)
+ETA_SECS_PER_HPO_TRIAL: float = _float("SENTISENSE_ETA_HPO_TRIAL_SECS", 180.0)
+ETA_SECS_FIXED_STAGE: float = _float("SENTISENSE_ETA_FIXED_SECS", 45.0)

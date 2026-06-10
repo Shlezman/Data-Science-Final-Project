@@ -18,6 +18,7 @@ Launch (server-side, long-running) — see docs/RUNBOOK.md for the tmux/nohup fo
 from __future__ import annotations
 
 import argparse
+import time
 
 import numpy as np
 import pandas as pd
@@ -132,7 +133,22 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
     )
     logger.info("Optuna study '{}' — {} trials (resumes if interrupted). Storage=project DB.",
                 study_name, n_trials)
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+    # Live HPO ETA: after each trial, log trials-done / mean-per-trial / wall-clock ETA.
+    from sentisense.eta import eta_clock, fmt_duration
+    _hpo_t0 = time.perf_counter()
+
+    def _eta_callback(study, trial) -> None:
+        done = trial.number + 1
+        if done <= 0 or n_trials <= 0:
+            return
+        mean_per = (time.perf_counter() - _hpo_t0) / done
+        remaining = mean_per * max(n_trials - done, 0)
+        logger.info("  HPO trial {}/{} | {:.0f}s/trial | ~remaining {} | ETA {}",
+                    done, n_trials, mean_per, fmt_duration(remaining), eta_clock(remaining))
+
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True,
+                   callbacks=[_eta_callback] if n_trials > 0 else None)
     # best_value/best_params raise ValueError on a study with zero COMPLETE trials
     # (e.g. n_trials=0 resume on a fresh study, or an all-pruned run). Guard it so the
     # 'load existing study' path (n_trials=0) returns cleanly instead of crashing.

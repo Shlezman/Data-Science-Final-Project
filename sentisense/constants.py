@@ -25,7 +25,24 @@ CUTOFF_DATE_ISO: str = CUTOFF_DATE.isoformat()  # "2023-10-07"
 # ─────────────────────────────────────────────────────────────────────
 import os as _os
 
-ACTIVE_MODEL_NAME: str = _os.environ.get("SENTISENSE_ACTIVE_MODEL", "mistral-small-4")
+
+def _active_model_default() -> str:
+    """Mirror scripts/process_headlines.get_active_model_name() so the feature/embed
+    queries filter the SAME model_name the scorer actually wrote.
+
+    Local (``SENTISENSE_LLM_BACKEND=ollama``, the .env default) → the Ollama model
+    (qwen2.5:14b); production (``=openai``) → the vLLM model (mistral-small-4).
+    Without this a local run would score rows as 'qwen2.5:14b' while every query
+    looked for 'mistral-small-4' and silently found zero rows.
+    """
+    backend = _os.environ.get("SENTISENSE_LLM_BACKEND", "ollama").lower()
+    if backend == "openai":
+        return _os.environ.get("SENTISENSE_OPENAI_MODEL", "mistral-large-2")
+    return _os.environ.get("SENTISENSE_OLLAMA_MODEL", "qwen2.5:14b")
+
+
+# Explicit SENTISENSE_ACTIVE_MODEL wins; otherwise track the active backend's model.
+ACTIVE_MODEL_NAME: str = _os.environ.get("SENTISENSE_ACTIVE_MODEL") or _active_model_default()
 
 # ─────────────────────────────────────────────────────────────────────
 # Score-column contract. DB column order is canonical (matches init_db.sql and

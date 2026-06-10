@@ -11,13 +11,19 @@ Idempotency: re-runs skip already-scored rows. NOTE — a previously *failed*
 (``validation_passed=FALSE``) row is NOT overwritten by this happy-path scorer; use
 ``scripts/retry_failed_headlines.py`` to re-score failures (documented for the operator).
 
-Backend: the production vLLM ``mistral-small-4`` setup requires the fast path and
-``SENTISENSE_FORCE_COMPLETIONS_API=true`` in the environment (the multi-agent path
-sys.exit(2)s under that flag). This wrapper always passes ``--fast``.
+Backend: this wrapper always passes ``--fast`` (the single-prompt path), which works
+with BOTH backends:
+  * **Local (default, .env):** ``SENTISENSE_LLM_BACKEND=ollama`` + ``SENTISENSE_OLLAMA_MODEL``
+    (qwen2.5:14b). Do NOT set ``SENTISENSE_FORCE_COMPLETIONS_API``. Rows are written
+    under ``model_name='qwen2.5:14b'`` and the feature/embed queries follow suit
+    (``ACTIVE_MODEL_NAME`` tracks the backend — see sentisense/constants.py).
+  * **Production vLLM:** ``SENTISENSE_LLM_BACKEND=openai`` + ``mistral-small-4`` +
+    ``SENTISENSE_FORCE_COMPLETIONS_API=true`` (the multi-agent path sys.exit(2)s
+    under that flag, which is why we force ``--fast``).
 
-Run (server-side, operator), with the production LLM env exported:
+Run (server-side, operator) — local Ollama, with .env loaded automatically:
     uv run python -m sentisense.ingest.score --dry-run
-    uv run python -m sentisense.ingest.score --headlines-per-call 20 --concurrency 50
+    uv run python -m sentisense.ingest.score --headlines-per-call 20 --concurrency 8
 """
 
 from __future__ import annotations

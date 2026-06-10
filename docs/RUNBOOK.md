@@ -4,23 +4,42 @@ The implementer has no DB/server access. Every step below is run **by the operat
 on the server**, against branch `GENAI-sentisense-phase23`. Paste the named artifact
 back at each gate.
 
-## Environment (once per shell)
+## Environment (once)
+
+Config is read from a repo-root **`.env`** (auto-loaded by the `sentisense` package on
+import — and the vars propagate to the scoring subprocess). Copy the provided `env`:
 
 ```bash
-# Required for every DB-touching step. connection.py FAILS FAST if unset (no default DSN).
-export SENTISENSE_DATABASE_URL='postgresql+psycopg://sentisense:****@localhost:5432/sentisense'
-
-# Required ONLY for Phase 1.2 scoring (production vLLM mistral-small-4, completions-only):
-export SENTISENSE_LLM_BACKEND=openai
-export SENTISENSE_OPENAI_BASE_URL=https://10.10.248.21/v1
-export SENTISENSE_OPENAI_MODEL=mistral-small-4
-export SENTISENSE_OPENAI_HOST_HEADER=mistral-small-4-119b-nvfp4-runai-model-120b.cs.colman.ac.il
-export SENTISENSE_FORCE_COMPLETIONS_API=true
-export SENTISENSE_COMPLETIONS_MAX_TOKENS=8192   # size for --headlines-per-call; see prior OOM notes
-
-# Provision the sentisense base env (sqlalchemy, psycopg v3, pandas, loguru):
-uv sync                       # at repo root
+cp env .env          # or: cp .env.example .env  — then edit
+uv sync              # provision the sentisense base env at repo root
 ```
+
+### Local LLM (default — Ollama)
+The `.env` already selects local Ollama. `ACTIVE_MODEL_NAME` automatically tracks the
+backend, so locally-scored rows (`model_name=qwen2.5:14b`) are exactly the ones every
+downstream query reads — no manual override needed.
+
+```ini
+# .env (local)
+SENTISENSE_DATABASE_URL=postgresql://sentisense:sentisense_dev@localhost:5432/sentisense
+SENTISENSE_LLM_BACKEND=ollama
+SENTISENSE_OLLAMA_MODEL=qwen2.5:14b
+SENTISENSE_OLLAMA_BASE_URL=http://localhost:11434
+```
+Make sure Ollama is up with the model pulled: `ollama pull qwen2.5:14b`.
+**Concurrency:** a single local Ollama serves ~1 request at a time — use
+`--concurrency 4` (not 50) for scoring, or it just queues.
+
+### Production LLM (alternative — vLLM mistral-small-4)
+Set instead in `.env`: `SENTISENSE_LLM_BACKEND=openai`, `SENTISENSE_OPENAI_MODEL=mistral-small-4`,
+`SENTISENSE_OPENAI_BASE_URL=…`, `SENTISENSE_OPENAI_HOST_HEADER=…`,
+`SENTISENSE_FORCE_COMPLETIONS_API=true`, `SENTISENSE_COMPLETIONS_MAX_TOKENS=8192`.
+
+### Live ETA
+`python -m sentisense.pipeline` prints an up-front per-stage estimate + total ETA
+(from live DB counts × rate priors), then a running ETA after each stage. The two long
+stages stream their own progress — scoring (`~Ns remaining`) and HPO (`trial k/N … ETA`).
+Tune the priors via `SENTISENSE_ETA_SCORE_SECS` / `_EMBED_SECS` / `_HPO_TRIAL_SECS`.
 
 ## Tests (no DB needed)
 
@@ -37,7 +56,8 @@ uv run python -m sentisense.ingest.backfill --window 7            # real run
 
 # 1.2 score unscored headlines, HARD-capped at <= 2023-10-07. Dry-run shows the count.
 uv run python -m sentisense.ingest.score --dry-run
-uv run python -m sentisense.ingest.score --headlines-per-call 20 --concurrency 50   # real run
+uv run python -m sentisense.ingest.score --headlines-per-call 20 --concurrency 4    # local Ollama
+# (production vLLM can take --concurrency 50)
 
 # 1.3 GATE A artifact — coverage report. Paste the printed report (and the file) back.
 uv run python -m sentisense.ingest.coverage_report
