@@ -133,8 +133,20 @@ def run_hpo(df_lstm: pd.DataFrame, *, n_trials: int = OPTUNA_TRIALS,
     logger.info("Optuna study '{}' — {} trials (resumes if interrupted). Storage=project DB.",
                 study_name, n_trials)
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-    logger.info("Best val ROC-AUC {:.4f} | params {}", study.best_value, study.best_params)
+    # best_value/best_params raise ValueError on a study with zero COMPLETE trials
+    # (e.g. n_trials=0 resume on a fresh study, or an all-pruned run). Guard it so the
+    # 'load existing study' path (n_trials=0) returns cleanly instead of crashing.
+    if has_completed_trials(study):
+        logger.info("Best val ROC-AUC {:.4f} | params {}", study.best_value, study.best_params)
+    else:
+        logger.warning("Study '{}' has no completed trials yet.", study_name)
     return study
+
+
+def has_completed_trials(study) -> bool:
+    """True iff the study has at least one COMPLETE trial (so best_* is safe to read)."""
+    import optuna
+    return len(study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))) > 0
 
 
 def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
@@ -155,15 +167,19 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *,
         X_tr, y_tr, X_va, y_va, X_te, y_te, nf = chronological_split(df_lstm)
         X_dev = np.vstack([X_tr, X_va])
         y_dev = np.concatenate([y_tr, y_va])
-        dl_dev = windowed_loader(X_dev, y_dev, window, shuffle=False, drop_last=True)
-        dl_va = windowed_loader(X_va, y_va, window, shuffle=False)  # monitor only
+        # Carve a disjoint chronological tail of dev for the early-stop monitor so it
+        # is NOT part of the fit (the prior code monitored on data it trained on —
+        # optimistic). Test tail stays sacred (only evaluate_on_test sees dl_te).
+        cut = int(len(X_dev) * 0.9)
+        dl_fit = windowed_loader(X_dev[:cut], y_dev[:cut], window, shuffle=False, drop_last=True)
+        dl_mon = windowed_loader(X_dev[cut:], y_dev[cut:], window, shuffle=False)
         dl_te = windowed_loader(X_te, y_te, window, shuffle=False)
         model = LSTMClassifier(
             nf, hidden=best_params["units"], n_layers=best_params["n_layers"],
             dropout=best_params["dropout"], recurrent_dropout=best_params["recurrent_dropout"],
             dense_act=best_params["dense_act"], pooling=best_params["pooling"],
         )
-        train_model(model, dl_dev, dl_va, lr=best_params["lr"],
+        train_model(model, dl_fit, dl_mon, lr=best_params["lr"],
                     weight_decay=best_params["weight_decay"], model_name=f"lstm_final_s{seed}")
         runs.append(evaluate_on_test(model, dl_te))
 

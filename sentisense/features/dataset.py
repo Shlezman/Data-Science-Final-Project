@@ -182,7 +182,14 @@ def _roll_mean_and_count(dm: pd.DataFrame, trading_days: pd.DatetimeIndex) -> pd
 
 
 def add_ta125_features(df: pd.DataFrame, price_series: pd.Series) -> pd.DataFrame:
-    """Append leak-free TA-125 technical features (all use .shift(>=1))."""
+    """Append TA-125 technical features for next-day prediction.
+
+    All price-derived features use ``.shift(>=1)`` (no future leak). NOTE: the raw
+    ``TA125_Volume`` column and the ``TA125_volume_z20d`` numerator are intentional
+    SAME-DAY (close-of-T) features — standard for next-day direction models, since the
+    target is ``close(T+1) > close(T)`` and day-T close-derived signals are known at
+    prediction time. They are not future-into-past leaks.
+    """
     df = df.copy()
     p = price_series.reindex(df.index).astype(float)
 

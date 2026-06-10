@@ -14,7 +14,9 @@ Stages, in order:
 Examples (server-side, from repo root):
     uv run python -m sentisense.pipeline --dry-run
     uv run python -m sentisense.pipeline --stages embed,cluster,features,baselines
-    uv run python -m sentisense.pipeline --from features          # skip ingest/embed
+    uv run python -m sentisense.pipeline --from features          # skip ingest/embed;
+                                                                  # narrative auto-derives
+                                                                  # from cached embeddings
     uv run python -m sentisense.pipeline --only tune --trials 100
 
 Heavy deps (torch, sentence-transformers, sklearn) import lazily per stage, so the
@@ -72,9 +74,30 @@ def main() -> None:
     logger.info("Pipeline stages: {}", " → ".join(selected))
 
     dry = ["--dry-run"] if args.dry_run else []
-    narrative = None       # produced by 'cluster', consumed by 'features'
-    mt = ml = None
-    study = None
+    # Memoised so the narrative frame + datasets are built ONCE and consistently,
+    # regardless of which stages are selected. This guarantees `tune` and a later
+    # `--only final` see the SAME feature width (the narrative skew bug): narrative
+    # is always derived from the cached embeddings (no GPU) before any features build.
+    state: dict = {"narrative": None, "narrative_built": False, "mt": None, "ml": None, "study": None}
+
+    def narrative_features():
+        if not state["narrative_built"]:
+            from sentisense.cluster import build_narrative_features
+            nf = build_narrative_features()
+            state["narrative"] = nf if (nf is not None and not nf.empty) else None
+            state["narrative_built"] = True
+            if state["narrative"] is not None:
+                logger.info("Narrative features: {} days", len(state["narrative"]))
+            else:
+                logger.warning("No cached embeddings → modeling on base features only "
+                               "(run the 'embed' stage to enable narrative clustering).")
+        return state["narrative"]
+
+    def datasets():
+        if state["mt"] is None:
+            from sentisense.features import build_datasets
+            state["mt"], state["ml"] = build_datasets(extra_daily_features=narrative_features())
+        return state["mt"], state["ml"]
 
     for stage in selected:
         logger.info("══════ stage: {} ══════", stage)
@@ -93,39 +116,32 @@ def main() -> None:
             embed_missing(dry_run=args.dry_run)
 
         elif stage == "cluster":
-            from sentisense.cluster import build_narrative_features
-            narrative = build_narrative_features()
-            if narrative is not None and not narrative.empty:
-                logger.info("Narrative features: {} days", len(narrative))
+            narrative_features()  # force build + log (memoised for the feature stages)
 
         elif stage == "features":
-            from sentisense.features import build_datasets
-            mt, ml = build_datasets(extra_daily_features=narrative)
+            datasets()
 
         elif stage == "baselines":
-            if mt is None:
-                from sentisense.features import build_datasets
-                mt, ml = build_datasets(extra_daily_features=narrative)
+            mt, _ = datasets()
             from sentisense.models.baselines import run_baselines
             run_baselines(mt)
 
         elif stage == "tune":
-            if ml is None:
-                from sentisense.features import build_datasets
-                mt, ml = build_datasets(extra_daily_features=narrative)
+            _, ml = datasets()
             from sentisense.config import OPTUNA_TRIALS
             from sentisense.hpo import run_hpo
             n_trials = args.trials if args.trials > 0 else OPTUNA_TRIALS
-            study = run_hpo(ml, n_trials=n_trials)
+            state["study"] = run_hpo(ml, n_trials=n_trials)
 
         elif stage == "final":
-            if ml is None:
-                from sentisense.features import build_datasets
-                mt, ml = build_datasets(extra_daily_features=narrative)
+            _, ml = datasets()
             from sentisense.hpo import final_holdout_eval, run_hpo
-            if study is None:
-                # Resume/load the existing study to fetch best params without re-tuning.
-                study = run_hpo(ml, n_trials=0)
+            from sentisense.hpo.optuna_lstm import has_completed_trials
+            study = state["study"] or run_hpo(ml, n_trials=0)  # resume study without re-tuning
+            if not has_completed_trials(study):
+                raise RuntimeError(
+                    "No completed Optuna trials — run the 'tune' stage before 'final'."
+                )
             final_holdout_eval(ml, study.best_params)
 
     logger.info("Pipeline complete: {}", " → ".join(selected))
