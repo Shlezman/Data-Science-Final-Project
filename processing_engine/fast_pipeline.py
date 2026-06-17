@@ -46,6 +46,7 @@ from loguru import logger
 
 from .config import (
     CATEGORY_DISPLAY_NAMES,
+    CONTEXT_WINDOW,
     RELEVANCY_CATEGORIES,
     RELEVANCY_MAX,
     RELEVANCY_MIN,
@@ -336,10 +337,9 @@ async def score_headlines_concurrent(
 #   - Ollama qwen2.5:14b / 8K context: set SENTISENSE_CONTEXT_WINDOW=8192
 #
 # Override via the ``SENTISENSE_CONTEXT_WINDOW`` environment variable when
-# switching to a smaller-context model.
-import os as _os
-
-_CONTEXT_WINDOW = int(_os.getenv("SENTISENSE_CONTEXT_WINDOW", "131072"))
+# switching to a smaller-context model. Sourced from config (single source of
+# truth, shared with the prompts.py output-headroom clamp).
+_CONTEXT_WINDOW = CONTEXT_WINDOW
 _SYSTEM_PROMPT_TOKENS = 800       # measured ~750, padded
 _PER_HEADLINE_INPUT_TOKENS = 650  # evidence + headline text + formatting
 _PER_HEADLINE_OUTPUT_TOKENS = 250  # scores + chain_of_thought
@@ -349,6 +349,65 @@ MAX_BATCH_SIZE = int(
     (_CONTEXT_WINDOW * _SAFETY_FACTOR - _SYSTEM_PROMPT_TOKENS)
     / (_PER_HEADLINE_INPUT_TOKENS + _PER_HEADLINE_OUTPUT_TOKENS)
 )  # ≈ 109 on 128K context, ≈ 26 on 32K context
+
+# Token-aware batching. ``batch_size`` (operator's --headlines-per-call) bounds the
+# COUNT; this budget bounds the actual prompt SIZE so a handful of long Hebrew
+# headlines + their tool evidence can't blow past the model's context window
+# (the 400 "maximum context length is N tokens" failure).  Conservative chars→tokens
+# ratio for Hebrew (SentencePiece fragments it finely, so this OVER-estimates → smaller,
+# safer batches); the adaptive bisection in _process_batch is the exact safety net.
+_CHARS_PER_TOKEN = 1.5
+_INPUT_TOKEN_BUDGET = int(_CONTEXT_WINDOW * _SAFETY_FACTOR) - _SYSTEM_PROMPT_TOKENS
+_CTX_OVERFLOW_MARKERS = (
+    "maximum context length", "input_tokens", "context_length", "max_model_len",
+)
+
+
+def _is_context_overflow(exc: Exception) -> bool:
+    """True if the exception is a context-length-exceeded error (vs a transient fault)."""
+    s = str(exc).lower()
+    return any(m in s for m in _CTX_OVERFLOW_MARKERS)
+
+
+def _estimate_message_tokens(text: str) -> int:
+    """Conservative token count for a prompt string (over-estimates for safety)."""
+    return int(len(text) / _CHARS_PER_TOKEN)
+
+
+def _estimate_input_tokens(headline: str, evidence: str) -> int:
+    """Estimate input tokens for one (headline + evidence) entry incl. wrapper."""
+    return int((len(headline) + len(evidence) + 60) / _CHARS_PER_TOKEN)
+
+
+def _pack_batches(
+    headlines: list[dict[str, Any]],
+    evidences: list[str],
+    batch_size: int,
+) -> list[tuple[list[dict[str, Any]], list[str]]]:
+    """Greedily pack headlines into batches bounded by COUNT and CONTEXT budget.
+
+    Each batch holds at most ``batch_size`` headlines AND keeps
+    ``system + sum(input) + per-headline output reserve`` within
+    ``_CONTEXT_WINDOW * _SAFETY_FACTOR``.  An entry whose estimate alone exceeds
+    the budget becomes its own singleton batch (handled by adaptive truncation).
+    """
+    packed: list[tuple[list[dict[str, Any]], list[str]]] = []
+    cur_obs: list[dict[str, Any]] = []
+    cur_ev: list[str] = []
+    cur_in = 0
+    for obs, ev in zip(headlines, evidences):
+        est = _estimate_input_tokens(obs.get("headline", ""), ev)
+        out_reserve = (len(cur_obs) + 1) * _PER_HEADLINE_OUTPUT_TOKENS
+        too_big = (cur_in + est + out_reserve) > _INPUT_TOKEN_BUDGET
+        if cur_obs and (len(cur_obs) >= batch_size or too_big):
+            packed.append((cur_obs, cur_ev))
+            cur_obs, cur_ev, cur_in = [], [], 0
+        cur_obs.append(obs)
+        cur_ev.append(ev)
+        cur_in += est
+    if cur_obs:
+        packed.append((cur_obs, cur_ev))
+    return packed
 
 
 _BATCH_SYSTEM_PROMPT = f"""\
@@ -503,21 +562,47 @@ async def score_headlines_batch(
     structured_llm = llm.with_structured_output(BatchHeadlineScores)
     semaphore = asyncio.Semaphore(concurrency)
 
+    async def _score_single_truncated(
+        obs: dict[str, Any], evidence: str,
+    ) -> dict[str, Any]:
+        """Last resort: a single headline whose prompt alone overflows the window.
+
+        Truncate its evidence (then the headline) to the input budget and retry
+        once, so one pathological row (e.g. a pasted article body) doesn't fail.
+        """
+        headline = obs.get("headline", "")
+        char_budget = max(int(_INPUT_TOKEN_BUDGET * _CHARS_PER_TOKEN), 500)
+        keep_headline = headline[: char_budget // 2]
+        keep_evidence = evidence[: max(0, char_budget - len(keep_headline))]
+        message = _build_batch_user_message([keep_headline], [keep_evidence])
+        t0 = time.perf_counter()
+        try:
+            async with semaphore:
+                res = await structured_llm.ainvoke([
+                    {"role": "system", "content": _BATCH_SYSTEM_PROMPT},
+                    {"role": "user", "content": message},
+                ])
+            elapsed = time.perf_counter() - t0
+            entry = res.results[0] if res.results else None
+            if entry is not None:
+                logger.warning(
+                    "Scored oversized headline after truncation: '{}'", headline[:50],
+                )
+                return _entry_to_result_dict(entry, obs, elapsed)
+            return _error_result_dict(obs, "single_truncated_no_result", elapsed)
+        except Exception as exc:
+            elapsed = time.perf_counter() - t0
+            logger.error("Single-headline scoring failed even after truncation: {}", exc)
+            return _error_result_dict(obs, f"oversized_headline: {exc}", elapsed)
+
     async def _process_batch(
         batch_obs: list[dict[str, Any]],
+        batch_evidences: list[str],
     ) -> list[dict[str, Any]]:
-        """Score one batch of headlines in a single LLM call."""
+        """Score one batch in a single LLM call; bisect-and-retry on context overflow."""
         headline_texts = [obs.get("headline", "") for obs in batch_obs]
         t0 = time.perf_counter()
-
-        # Pre-compute tool evidence on a worker thread so the event loop
-        # stays responsive for other concurrent batch coroutines waiting
-        # on HTTP responses.  Tools are stateless regex / dict lookups —
-        # thread-safe by construction.
-        evidences = await asyncio.gather(
-            *[asyncio.to_thread(precompute_tool_evidence, h) for h in headline_texts]
-        )
-        user_message = _build_batch_user_message(headline_texts, list(evidences))
+        user_message = _build_batch_user_message(headline_texts, batch_evidences)
 
         try:
             async with semaphore:
@@ -558,6 +643,24 @@ async def score_headlines_batch(
             return results
 
         except Exception as exc:
+            # Adaptive recovery: a context-length 400 means this batch's prompt
+            # exceeded the model window. Bisect and retry each half (down to a
+            # single headline) so a few long headlines don't fail their
+            # neighbours. The semaphore is already released (we left the
+            # `async with` block), so the recursive halves can acquire it.
+            if _is_context_overflow(exc) and len(batch_obs) > 1:
+                mid = len(batch_obs) // 2
+                logger.warning(
+                    "Context overflow on {} headlines (~{} input tok) — bisecting.",
+                    len(batch_obs), _estimate_message_tokens(user_message),
+                )
+                left, right = await asyncio.gather(
+                    _process_batch(batch_obs[:mid], batch_evidences[:mid]),
+                    _process_batch(batch_obs[mid:], batch_evidences[mid:]),
+                )
+                return left + right
+            if _is_context_overflow(exc) and len(batch_obs) == 1:
+                return [await _score_single_truncated(batch_obs[0], batch_evidences[0])]
             elapsed = time.perf_counter() - t0
             logger.error(
                 "Batch scoring failed ({} headlines): {}",
@@ -568,18 +671,24 @@ async def score_headlines_batch(
                 for obs in batch_obs
             ]
 
-    # Split into batches and run concurrently
-    batches = [
-        headlines[i : i + batch_size]
-        for i in range(0, len(headlines), batch_size)
-    ]
+    # Pre-compute tool evidence for every headline ONCE on worker threads (stateless
+    # regex/dict lookups), reused across any adaptive re-split so a bisected retry
+    # never recomputes. Then pack into context-budget-bounded batches.
+    all_texts = [obs.get("headline", "") for obs in headlines]
+    all_evidences = list(await asyncio.gather(
+        *[asyncio.to_thread(precompute_tool_evidence, h) for h in all_texts]
+    ))
+    packed = _pack_batches(headlines, all_evidences, batch_size)
 
     logger.info(
-        "Batch mode: {} headlines → {} batches (size ≤{}), concurrency={}",
-        len(headlines), len(batches), batch_size, concurrency,
+        "Batch mode: {} headlines → {} batches (≤{} headlines, ≤{} input tok/batch), "
+        "concurrency={}",
+        len(headlines), len(packed), batch_size, _INPUT_TOKEN_BUDGET, concurrency,
     )
 
-    batch_results = await asyncio.gather(*[_process_batch(b) for b in batches])
+    batch_results = await asyncio.gather(
+        *[_process_batch(obs_chunk, ev_chunk) for obs_chunk, ev_chunk in packed]
+    )
 
     # Flatten batch results into a single ordered list
     return [result for batch in batch_results for result in batch]

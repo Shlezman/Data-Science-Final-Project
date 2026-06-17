@@ -32,6 +32,7 @@ from loguru import logger
 from .config import (
     CATEGORY_DISPLAY_NAMES,
     COMPLETIONS_MAX_TOKENS,
+    CONTEXT_WINDOW,
     FORCE_COMPLETIONS_API,
     LLM_BACKEND,
     RELEVANCY_MAX,
@@ -41,6 +42,22 @@ from .config import (
     OllamaConfig,
     OpenAIConfig,
 )
+
+# Headroom clamp for the completions endpoint. vLLM rejects any request where
+# prompt_tokens + max_tokens > max_model_len. We clamp the requested output to
+# the residual window so a large COMPLETIONS_MAX_TOKENS (or one equal to the
+# context, as in some production envs) can't guarantee a 400 on every call.
+# Conservative chars→tokens (over-estimates the prompt → leaves MORE headroom).
+_CHARS_PER_TOKEN = 1.5
+_OUTPUT_HEADROOM_MARGIN = 256   # reserve for prompt-estimate error + special tokens
+_MIN_OUTPUT_TOKENS = 256        # never request a non-positive output budget
+
+
+def _clamp_output_tokens(prompt: str, requested: int) -> int:
+    """Cap output max_tokens so prompt + output stays within the context window."""
+    prompt_tokens = int(len(prompt) / _CHARS_PER_TOKEN)
+    residual = CONTEXT_WINDOW - prompt_tokens - _OUTPUT_HEADROOM_MARGIN
+    return max(_MIN_OUTPUT_TOKENS, min(requested, residual))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -325,10 +342,16 @@ class CompletionsLLMWrapper:
         max_tokens: int | None = None,
     ) -> str:
         """Send a raw text prompt and return the completion text."""
+        # Clamp output to the residual context budget so prompt + max_tokens never
+        # exceeds max_model_len (the vLLM 400 "maximum context length" failure),
+        # even when COMPLETIONS_MAX_TOKENS is set as large as the window itself.
+        effective_max_tokens = _clamp_output_tokens(
+            prompt, max_tokens or COMPLETIONS_MAX_TOKENS,
+        )
         payload: dict[str, Any] = {
             "model": self._cfg.model,
             "prompt": prompt,
-            "max_tokens": max_tokens or COMPLETIONS_MAX_TOKENS,
+            "max_tokens": effective_max_tokens,
             "temperature": self._cfg.temperature,
         }
 

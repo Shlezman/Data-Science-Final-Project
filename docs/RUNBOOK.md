@@ -35,6 +35,15 @@ Set instead in `.env`: `SENTISENSE_LLM_BACKEND=openai`, `SENTISENSE_OPENAI_MODEL
 `SENTISENSE_OPENAI_BASE_URL=…`, `SENTISENSE_OPENAI_HOST_HEADER=…`,
 `SENTISENSE_FORCE_COMPLETIONS_API=true`, `SENTISENSE_COMPLETIONS_MAX_TOKENS=8192`.
 
+**Context window (avoid the 400 "maximum context length" error).** Set
+`SENTISENSE_CONTEXT_WINDOW` to the served model's `max_model_len` (e.g. `32768`
+for a 32K deployment; default `131072`). Scoring now auto-bounds each batch's
+prompt to this window (token-aware packing + adaptive bisection) and clamps the
+output reserve so `prompt + max_tokens ≤ context` — so a long Hebrew batch can
+no longer overflow. Keep `SENTISENSE_COMPLETIONS_MAX_TOKENS` **well below** the
+window (e.g. `4096`–`8192` for 32K); setting it equal to the window leaves no
+room for the prompt.
+
 ### Live ETA
 `python -m sentisense.pipeline` prints an up-front per-stage estimate + total ETA
 (from live DB counts × rate priors), then a running ETA after each stage. The two long
