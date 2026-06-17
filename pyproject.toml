@@ -41,6 +41,15 @@ embed = [
     "sentence-transformers>=3.0",
     "torch>=2.2",
 ]
+# Analysis/explainability notebook (sentisense_analysis.ipynb).
+# Install: uv sync --extra ml --extra notebook  (matplotlib/sklearn/xgboost/optuna come from `ml`)
+# Licenses: seaborn BSD-3, shap MIT, umap-learn BSD-3, jupyterlab BSD-3 — all permissive.
+notebook = [
+    "jupyterlab>=4.0",
+    "seaborn>=0.13",
+    "shap>=0.44",
+    "umap-learn>=0.5",
+]
 
 [build-system]
 requires = ["setuptools>=64"]

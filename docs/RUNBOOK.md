@@ -135,6 +135,25 @@ run resumes on relaunch (`create_study(load_if_exists=True)`).
 Migration: `sentisense/db/migrations/001_headline_embeddings.sql` (the embedding cache
 table) is applied automatically by the embed stage (`ensure_table`, idempotent).
 
+## Analysis & explainability notebook (`sentisense_analysis.ipynb`)
+
+The post-ingest stages (features → clustering → baselines → tuning → holdout → backtest)
+as a visual/explainability surface over the SAME package functions the orchestrator runs
+— no logic is duplicated. Use it to inspect *results*; keep the heavy `embed`/`tune`
+compute on the headless CLI.
+
+```bash
+uv sync --extra ml --extra embed --extra finance --extra notebook   # adds seaborn/shap/umap/jupyterlab
+uv run jupyter lab sentisense_analysis.ipynb                        # launch from repo root
+```
+
+Sections: coverage/EDA · feature groups + target drift · embedding UMAP + narrative
+clustering · baselines with **SHAP-by-feature-family** + permutation importance · Optuna
+study viz · holdout ROC / **calibration reliability** / confusion · equity-curve backtest
+(Sharpe / max-drawdown vs Buy&Hold). If no completed Optuna study exists yet it runs a
+short 5-trial demo so the plots render. shap/umap/seaborn also lazy-install at the top if
+the `notebook` extra wasn't synced.
+
 ## Gate sequence (whole project)
 - **Gate A** (here): Phase 1 coverage report.
 - **Gate B**: Phase 2 schema/feasibility report (trading-day count, class balance).
