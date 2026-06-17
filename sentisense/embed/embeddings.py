@@ -66,6 +66,24 @@ def ensure_table(engine) -> None:
             conn.execute(text(stmt))
 
 
+def _load_embedder():
+    """Import + construct the sentence-transformer, or fail fast with an install hint.
+
+    Checked up front (before the expensive unembedded-count query) so a missing
+    optional dep doesn't surface as an opaque ModuleNotFoundError mid-run.
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "The 'embed' extra is not installed (sentence-transformers/torch). "
+            "Install it before the embed stage:\n"
+            "    uv sync --extra ml --extra embed --extra finance\n"
+            "then re-run. (Embeddings need GPU/CPU torch — see docs/RUNBOOK.md.)"
+        ) from exc
+    return SentenceTransformer(EMBED_MODEL)
+
+
 def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = False) -> int:
     """Embed all headlines ≤ cutoff lacking a vector for the active model.
 
@@ -75,6 +93,9 @@ def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = Fals
     engine = engine or get_engine()
     ensure_table(engine)
 
+    # Fail fast on a missing 'embed' extra BEFORE the long count query / dry-run.
+    model = None if dry_run else _load_embedder()
+
     with engine.connect() as conn:
         todo = pd.read_sql(_UNEMBEDDED_SQL, conn,
                            params={"model": EMBED_MODEL, "cutoff": CUTOFF_DATE})
@@ -82,10 +103,6 @@ def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = Fals
                 len(todo), EMBED_MODEL, CUTOFF_DATE.isoformat())
     if dry_run or todo.empty:
         return 0
-
-    from sentence_transformers import SentenceTransformer
-
-    model = SentenceTransformer(EMBED_MODEL)
     written = 0
     for start in range(0, len(todo), batch):
         chunk = todo.iloc[start:start + batch]
