@@ -232,3 +232,6 @@ checkpoints/
 catboost_info/
 tuning_results/
 .ipynb_checkpoints/
+
+# Narrative-feature compute cache (runtime artifact)
+sentisense_cache/
