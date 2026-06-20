@@ -118,35 +118,41 @@ class Scraper:
 
         tree = html.fromstring(page_source)
 
-        # Base XPath to rows (handle tbody absence)
-        rows = tree.xpath(
-            '/html/body/div[1]/div[4]/div[1]/div[3]/table/tbody/tr')
-        if not rows:
-            rows = tree.xpath(
-                '/html/body/div[1]/div[4]/div[1]/div[3]/table/tr')
+        # Class-based row selection — robust to layout/nesting changes. A headline
+        # row is any <tr> containing the title cell; this skips holytime/separator
+        # rows and does NOT depend on a fixed /html/body/div[…] path (the old
+        # absolute XPath silently broke when the site was redesigned).
+        rows = tree.xpath('//tr[td[contains(@class, "nf_title")]]')
 
         data = []
-
         for row in rows:
-            # Extract per row
-            source = row.xpath('./td[1]/@title')
-            hour = row.xpath('./td[2]/text()')
-            importance = row.xpath('./td[3]/@class')
-            headline = row.xpath('./td[4]/a/@title')
+            source = row.xpath('./td[contains(@class, "nf_feed")]/@title')
+            hour = row.xpath('./td[contains(@class, "nf_time")]/text()')
+            importance = row.xpath('./td[starts-with(@class, "p")][1]/@class')
+            # Headline lives in the <a title="…"> of the nf_title cell; fall back to
+            # the link text if @title is absent.
+            headline = row.xpath('./td[contains(@class, "nf_title")]/a/@title')
+            if not headline:
+                headline = row.xpath('./td[contains(@class, "nf_title")]/a//text()')
 
             data.append({
                 'date': self.date,
                 'source': source[0].strip() if source else None,
                 'hour': hour[0].strip() if hour else None,
                 'popularity': importance[0] if importance else None,
-                'headline': headline[0].strip() if headline else None
+                'headline': headline[0].strip() if headline else None,
             })
 
         return pd.DataFrame(data)
 
-    async def scrape_from_page(self, browser, response_url=None, headers=None, output_file: str = "../headlines.csv") -> pd.DataFrame:
+    async def scrape_from_page(self, browser, response_url=None, headers=None, output_file: str | None = None) -> pd.DataFrame:
         """
-        Extract the data from the website
+        Extract the data from the website.
+
+        Writes to a PER-DATE file (``../headlines_<date>.csv`` by default) so
+        concurrent dates in a batch never read-modify-write the same file and
+        clobber each other (the prior shared-``headlines.csv`` race that lost most
+        of every batch). The caller (scrape_dates) globs + concatenates these.
         """
         # Convert date string back to datetime for create_url
         date_obj = datetime.strptime(self.date, DATE_FORMAT)
@@ -192,36 +198,25 @@ class Scraper:
             print("No pages returned data — nothing to write")
             return pd.DataFrame()
 
-        df = pd.concat(all_dataframes, ignore_index=True).drop_duplicates(
-        ).reset_index(drop=True).dropna(subset=["headline"])
-        if not df.empty:
-            # Check if file exists
-            if os.path.exists(output_file):
-                # Read existing data (explicit UTF-8 for Hebrew text)
-                existing_df = pd.read_csv(output_file, encoding="utf-8")
+        raw_rows = sum(len(d) for d in all_dataframes)
+        df = pd.concat(all_dataframes, ignore_index=True).drop_duplicates().reset_index(drop=True)
+        df = df.dropna(subset=["headline"])
+        df = df[df["headline"].astype(str).str.strip() != ""]
 
-                # Combine with new data and remove duplicates
-                combined_df = pd.concat([existing_df, df], ignore_index=True)
-                combined_df = combined_df.drop_duplicates().reset_index(drop=True)
-
-                # Calculate how many new records were added
-                new_records = len(combined_df) - len(existing_df)
-
-                # Save back to file (explicit UTF-8 for Hebrew)
-                combined_df.to_csv(output_file, mode='w',
-                                   header=True, index=False, encoding="utf-8")
-                print(
-                    f"Added {new_records} new records to {output_file} (total: {len(combined_df)})")
+        if df.empty:
+            # Rows were parsed but every headline is empty → selector/markup mismatch.
+            # Warn LOUDLY (the old code silently wrote nothing, which read downstream as
+            # "site exhausted, 0 inserted").
+            if raw_rows > 0:
+                print(f"!! WARNING: parsed {raw_rows} rows but ALL headlines empty for "
+                      f"{self.date} — headline selector likely broken (site markup changed).")
             else:
-                # Create new file with header (explicit UTF-8 for Hebrew)
-                df = df.drop_duplicates().reset_index(drop=True)
-                df.to_csv(output_file, mode='w', header=True, index=False, encoding="utf-8")
-                print(f"Created {output_file} with {len(df)} records")
+                print(f"No data scraped for date: {self.date}")
+            return pd.DataFrame()
 
-            print(
-                f"Completed scraping for date: {date_obj.strftime(DATE_FORMAT)}")
-        else:
-            print(
-                f"No data scraped for date: {date_obj.strftime(DATE_FORMAT)}")
-
+        # Per-date file → no shared-file read-modify-write, so concurrent dates can't
+        # clobber each other. scrape_dates globs + concatenates these.
+        out = output_file or f"../headlines_{self.date}.csv"
+        df.to_csv(out, mode='w', header=True, index=False, encoding="utf-8")
+        print(f"Wrote {len(df)} headlines for {self.date} -> {out}")
         return df
