@@ -139,8 +139,12 @@ def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = Fals
     return written
 
 
-def load_embeddings(engine=None) -> tuple[pd.DataFrame, np.ndarray]:
-    """Load all cached embeddings ≤ cutoff for the active model.
+def load_embeddings(engine=None, cutoff=CUTOFF_DATE) -> tuple[pd.DataFrame, np.ndarray]:
+    """Load all cached embeddings ≤ ``cutoff`` for the active model.
+
+    ``cutoff`` defaults to the project cutoff (the modeling corpus). Pass a later date
+    (e.g. far-future) to include post-cutoff embeddings — used by the full-date
+    visualizations, never by the leak-safe modeling path.
 
     Returns:
         ``(meta, vectors)`` where ``meta`` has columns [headline_id, date] aligned
@@ -148,7 +152,7 @@ def load_embeddings(engine=None) -> tuple[pd.DataFrame, np.ndarray]:
     """
     engine = engine or get_engine()
     with engine.connect() as conn:
-        df = pd.read_sql(_LOAD_SQL, conn, params={"model": EMBED_MODEL, "cutoff": CUTOFF_DATE})
+        df = pd.read_sql(_LOAD_SQL, conn, params={"model": EMBED_MODEL, "cutoff": cutoff})
     if df.empty:
         return df[["headline_id", "date"]], np.empty((0, 0), dtype=np.float32)
     dim = int(df["dim"].iloc[0])

@@ -19,7 +19,7 @@ import pandas as pd
 from loguru import logger
 
 from sentisense.config import CLUSTER_K, CLUSTER_REFIT_EVERY, EMBED_MODEL, SEED
-from sentisense.constants import REPO_ROOT
+from sentisense.constants import CUTOFF_DATE, REPO_ROOT
 from sentisense.embed import load_embeddings
 
 # Cap the per-refit fit sample. MiniBatchKMeans converges fine on a sample, so we never
@@ -48,8 +48,13 @@ def _entropy(counts: np.ndarray) -> float:
 
 
 def build_narrative_features(engine=None, *, k: int = CLUSTER_K,
-                             refit_every: int = CLUSTER_REFIT_EVERY) -> pd.DataFrame:
+                             refit_every: int = CLUSTER_REFIT_EVERY,
+                             cutoff=CUTOFF_DATE) -> pd.DataFrame:
     """Compute causal per-day narrative features from cached embeddings.
+
+    ``cutoff`` defaults to the project cutoff (modeling). Pass a later date for the
+    full-date visualization (the cache key keys on the embedding count, so CUT and
+    FULL get distinct cache files automatically).
 
     Returns:
         DataFrame indexed by date with dominant_cluster_ratio / cluster_entropy /
@@ -57,7 +62,7 @@ def build_narrative_features(engine=None, *, k: int = CLUSTER_K,
     """
     from sklearn.cluster import MiniBatchKMeans
 
-    meta, vectors = load_embeddings(engine)
+    meta, vectors = load_embeddings(engine, cutoff=cutoff)
     if len(meta) == 0:
         logger.warning("No embeddings cached — run sentisense.embed.embeddings first. "
                        "Returning empty narrative features.")
