@@ -50,6 +50,14 @@ notebook = [
     "shap>=0.44",
     "umap-learn>=0.5",
 ]
+# TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
+# PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
+# it into the project venv on the server with one of:
+#   uv pip install 'timesfm[torch]'                                   # once on PyPI
+#   git clone https://github.com/google-research/timesfm && uv pip install -e '.[torch]'
+# Checkpoint google/timesfm-2.5-200m-pytorch downloads via huggingface_hub (HF_TOKEN env
+# if gated — never hardcoded). sentisense.models.timesfm_forecaster lazy-imports it and
+# fails fast with this hint if absent.
 
 [build-system]
 requires = ["setuptools>=64"]
