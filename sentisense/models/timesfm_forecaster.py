@@ -89,25 +89,27 @@ def load_timesfm(context_len: int = CONTEXT_LEN, *, torch_compile: bool = True):
     return model
 
 
-def make_forecast_fn(model, *, covariate_frame: pd.DataFrame | None = None):
-    """Return ``forecast_fn(context_returns) -> float`` over the pinned 2.5 API.
+def make_forecast_fn(model):
+    """Return ``forecast_fn(context, cov_window=None) -> float`` over the pinned 2.5 API.
 
-    ``covariate_frame`` (sentiment features aligned to the return index) enables the
+    ``cov_window`` is a DataFrame aligned ROW-FOR-ROW to ``context`` (the same
+    strictly-past window), supplied by :func:`walk_forward_directions`. It enables the
     XReg covariate path when the installed build supports it; otherwise the call
-    degrades to univariate and a one-time warning is logged.
+    degrades to univariate and a one-time warning is logged. The forecast_fn never
+    sees the full covariate frame, so it cannot pick future-dated rows (the prior leak).
     """
     state = {"warned": False}
 
-    def forecast_fn(context: np.ndarray) -> float:
+    def forecast_fn(context: np.ndarray, cov_window: pd.DataFrame | None = None) -> float:
         ctx = np.asarray(context, dtype=np.float32)
         # XReg covariates (2.5+) — best-effort; fall back to univariate if unsupported.
-        if covariate_frame is not None:
+        if cov_window is not None and len(cov_window):
             try:
-                cov = covariate_frame.iloc[-len(ctx):].to_numpy(dtype=np.float32)
+                cov = np.asarray(cov_window.to_numpy(), dtype=np.float32)
                 point, _ = model.forecast(
                     horizon=HORIZON, inputs=[ctx],
                     dynamic_numerical_covariates={c: [cov[:, j]]
-                                                  for j, c in enumerate(covariate_frame.columns)},
+                                                  for j, c in enumerate(cov_window.columns)},
                 )
                 return float(np.ravel(point)[0])
             except TypeError:
@@ -128,21 +130,27 @@ def walk_forward_directions(
     *,
     context_len: int = CONTEXT_LEN,
     min_context: int = MIN_CONTEXT,
+    covariate_frame: pd.DataFrame | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Expanding-context walk-forward; return ``(scores, labels)`` aligned by decision day.
 
     For each ``d`` in ``test_index``: context = ``returns`` strictly up to and including
-    ``d`` (last ``context_len`` points) → ``forecast_fn`` → predicted next-step return.
-    Label = ``1 if returns[d+1] > 0`` (the project's next-day Up target). Days with no
-    next-day return, or with < ``min_context`` history, are skipped. ``scores`` is the
-    forecast→[0,1] pseudo-probability so ``metrics_at`` scores it like a classifier.
+    ``d`` (last ``context_len`` points) → ``forecast_fn(ctx, cov_window)`` → predicted
+    next-step return. Label = ``1 if returns[d+1] > 0`` (the project's next-day Up
+    target). Days with no next-day return, or with < ``min_context`` history, are
+    skipped. ``scores`` is the forecast→[0,1] pseudo-probability so ``metrics_at`` scores
+    it like a classifier.
 
-    ``forecast_fn`` is injected (so the harness is testable without the model) and must
-    receive ONLY the strictly-past context — the single leak-safety contract.
+    ``covariate_frame`` (optional, date-indexed) is sliced to the SAME positional window
+    as the context for each day, so the XReg covariates are strictly past and aligned
+    row-for-row to ``ctx`` — never the future-dated frame tail. ``forecast_fn`` is
+    injected (testable without the model) and receives ONLY this strictly-past context +
+    aligned covariate window — the single leak-safety contract.
     """
     r = returns.sort_index()
     idx = r.index
     pos = {d: i for i, d in enumerate(idx)}
+    cov = covariate_frame.reindex(idx) if covariate_frame is not None else None
     raw, labels, dates = [], [], []
     for d in test_index:
         i = pos.get(d)
@@ -150,8 +158,10 @@ def walk_forward_directions(
             continue
         if i + 1 < min_context:               # not enough history yet
             continue
-        ctx = r.iloc[max(0, i - context_len + 1): i + 1].to_numpy()  # strictly ≤ d
-        raw.append(forecast_fn(ctx))
+        lo = max(0, i - context_len + 1)
+        ctx = r.iloc[lo: i + 1].to_numpy()                 # strictly ≤ d
+        cov_win = cov.iloc[lo: i + 1] if cov is not None else None  # same window → aligned, past
+        raw.append(forecast_fn(ctx, cov_win))
         labels.append(1 if r.iloc[i + 1] > 0 else 0)
         dates.append(d)
     scores = forecast_to_proba(np.asarray(raw)) if raw else np.asarray([])

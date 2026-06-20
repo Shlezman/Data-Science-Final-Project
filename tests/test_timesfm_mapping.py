@@ -44,7 +44,7 @@ def test_walk_forward_no_leak_and_alignment():
     r = pd.Series(np.linspace(-0.05, 0.05, 20), index=idx)   # strictly increasing returns
     seen: list[np.ndarray] = []
 
-    def stub(ctx: np.ndarray) -> float:
+    def stub(ctx, cov=None) -> float:
         seen.append(np.array(ctx, copy=True))
         return float(ctx[-1])                    # "forecast" = last STRICTLY-PAST return
 
@@ -69,9 +69,35 @@ def test_walk_forward_no_leak_and_alignment():
 def test_walk_forward_drops_last_day_without_future():
     idx = pd.date_range("2021-01-01", periods=10, freq="D")
     r = pd.Series(np.arange(10) - 4.5, index=idx)
-    scores, labels = walk_forward_directions(r, idx, lambda c: float(c[-1]),
+    scores, labels = walk_forward_directions(r, idx, lambda c, cov=None: float(c[-1]),
                                              context_len=5, min_context=1)
     assert idx[-1] not in scores.index          # last day has no next-day return → dropped
+
+
+def test_covariate_window_is_aligned_and_strictly_past():
+    # Regression for the covariate leak: the cov window must align row-for-row to the
+    # context (strictly ≤ decision day), never the future-dated frame tail.
+    idx = pd.date_range("2020-01-01", periods=30, freq="D")
+    r = pd.Series(np.linspace(-0.05, 0.05, 30), index=idx)
+    cov_frame = pd.DataFrame({"pos": np.arange(30.0)}, index=idx)   # value == row position
+    seen_cov: list = []
+
+    def stub(ctx, cov=None) -> float:
+        seen_cov.append(None if cov is None else cov["pos"].to_numpy().copy())
+        return float(ctx[-1])
+
+    test_index = idx[5:28]
+    scores, _ = walk_forward_directions(r, test_index, stub, context_len=4,
+                                        min_context=1, covariate_frame=cov_frame)
+    order = list(idx)
+    for k, d in enumerate(scores.index):
+        i = order.index(d)
+        cov = seen_cov[k]
+        assert cov is not None
+        assert cov[-1] == float(i)            # cov window ENDS at the decision day…
+        assert cov[-1] != float(i + 1)        # …never the future (the prior leak)
+        assert len(cov) <= 4                  # respects context_len
+        assert np.all(np.diff(cov) == 1)      # contiguous strictly-past window
 
 
 def test_direction_metrics_reuses_metrics_at():

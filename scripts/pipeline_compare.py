@@ -100,21 +100,24 @@ def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff)
     model = load_timesfm(CONTEXT_LEN)
     out: dict = {}
 
-    def run(name, fn):
-        s, lab = walk_forward_directions(returns, test_index, fn, context_len=CONTEXT_LEN)
+    def run(name, covariate_frame=None):
+        # walk_forward slices the covariate frame to each day's context window (aligned,
+        # strictly past) — so the covariate form has no future leak.
+        s, lab = walk_forward_directions(returns, test_index, make_forecast_fn(model),
+                                         context_len=CONTEXT_LEN, covariate_frame=covariate_frame)
         if len(s):
             out[name] = (s, lab)
 
-    run("TimesFM-zeroshot", make_forecast_fn(model))
+    run("TimesFM-zeroshot")
 
     finetune_on_train(model, train_returns)   # best-effort; falls back to zero-shot
-    run("TimesFM-finetuned", make_forecast_fn(model))
+    run("TimesFM-finetuned")
 
-    # Covariate ablation: sentiment news features (daily-mean) as XReg, aligned to returns.
+    # Covariate ablation: sentiment news features (daily-mean) as XReg.
     news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_"))]
-    cov = mt[news_cols].reindex(returns.index).fillna(0.0) if news_cols else None
-    run("TimesFM-cov", make_forecast_fn(model, covariate_frame=cov))
-    run("TimesFM-nocov", make_forecast_fn(model))
+    cov = mt[news_cols] if news_cols else None
+    run("TimesFM-cov", covariate_frame=cov)
+    run("TimesFM-nocov")
     return out
 
 
