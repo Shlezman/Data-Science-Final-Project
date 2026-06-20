@@ -63,8 +63,11 @@ _RAW_SCORES_SQL = text(
 )
 
 
-def _load_raw_scores(engine) -> pd.DataFrame:
-    """Load validated, cutoff-bound news scores — all models, one row per headline.
+def _load_raw_scores(engine, cutoff=CUTOFF_DATE) -> pd.DataFrame:
+    """Load validated news scores up to ``cutoff`` — all models, one row per headline.
+
+    ``cutoff`` defaults to the project cutoff (the leak-safe modeling bound); pass a
+    later date to include more history (e.g. the full-history comparison pipeline).
 
     NOTE: scores from different LLM models (mistral-small-4 vs mistral-small3.2) may
     differ in scale/quality, so the feature distribution can shift at the date where
@@ -72,11 +75,11 @@ def _load_raw_scores(engine) -> pd.DataFrame:
     backfilled corpus (operator chose 'combine all models').
     """
     with engine.connect() as conn:
-        df = pd.read_sql(_RAW_SCORES_SQL, conn, params={"cutoff": CUTOFF_DATE})
+        df = pd.read_sql(_RAW_SCORES_SQL, conn, params={"cutoff": cutoff})
     df["date"] = pd.to_datetime(df["date"])
     models = sorted(df["model_name"].unique()) if not df.empty else []
     logger.info("Loaded {:,} validated headlines (<= {}), {} sources, models={}",
-                len(df), CUTOFF_DATE_ISO, df["source"].nunique(), models)
+                len(df), pd.Timestamp(cutoff).date(), df["source"].nunique(), models)
     # model_name was only for dedupe/logging; drop before aggregation.
     return df.drop(columns=["model_name", "headline_id"])
 
@@ -283,7 +286,7 @@ def _build_interactions(raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _finalize(df: pd.DataFrame) -> pd.DataFrame:
+def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE) -> pd.DataFrame:
     """Compute target, leak-free VTA-35 handling, NaN/inf cleanup, cutoff slice."""
     df = df.copy()
     next_price = df["TA125_Price"].shift(-1)
@@ -307,8 +310,9 @@ def _finalize(df: pd.DataFrame) -> pd.DataFrame:
     df["Target"] = df["Target"].astype(int)
 
     # Hard cutoff (defense in depth — SQL already bounds news, but trading_days come
-    # from the CSV which extends past the cutoff).
-    df = df[df.index <= pd.Timestamp(CUTOFF_DATE)]
+    # from the CSV which extends past the cutoff). Parameterised so the full-history
+    # comparison can build the same frame over every date.
+    df = df[df.index <= pd.Timestamp(cutoff)]
     return df
 
 
@@ -366,6 +370,7 @@ def build_datasets(
     *,
     top_n: int = TOP_N_SOURCES,
     extra_daily_features: pd.DataFrame | None = None,
+    cutoff=CUTOFF_DATE,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Assemble the (daily-mean, per-source) modeling frames, cutoff-applied.
 
@@ -375,12 +380,14 @@ def build_datasets(
         extra_daily_features: Optional frame indexed by trading day (e.g. the
             narrative ``dominant_cluster_ratio`` from Phase 4) joined into BOTH
             frames before feature engineering. Must already be leakage-safe.
+        cutoff: Upper date bound (default = project cutoff). Pass a later date to
+            build over more history (full-history comparison pipeline).
 
     Returns:
         ``(mt, ml)`` — daily-mean and per-source frames, each with a ``Target`` column.
     """
     engine = engine or get_engine()
-    raw = _load_raw_scores(engine)
+    raw = _load_raw_scores(engine, cutoff)
     daily_mean = _build_daily_mean(raw)
     per_source = _build_per_source_wide(raw, top_n)
 
@@ -395,12 +402,12 @@ def build_datasets(
 
     def _assemble(news_td):
         return _finalize(add_cross_asset_features(
-            add_ta125_features(base.join(news_td, how="left"), price_full)))
+            add_ta125_features(base.join(news_td, how="left"), price_full)), cutoff)
 
     mt = _assemble(dm_td)
     ml = _assemble(ps_td)
 
-    logger.info("Datasets built (<= {}): mt={}, ml={}", CUTOFF_DATE_ISO, mt.shape, ml.shape)
+    logger.info("Datasets built (<= {}): mt={}, ml={}", pd.Timestamp(cutoff).date(), mt.shape, ml.shape)
     logger.info("  trading-day rows: mt={:,}, ml={:,}  (LSTM-viability bar ~750)", len(mt), len(ml))
     return mt, ml
 
