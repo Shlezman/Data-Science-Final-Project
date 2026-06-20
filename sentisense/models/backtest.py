@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from sentisense.models.train import metrics_at
+from sentisense.models.metrics import metrics_at   # torch-free → leaderboard runs without torch
 
 TRADING_DAYS = 252
 

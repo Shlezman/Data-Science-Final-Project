@@ -133,16 +133,9 @@ def proba_and_labels(model: nn.Module, dl: DataLoader) -> tuple[np.ndarray, np.n
     return np.asarray(probs), np.asarray(labels)
 
 
-def metrics_at(probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5) -> dict[str, float]:
-    """Classification metrics at a given decision threshold (+ ROC-AUC, threshold-free)."""
-    preds = (probs > threshold).astype(int)
-    return {
-        "accuracy": float(accuracy_score(labels, preds)),
-        "balanced_accuracy": float(balanced_accuracy_score(labels, preds)),
-        "f1": float(f1_score(labels, preds, average="macro")),
-        "roc_auc": float(roc_auc_score(labels, probs)) if len(np.unique(labels)) > 1 else 0.5,
-        "mcc": float(matthews_corrcoef(labels, preds)),
-    }
+# metrics_at lives in the torch-free sentisense.models.metrics module (so the leaderboard
+# / backtest can reuse it without importing torch); re-exported here for back-compat.
+from sentisense.models.metrics import metrics_at  # noqa: E402,F401
 
 
 def evaluate_on_test(model: nn.Module, dl_te: DataLoader) -> dict[str, float]:
