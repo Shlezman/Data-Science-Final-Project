@@ -47,11 +47,25 @@ def _load_price() -> pd.Series:
     return ta["Price"].astype(str).str.replace(",", "", regex=False).astype(float)
 
 
-def _row(scores: pd.Series, labels: pd.Series, price: pd.Series) -> dict:
-    """Uniform scorecard for a model's (scores, labels) — reuses metrics_at + backtest."""
-    m = direction_metrics(scores.to_numpy(), labels.to_numpy(), 0.5)
+# TimesFM hyperparameter sweep: context length (its main knob — frozen foundation model,
+# so no architecture HPO). The decision threshold is tuned alongside, on validation only.
+_TIMESFM_CTX_GRID = [128, 256, 512]
+
+
+def _youden(labels: np.ndarray, scores: np.ndarray) -> float:
+    """Decision threshold maximising Youden's J on a (validation) slice; 0.5 if single-class."""
+    from sklearn.metrics import roc_curve
+    if len(np.unique(labels)) < 2:
+        return 0.5
+    fpr, tpr, thr = roc_curve(labels, scores)
+    return float(thr[int(np.argmax(tpr - fpr))])
+
+
+def _row(scores: pd.Series, labels: pd.Series, price: pd.Series, threshold: float = 0.5) -> dict:
+    """Uniform scorecard for a model's (scores, labels) at ``threshold`` — reuses metrics_at + backtest."""
+    m = direction_metrics(scores.to_numpy(), labels.to_numpy(), threshold)
     nxt = next_day_returns(price, scores.index)
-    st = strategy_stats((scores.to_numpy() > 0.5).astype(float), nxt)
+    st = strategy_stats((scores.to_numpy() > threshold).astype(float), nxt)
     return {**m, **st, "n": int(len(scores))}
 
 
@@ -84,31 +98,54 @@ def _lstm(ml: pd.DataFrame):
     return proba, labels
 
 
-def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff) -> dict:
-    """Return {form_name: (scores, labels)} for the TimesFM forms in this regime."""
+def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
+                   ctx_grid=None) -> dict:
+    """Return {form_name: (scores, labels, threshold)} for the TimesFM forms in this regime.
+
+    Includes ``TimesFM-tuned`` — the best (context_len, decision-threshold) chosen on a
+    VALIDATION slice [70%,85%) by val ROC-AUC, then evaluated on the held-out test
+    window [85%,100%]. The sweep + threshold never see the test slice (no leak), and the
+    test window matches XGB/LSTM/Buy&Hold (last 15%).
+    """
     from sentisense.models.timesfm_forecaster import (
         CONTEXT_LEN, finetune_on_train, load_timesfm, make_forecast_fn,
         walk_forward_directions,
     )
-    # Log-return series within the regime; test window = last 15% (out-of-sample).
+    ctx_grid = ctx_grid or _TIMESFM_CTX_GRID
     p = price[price.index <= pd.Timestamp(cutoff)].sort_index()
     returns = np.log(p / p.shift(1)).dropna()
-    n = len(returns); split = int(n * 0.85)
-    train_returns = returns.iloc[:split]
-    test_index = returns.index[split:]
+    n = len(returns); v0 = int(n * 0.70); v1 = int(n * 0.85)
+    train_returns = returns.iloc[:v0]
+    val_index = returns.index[v0:v1]
+    test_index = returns.index[v1:]                 # last 15% — same OOS window as XGB/LSTM
 
-    model = load_timesfm(CONTEXT_LEN)
+    model = load_timesfm(max(CONTEXT_LEN, max(ctx_grid)))   # compile once at the largest context
+    fn = make_forecast_fn(model)
     out: dict = {}
 
-    def run(name, covariate_frame=None):
-        # walk_forward slices the covariate frame to each day's context window (aligned,
-        # strictly past) — so the covariate form has no future leak.
-        s, lab = walk_forward_directions(returns, test_index, make_forecast_fn(model),
-                                         context_len=CONTEXT_LEN, covariate_frame=covariate_frame)
+    def run(name, *, covariate_frame=None, context_len=CONTEXT_LEN, threshold=0.5):
+        s, lab = walk_forward_directions(returns, test_index, fn,
+                                         context_len=context_len, covariate_frame=covariate_frame)
         if len(s):
-            out[name] = (s, lab)
+            out[name] = (s, lab, threshold)
 
     run("TimesFM-zeroshot")
+
+    # ── HPO: sweep context_len, tune the decision threshold — on VALIDATION only ──
+    best = None
+    for cl in ctx_grid:
+        sv, lv = walk_forward_directions(returns, val_index, fn, context_len=cl)
+        if not len(sv) or len(np.unique(lv.to_numpy())) < 2:
+            continue
+        thr = _youden(lv.to_numpy(), sv.to_numpy())
+        auc = direction_metrics(sv.to_numpy(), lv.to_numpy(), thr)["roc_auc"]
+        logger.info("  TimesFM HPO trial: context_len={:>4} thr={:.3f} → val ROC-AUC {:.4f}", cl, thr, auc)
+        if best is None or auc > best["val_auc"]:
+            best = {"context_len": cl, "threshold": thr, "val_auc": auc}
+    if best:
+        logger.info("TimesFM HPO → ultimate: context_len={} threshold={:.3f} (val ROC-AUC={:.4f})",
+                    best["context_len"], best["threshold"], best["val_auc"])
+        run("TimesFM-tuned", context_len=best["context_len"], threshold=best["threshold"])
 
     finetune_on_train(model, train_returns)   # best-effort; falls back to zero-shot
     run("TimesFM-finetuned")
@@ -139,8 +176,8 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
         logger.info("══ regime {} (cutoff {}) ══", regime, pd.Timestamp(cutoff).date())
         mt, ml = build_datasets(cutoff=cutoff)
 
-        def add(model_name, scores, labels):
-            rows[(model_name, regime)] = _row(scores, labels, price)
+        def add(model_name, scores, labels, threshold=0.5):
+            rows[(model_name, regime)] = _row(scores, labels, price, threshold)
 
         for name, fn in [("XGBoost", lambda: _xgb(mt)), ("LSTM", lambda: _lstm(ml))]:
             try:
@@ -159,8 +196,8 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
 
         if use_timesfm:
             try:
-                for name, (s, lab) in _timesfm_forms(mt, ml, price, cutoff).items():
-                    add(name, s, lab)
+                for name, (s, lab, thr) in _timesfm_forms(mt, ml, price, cutoff).items():
+                    add(name, s, lab, thr)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("TimesFM [{}] skipped: {}", regime, str(exc)[:160])
 
@@ -193,10 +230,21 @@ def main() -> None:
 
     board = build_leaderboard(regimes, use_timesfm=not args.no_timesfm)
     md = _to_markdown(board)
-    logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}", md)
+
+    # The "ultimate" model = best out-of-sample ROC-AUC across the whole board
+    # (TimesFM-tuned carries its swept context_len/threshold — logged during the run).
+    best_line = ""
+    if not board.empty and board["roc_auc"].notna().any():
+        bi = board["roc_auc"].astype(float).idxmax()
+        parts = ", ".join(f"{c}={board.loc[bi, c]:.4f}"
+                          for c in ("roc_auc", "f1", "mcc", "sharpe", "cum_return")
+                          if c in board.columns and pd.notna(board.loc[bi, c]))
+        best_line = f"**Ultimate model (best out-of-sample ROC-AUC):** `{bi}` — {parts}"
+
+    logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}\n\n{}", md, best_line)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
-            f.write("# SentiSense model leaderboard (out-of-sample)\n\n" + md + "\n")
+            f.write("# SentiSense model leaderboard (out-of-sample)\n\n" + md + "\n\n" + best_line + "\n")
         logger.info("Wrote {}", args.out)
 
 
