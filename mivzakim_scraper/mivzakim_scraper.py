@@ -147,12 +147,12 @@ class Scraper:
 
     async def scrape_from_page(self, browser, response_url=None, headers=None, output_file: str | None = None) -> pd.DataFrame:
         """
-        Extract the data from the website.
+        Extract the data from the website and RETURN it (no file write).
 
-        Writes to a PER-DATE file (``../headlines_<date>.csv`` by default) so
-        concurrent dates in a batch never read-modify-write the same file and
-        clobber each other (the prior shared-``headlines.csv`` race that lost most
-        of every batch). The caller (scrape_dates) globs + concatenates these.
+        The caller (``get_data``) concatenates all dates and writes the single
+        ``headlines.csv`` once, so concurrent dates never share/clobber a file
+        (the prior shared-file read-modify-write race). ``output_file`` is kept
+        for signature compatibility but ignored.
         """
         # Convert date string back to datetime for create_url
         date_obj = datetime.strptime(self.date, DATE_FORMAT)
@@ -214,9 +214,7 @@ class Scraper:
                 print(f"No data scraped for date: {self.date}")
             return pd.DataFrame()
 
-        # Per-date file → no shared-file read-modify-write, so concurrent dates can't
-        # clobber each other. scrape_dates globs + concatenates these.
-        out = output_file or f"../headlines_{self.date}.csv"
-        df.to_csv(out, mode='w', header=True, index=False, encoding="utf-8")
-        print(f"Wrote {len(df)} headlines for {self.date} -> {out}")
+        # No file write here — return the df; get_data aggregates all dates and
+        # writes headlines.csv once (no concurrent writers → no clobber race).
+        print(f"Parsed {len(df)} headlines for {self.date}")
         return df

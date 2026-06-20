@@ -29,26 +29,28 @@ def purge() -> None:
 
 
 
-async def scrape_single_date(date_obj: datetime, pages: int = 100, browser=None) -> None:
+async def scrape_single_date(date_obj: datetime, pages: int = 100, browser=None) -> pd.DataFrame:
     """
-    Scrape data for a single date using the shared browser
+    Scrape data for a single date using the shared browser. Returns the date's
+    headlines as a DataFrame (empty on error/no-data) — the caller aggregates and
+    writes once, so concurrent dates never share a file.
     """
     try:
         # Create scraper instance for this date
         scraper = Scraper(date_obj, num_pages=pages)
-
-
-        await scraper.scrape_from_page(browser=browser)
-
+        df = await scraper.scrape_from_page(browser=browser)
         print(f"Completed scraping for date: {date_obj.strftime(DATE_FORMAT)}")
+        return df if df is not None else pd.DataFrame()
 
     except Exception as e:
         print(f"Error scraping date {date_obj.strftime(DATE_FORMAT)}: {e}")
+        return pd.DataFrame()
 
 
-async def scrape_batch(dates: list, pages: int = 100) -> None:
+async def scrape_batch(dates: list, pages: int = 100) -> list:
     """
-    Scrape a batch of dates concurrently using a single browser instance
+    Scrape a batch of dates concurrently using a single browser instance.
+    Returns the list of non-empty per-date DataFrames (no file I/O here).
     """
     print(f"Starting concurrent scraping for {len(dates)} dates in this batch...")
 
@@ -66,12 +68,13 @@ async def scrape_batch(dates: list, pages: int = 100) -> None:
         tasks = [scrape_single_date(date, pages, browser=browser) for date in dates]
 
         # הרצת המשימות במקביל
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # סגירת הדפדפן בסוף הבאץ'
         await browser.close()
 
     print("Batch completed")
+    return [r for r in results if isinstance(r, pd.DataFrame) and not r.empty]
 ########## search #############
 
 def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch_size: int = 30) -> None:
@@ -95,6 +98,7 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
     # Split dates into batches
     total_batches = (len(all_dates) + batch_size - 1) // batch_size
 
+    collected: list[pd.DataFrame] = []
     for batch_num in range(total_batches):
         start_idx = batch_num * batch_size
         end_idx = min(start_idx + batch_size, len(all_dates))
@@ -105,8 +109,8 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
         print(f"Dates: {batch_dates[-1].strftime(DATE_FORMAT)} to {batch_dates[0].strftime(DATE_FORMAT)}")
         print(f"{'=' * 60}\n")
 
-        # Run async scraping for this batch
-        asyncio.run(scrape_batch(batch_dates, pages))
+        # Run async scraping for this batch; collect the per-date DataFrames.
+        collected.extend(asyncio.run(scrape_batch(batch_dates, pages)))
 
         # Small delay between batches
         if batch_num < total_batches - 1:
@@ -117,6 +121,18 @@ def get_data(start_date: datetime = None, days: int = 7, pages: int = 100, batch
 
     # Final cleanup
     purge()
+
+    # Write the single headlines.csv ONCE — no concurrent writers, so dates can't
+    # clobber each other (the prior per-date read-modify-write race). Same output
+    # path/contract as before, so daily_scrape_to_db / update_data_csv are unaffected.
+    output_file = "../headlines.csv"
+    if collected:
+        df = pd.concat(collected, ignore_index=True).drop_duplicates().reset_index(drop=True)
+        df.to_csv(output_file, mode="w", header=True, index=False, encoding="utf-8")
+        print(f"Wrote {len(df)} headlines to {output_file}")
+    else:
+        print("No data scraped — no output file written")
+
     print("\n" + "=" * 60)
     print("Data collection complete!")
     print("=" * 60)

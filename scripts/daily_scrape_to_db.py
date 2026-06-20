@@ -151,33 +151,24 @@ def scrape_dates(
             "uv not found — install from https://docs.astral.sh/uv/"
         ) from exc
 
-    # Read the scraper output. The scraper now writes ONE file per date
-    # (headlines_<date>.csv) to avoid the concurrent shared-file clobber; glob +
-    # concatenate them (also accept a legacy single headlines.csv).
-    out_dir = SCRAPER_DIR.parent
-    files = sorted(out_dir.glob("headlines_*.csv"))
-    legacy = out_dir / "headlines.csv"
-    if legacy.exists():
-        files.append(legacy)
-    if not files:
-        logger.warning("Scraper produced no output files")
+    # Read the scraper output (get_data writes the single headlines.csv once).
+    output_file = SCRAPER_DIR.parent / "headlines.csv"
+    if not output_file.exists():
+        logger.warning("Scraper produced no output file")
         return []
 
-    # Always remove the temp files, even if CSV parsing raises — otherwise a
+    # Always remove the temp file, even if CSV parsing raises — otherwise a
     # malformed output would be re-read on the next run as "new data".
-    rows: list[dict[str, str]] = []
     try:
-        for fp in files:
-            with open(fp, newline="", encoding="utf-8") as f:
-                for row in csv.DictReader(f):
-                    if "importance_level" in row and "popularity" not in row:
-                        row["popularity"] = row.pop("importance_level")
-                    rows.append(row)
+        with open(output_file, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        for row in rows:
+            if "importance_level" in row and "popularity" not in row:
+                row["popularity"] = row.pop("importance_level")
     finally:
-        for fp in files:
-            fp.unlink(missing_ok=True)
+        output_file.unlink(missing_ok=True)
 
-    logger.info("Scraped {:,} rows from {} date file(s)", len(rows), len(files))
+    logger.info("Scraped {:,} rows", len(rows))
     return rows
 
 
