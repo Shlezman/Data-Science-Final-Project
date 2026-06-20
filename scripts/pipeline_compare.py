@@ -170,6 +170,19 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
     return board[_COLS]
 
 
+def _to_markdown(board: pd.DataFrame) -> str:
+    """GitHub-flavoured markdown table — no `tabulate` dependency (pandas.to_markdown needs it)."""
+    df = board.round(4)
+    cols = [str(c) for c in df.columns]
+    head = "| model [regime] | " + " | ".join(cols) + " |"
+    sep = "|" + "---|" * (len(cols) + 1)
+    out = [head, sep]
+    for idx, row in df.iterrows():
+        cells = ["" if pd.isna(v) else (f"{v:g}" if isinstance(v, float) else str(v)) for v in row]
+        out.append("| " + str(idx) + " | " + " | ".join(cells) + " |")
+    return "\n".join(out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Cross-model × two-regime leaderboard.")
     parser.add_argument("--regimes", default="CUT,FULL", help="Comma list of CUT,FULL.")
@@ -179,7 +192,7 @@ def main() -> None:
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
 
     board = build_leaderboard(regimes, use_timesfm=not args.no_timesfm)
-    md = board.round(4).to_markdown()
+    md = _to_markdown(board)
     logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}", md)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
