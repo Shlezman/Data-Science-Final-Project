@@ -471,3 +471,72 @@ def build_embedding_dataset(engine=None) -> pd.DataFrame:
     logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + dispersion/count + finance)",
                 CUTOFF_DATE_ISO, df.shape, dim)
     return df
+
+
+def postcutoff_directions() -> pd.Series:
+    """Real next-day TA-125 direction for trading days AFTER the cutoff.
+
+    Used only by the post-cutoff "buy-only" metric overlay — these days are NEVER
+    fed to any model (training stays ≤ cutoff). Returns a date-indexed int Series
+    (1 = next close up) for dates in ``(CUTOFF_DATE, last available)``; the final row
+    with no next-day price is dropped (no fabricated label).
+    """
+    ta125, _, _, _ = _load_finance()
+    price = ta125["TA125_Price"].astype(float).sort_index()
+    nxt = price.shift(-1)
+    direction = (nxt > price).astype("Int64")
+    direction[nxt.isna()] = pd.NA
+    direction = direction[direction.notna()].astype(int)
+    post = direction[direction.index > pd.Timestamp(CUTOFF_DATE)]
+    logger.info("Post-cutoff directions: {} trading days ({} … {}), real up-rate {:.3f}",
+                len(post), post.index.min().date() if len(post) else "—",
+                post.index.max().date() if len(post) else "—",
+                float(post.mean()) if len(post) else float("nan"))
+    return post.rename("Target")
+
+
+def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES) -> pd.DataFrame:
+    """Fused dataset: per-source SCORE features ⊕ daily embedding CENTROID, one calendar.
+
+    Combines the per-source score pivot (``ml`` shape), the sentiment×relevance
+    interactions, AND the daily e5 centroid (``embc_*``) + dispersion/count onto the
+    shared finance/TA-125 base. Lets a single LSTM see both signal families at once.
+
+    The ``embc_`` centroid block is the only part meant for PCA (pass ``pca_prefix=
+    'embc_'`` downstream); per-source scores, interactions, and finance pass through
+    un-reduced. Returns an empty frame if no embeddings are cached (fused needs both).
+    """
+    engine = engine or get_engine()
+    from sentisense.embed import load_embeddings
+
+    meta, vectors = load_embeddings(engine)
+    if len(meta) == 0 or vectors.size == 0:
+        logger.warning("No embeddings cached — fused dataset needs both scores AND "
+                       "embeddings. Returning empty frame (run the 'embed' stage).")
+        return pd.DataFrame()
+
+    raw = _load_raw_scores(engine)
+    per_source = _build_per_source_wide(raw, top_n)
+    interactions = _build_interactions(raw)
+
+    dim = vectors.shape[1]
+    centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
+                            columns=[f"embc_{i:03d}" for i in range(dim)])
+    grp = centroid.groupby(level=0)
+    centroid_by_date = grp.mean()
+    extras = pd.DataFrame({
+        "emb_dispersion": grp.std().mean(axis=1).fillna(0.0),
+        "emb_count": grp.size(),
+    })
+
+    base, trading_days, price_full = _finance_base()
+    base = base.join(_roll_to_trading_days(interactions, trading_days, agg="mean"), how="left")
+    ps_td = _roll_to_trading_days(per_source, trading_days, agg="sum")
+    emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
+    extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
+
+    merged = base.join(ps_td, how="left").join(emb_td, how="left").join(extras_td, how="left")
+    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)))
+    logger.info("Fused dataset built (<= {}): {} (per-source scores + {}-d centroid + finance)",
+                CUTOFF_DATE_ISO, df.shape, dim)
+    return df

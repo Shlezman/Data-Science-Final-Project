@@ -7,6 +7,10 @@ merge, ``add_ta125_features`` (leak-free lagged returns / RSI / vol-z / DoW), th
 close-to-close next-day target, and the hard ``<= 2023-10-07`` cutoff.
 """
 
-from sentisense.features.dataset import build_datasets, build_embedding_dataset
+from sentisense.features.dataset import (
+    build_datasets,
+    build_embedding_dataset,
+    build_fused_dataset,
+)
 
-__all__ = ["build_datasets", "build_embedding_dataset"]
+__all__ = ["build_datasets", "build_embedding_dataset", "build_fused_dataset"]

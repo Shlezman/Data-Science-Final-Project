@@ -26,17 +26,24 @@ from sentisense.db import get_engine
 
 _MIGRATION = REPO_ROOT / "sentisense" / "db" / "migrations" / "001_headline_embeddings.sql"
 
-_UNEMBEDDED_SQL = text(
-    """
+# Date predicate templated by scope so one indexed join serves three modes:
+#   precutoff  → rh.date <= :cutoff   (default; the modeling corpus)
+#   postcutoff → rh.date >  :cutoff   (Phase-2 buy-overlay / forward use)
+#   all        → no date bound
+_UNEMBEDDED_SQL_TMPL = """
     SELECT rh.id AS headline_id, rh.headline
     FROM raw_headlines rh
     LEFT JOIN headline_embeddings he
         ON he.headline_id = rh.id AND he.embed_model = :model
     WHERE he.headline_id IS NULL
-      AND rh.date <= :cutoff
+      {date_clause}
     ORDER BY rh.id
-    """
-)
+"""
+_DATE_CLAUSES = {
+    "precutoff": "AND rh.date <= :cutoff",
+    "postcutoff": "AND rh.date > :cutoff",
+    "all": "",
+}
 
 _INSERT_SQL = text(
     """
@@ -84,23 +91,33 @@ def _load_embedder():
     return SentenceTransformer(EMBED_MODEL)
 
 
-def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = False) -> int:
-    """Embed all headlines ≤ cutoff lacking a vector for the active model.
+def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = False,
+                  scope: str = "precutoff") -> int:
+    """Embed headlines lacking a vector for the active model, scoped by date.
+
+    Args:
+        scope: 'precutoff' (≤ cutoff, the modeling corpus — default), 'postcutoff'
+            (> cutoff — for the buy-overlay / forward use), or 'all'.
 
     Returns:
         The number of new embeddings written (0 on dry-run).
     """
+    if scope not in _DATE_CLAUSES:
+        raise ValueError(f"scope must be one of {sorted(_DATE_CLAUSES)}, got {scope!r}")
     engine = engine or get_engine()
     ensure_table(engine)
 
     # Fail fast on a missing 'embed' extra BEFORE the long count query / dry-run.
     model = None if dry_run else _load_embedder()
 
+    query = text(_UNEMBEDDED_SQL_TMPL.format(date_clause=_DATE_CLAUSES[scope]))
+    params = {"model": EMBED_MODEL}
+    if scope != "all":
+        params["cutoff"] = CUTOFF_DATE
     with engine.connect() as conn:
-        todo = pd.read_sql(_UNEMBEDDED_SQL, conn,
-                           params={"model": EMBED_MODEL, "cutoff": CUTOFF_DATE})
-    logger.info("{:,} headlines need embedding under {} (<= {})",
-                len(todo), EMBED_MODEL, CUTOFF_DATE.isoformat())
+        todo = pd.read_sql(query, conn, params=params)
+    logger.info("{:,} headlines need embedding under {} (scope={}, cutoff {})",
+                len(todo), EMBED_MODEL, scope, CUTOFF_DATE.isoformat())
     if dry_run or todo.empty:
         return 0
     written = 0
@@ -141,13 +158,15 @@ def load_embeddings(engine=None) -> tuple[pd.DataFrame, np.ndarray]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Phase 4 — embed headlines <= cutoff into the cache.")
+    parser = argparse.ArgumentParser(description="Phase 4 — embed headlines into the cache.")
     parser.add_argument("--batch", type=int, default=EMBED_BATCH)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--scope", choices=["precutoff", "postcutoff", "all"], default="precutoff",
+                        help="Which headlines to embed by date (default: precutoff = modeling corpus).")
     args = parser.parse_args()
     if args.batch < 1:
         parser.error("--batch must be >= 1")
-    embed_missing(batch=args.batch, dry_run=args.dry_run)
+    embed_missing(batch=args.batch, dry_run=args.dry_run, scope=args.scope)
 
 
 if __name__ == "__main__":

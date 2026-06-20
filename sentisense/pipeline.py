@@ -101,7 +101,8 @@ def main() -> None:
     # `--only final` see the SAME feature width (the narrative skew bug): narrative
     # is always derived from the cached embeddings (no GPU) before any features build.
     state: dict = {"narrative": None, "narrative_built": False, "mt": None, "ml": None,
-                   "ml_emb": None, "ml_emb_built": False, "study_scores": None, "study_emb": None}
+                   "ml_emb": None, "ml_emb_built": False, "ml_fused": None, "ml_fused_built": False,
+                   "study_scores": None, "study_emb": None, "study_fused": None}
 
     def embedding_dataset():
         """Daily e5-centroid dataset (memoised). None if no embeddings cached."""
@@ -111,6 +112,15 @@ def main() -> None:
             state["ml_emb"] = df if (df is not None and not df.empty) else None
             state["ml_emb_built"] = True
         return state["ml_emb"]
+
+    def fused_dataset():
+        """Per-source scores ⊕ embedding-centroid dataset (memoised). None if no embeddings."""
+        if not state["ml_fused_built"]:
+            from sentisense.features import build_fused_dataset
+            df = build_fused_dataset()
+            state["ml_fused"] = df if (df is not None and not df.empty) else None
+            state["ml_fused_built"] = True
+        return state["ml_fused"]
 
     def narrative_features():
         if not state["narrative_built"]:
@@ -167,7 +177,7 @@ def main() -> None:
             _, ml = datasets()
             from sentisense.config import EMBED_PCA_COMPONENTS, OPTUNA_TRIALS
             from sentisense.hpo import run_hpo
-            from sentisense.hpo.optuna_lstm import STUDY_EMB, STUDY_SCORES
+            from sentisense.hpo.optuna_lstm import STUDY_EMB, STUDY_FUSED, STUDY_SCORES
             n_trials = args.trials if args.trials > 0 else OPTUNA_TRIALS
 
             logger.info("Tuning LSTM on SCORE features …")
@@ -182,11 +192,22 @@ def main() -> None:
                 logger.warning("No embeddings cached → skipping the embedding-LSTM study "
                                "(run the 'embed' stage to enable it).")
 
+            mlf = fused_dataset()
+            if mlf is not None:
+                logger.info("Tuning LSTM on FUSED features (scores ⊕ embeddings, PCA→{} on embc_) …",
+                            EMBED_PCA_COMPONENTS)
+                state["study_fused"] = run_hpo(mlf, n_trials=n_trials, study_name=STUDY_FUSED,
+                                               pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
+            else:
+                logger.warning("No embeddings cached → skipping the fused-LSTM study.")
+
         elif stage == "final":
             _, ml = datasets()
             from sentisense.config import EMBED_PCA_COMPONENTS
-            from sentisense.hpo import final_holdout_eval, run_hpo
-            from sentisense.hpo.optuna_lstm import STUDY_EMB, STUDY_SCORES, has_completed_trials
+            from sentisense.hpo import final_holdout_eval, postcutoff_buy_overlay, run_hpo
+            from sentisense.hpo.optuna_lstm import (
+                STUDY_EMB, STUDY_FUSED, STUDY_SCORES, has_completed_trials,
+            )
 
             s = state["study_scores"] or run_hpo(ml, n_trials=0, study_name=STUDY_SCORES)
             if not has_completed_trials(s):
@@ -194,7 +215,10 @@ def main() -> None:
             logger.info("Final holdout — SCORE LSTM:")
             _, score_proba, score_labels = final_holdout_eval(ml, s.best_params)
 
-            emb_proba = None
+            # Collect every available track's calibrated test probabilities for the
+            # N-way soft-vote ensemble. (name, proba_series).
+            tracks = [("scores", score_proba)]
+
             mle = embedding_dataset()
             if mle is not None:
                 se = state["study_emb"] or run_hpo(mle, n_trials=0, study_name=STUDY_EMB,
@@ -203,22 +227,41 @@ def main() -> None:
                     logger.info("Final holdout — EMBEDDING LSTM:")
                     _, emb_proba, _ = final_holdout_eval(
                         mle, se.best_params, pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
+                    tracks.append(("embeddings", emb_proba))
                 else:
                     logger.warning("No completed embedding-LSTM trials — skipping its final eval.")
 
-            # Soft-vote ensemble: average the two models' calibrated test probs on the
-            # dates they share, score at 0.5 (no test-set threshold tuning).
-            if emb_proba is not None:
-                import pandas as pd
-                from sentisense.models.train import metrics_at
-                common = score_proba.index.intersection(emb_proba.index)
+            mlf = fused_dataset()
+            if mlf is not None:
+                sf = state["study_fused"] or run_hpo(mlf, n_trials=0, study_name=STUDY_FUSED,
+                                                     pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
+                if has_completed_trials(sf):
+                    logger.info("Final holdout — FUSED LSTM (scores ⊕ embeddings):")
+                    _, fused_proba, _ = final_holdout_eval(
+                        mlf, sf.best_params, pca_components=EMBED_PCA_COMPONENTS, pca_prefix="embc_")
+                    tracks.append(("fused", fused_proba))
+                else:
+                    logger.warning("No completed fused-LSTM trials — skipping its final eval.")
+
+            # N-way soft-vote ensemble: average calibrated test probs on shared dates,
+            # score at 0.5 (no test-set threshold tuning).
+            from sentisense.models.train import metrics_at
+            if len(tracks) > 1:
+                common = tracks[0][1].index
+                for _, p in tracks[1:]:
+                    common = common.intersection(p.index)
                 if len(common) > 0:
-                    avg = (score_proba.reindex(common) + emb_proba.reindex(common)) / 2.0
+                    avg = sum(p.reindex(common) for _, p in tracks) / len(tracks)
                     lbl = score_labels.reindex(common)
                     m = metrics_at(avg.values, lbl.values, 0.5)
-                    logger.info("Final holdout — SOFT-VOTE ENSEMBLE (scores+embeddings, {} days):", len(common))
+                    logger.info("Final holdout — SOFT-VOTE ENSEMBLE ({}; {} days):",
+                                "+".join(n for n, _ in tracks), len(common))
                     for k, v in m.items():
                         logger.info("  {:18s} {:.4f}", k, v)
+
+            # Post-cutoff buy-only overlay: pre-cutoff model decisions + forced BUY on
+            # every post-cutoff trading day, combined scorecard (operator spec).
+            postcutoff_buy_overlay(score_proba, score_labels, threshold=0.5)
 
         clock.end_stage(stage, remaining=selected[i + 1:])
 

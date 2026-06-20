@@ -38,6 +38,7 @@ from sentisense.db import get_connection_url
 _HPO_EPOCHS = 40  # reduced per-trial budget; final retrain uses full MAX_EPOCHS
 STUDY_SCORES = "sentisense_lstm_scores"   # score-feature LSTM study
 STUDY_EMB = "sentisense_lstm_emb"         # embedding-centroid LSTM study
+STUDY_FUSED = "sentisense_lstm_fused"     # scored ⊕ embedded fused LSTM study
 _STUDY_NAME = STUDY_SCORES                # default for the standalone CLI
 
 
@@ -240,6 +241,7 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *, n_seeds: int
     test_index = df_lstm.index[n_train + n_val:]  # rows in the sacred test slice
 
     raw_runs, tuned_runs, brier_raw, brier_cal = [], [], [], []
+    cal_kept, collapse_frac = [], []
     proba_accum, labels_ref = None, None
 
     for seed in list(HPO_SEEDS)[:n_seeds]:
@@ -268,13 +270,27 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *, n_seeds: int
 
         mon_p, mon_y = proba_and_labels(model, dl_mon)
         te_p, te_y = proba_and_labels(model, dl_te)
-        # Isotonic calibration fit on the dev tail; applied to monitor + test.
+        # Isotonic calibration fit on the dev tail — ADOPTED ONLY IF it lowers the
+        # dev-tail Brier (else identity). Unconditional isotonic over-fit the short dev
+        # tail and HURT test Brier in the embedding run (brier_cal 0.269 > raw 0.251).
+        # The keep/drop decision is made on dev only, so it never peeks at sacred test.
+        use_cal = False
         if len(np.unique(mon_y)) > 1:
             cal = IsotonicRegression(out_of_bounds="clip").fit(mon_p, mon_y)
+            if brier_score_loss(mon_y, cal.transform(mon_p)) < brier_score_loss(mon_y, mon_p):
+                use_cal = True
+        if use_cal:
             mon_p_cal, te_p_cal = cal.transform(mon_p), cal.transform(te_p)
         else:
             mon_p_cal, te_p_cal = mon_p, te_p
+        cal_kept.append(int(use_cal))
         thr = _youden_threshold(mon_y, mon_p_cal)
+
+        # Class-collapse guard: a model predicting ~one side at the chosen threshold has
+        # no usable skill regardless of AUC. Track the dominant-class fraction of the
+        # test decision so the scorecard exposes it instead of hiding behind acc≈0.5.
+        te_dec = (te_p_cal > thr).astype(int)
+        collapse_frac.append(float(max(te_dec.mean(), 1.0 - te_dec.mean())))
 
         raw_runs.append(metrics_at(te_p, te_y, 0.5))
         tuned_runs.append(metrics_at(te_p_cal, te_y, thr))
@@ -294,11 +310,69 @@ def final_holdout_eval(df_lstm: pd.DataFrame, best_params: dict, *, n_seeds: int
     summary = {**_agg(raw_runs, "@0.5"), **_agg(tuned_runs, "@tuned")}
     summary["brier_raw"] = {"mean": float(np.nanmean(brier_raw)), "std": float(np.nanstd(brier_raw))}
     summary["brier_cal"] = {"mean": float(np.nanmean(brier_cal)), "std": float(np.nanstd(brier_cal))}
+    # Diagnostics: how often calibration was kept, and how degenerate the decisions are.
+    summary["calibration_kept"] = {"mean": float(np.mean(cal_kept)), "std": float(np.std(cal_kept))}
+    summary["collapse_frac"] = {"mean": float(np.mean(collapse_frac)), "std": float(np.std(collapse_frac))}
 
     logger.info("Phase 7 holdout (mean±std over {} seeds):", n_seeds)
     for k, v in summary.items():
-        logger.info("  {:22s} {:.4f} ± {:.4f}", k, v["mean"], v["std"])
+        logger.info("  {:24s} {:.4f} ± {:.4f}", k, v["mean"], v["std"])
+    if summary["collapse_frac"]["mean"] > 0.9:
+        logger.warning("⚠ Near class-collapse: model predicts one side {:.0%} of the time — "
+                       "tuned-threshold metrics are not trustworthy skill.",
+                       summary["collapse_frac"]["mean"])
+    if summary["roc_auc@tuned"]["mean"] < 0.53 and abs(summary["mcc@tuned"]["mean"]) < 0.05:
+        logger.warning("⚠ No detectable edge (ROC-AUC≈0.5, |MCC|≈0): treat as chance-level.")
     return summary, proba_series, label_series
+
+
+def postcutoff_buy_overlay(test_proba: pd.Series, test_labels: pd.Series, *,
+                           threshold: float = 0.5) -> dict:
+    """Combined scorecard: model decisions on the pre-cutoff sacred test, FORCED BUY on
+    every post-cutoff trading day.
+
+    Post-cutoff days are NEVER used in training/tuning (per operator spec); here the
+    trained model's decisions on the held-out pre-cutoff test are concatenated with a
+    'always buy' (decision=1) stance over the real post-cutoff direction series. Reports
+    accuracy + a confusion matrix over the union, plus the post-cutoff buy-only accuracy.
+
+    Args:
+        test_proba: date-indexed calibrated probabilities on the pre-cutoff sacred test.
+        test_labels: aligned real labels for that test slice.
+        threshold: decision threshold for the pre-cutoff model segment.
+
+    Returns:
+        dict with combined accuracy, confusion (tn/fp/fn/tp), and per-segment accuracy.
+    """
+    import numpy as np
+    from sklearn.metrics import accuracy_score, confusion_matrix
+
+    from sentisense.features.dataset import postcutoff_directions
+
+    pre_dec = (test_proba.values > threshold).astype(int)
+    pre_truth = test_labels.values.astype(int)
+
+    post = postcutoff_directions()
+    post_truth = post.values.astype(int)
+    post_dec = np.ones(len(post_truth), dtype=int)  # forced BUY on every post-cutoff day
+
+    dec = np.concatenate([pre_dec, post_dec])
+    truth = np.concatenate([pre_truth, post_truth])
+    tn, fp, fn, tp = confusion_matrix(truth, dec, labels=[0, 1]).ravel()
+    out = {
+        "combined_accuracy": float(accuracy_score(truth, dec)),
+        "pre_cutoff_accuracy": float(accuracy_score(pre_truth, pre_dec)) if len(pre_truth) else float("nan"),
+        "postcutoff_buy_accuracy": float(post_truth.mean()) if len(post_truth) else float("nan"),
+        "n_pre": int(len(pre_truth)), "n_post": int(len(post_truth)),
+        "tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp),
+    }
+    logger.info("Buy-overlay scorecard (pre-cutoff model + post-cutoff forced BUY):")
+    logger.info("  pre-cutoff days={}  post-cutoff days={}", out["n_pre"], out["n_post"])
+    logger.info("  combined accuracy   {:.4f}", out["combined_accuracy"])
+    logger.info("  pre-cutoff accuracy {:.4f}  | post-cutoff buy-only accuracy {:.4f}",
+                out["pre_cutoff_accuracy"], out["postcutoff_buy_accuracy"])
+    logger.info("  confusion [tn={} fp={} fn={} tp={}]", tn, fp, fn, tp)
+    return out
 
 
 def main() -> None:
