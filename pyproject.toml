@@ -70,6 +70,19 @@ chronos = [
 # if gated — never hardcoded). sentisense.models.timesfm_forecaster lazy-imports it and
 # fails fast with this hint if absent.
 
+# Pin torch to the CPU wheels. The server's NVIDIA driver is CUDA 12.3 (12030), too old for
+# the default CUDA-12.9 torch wheel (which fails at import with libcudnn.so.9 / a too-old-
+# driver warning). CPU torch has no cuDNN/CUDA runtime deps, so `uv sync` is reproducible and
+# never re-breaks torch. The dataset is small (≈2.5k trading days) — CPU is adequate.
+# To use GPU instead: update the driver, drop this pin, and install a torch built for your CUDA.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
