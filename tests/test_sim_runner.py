@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from sentisense.sim.runner import _balance_by_source, _compose_seed, seed_window
+from sentisense.sim.runner import _balance_by_source, _compose_seed, _shape_for_mode, seed_window
 
 
 def _df(rows):
@@ -45,7 +45,23 @@ def test_balance_by_source_applies_total_cap():
 def test_compose_seed_emits_per_source_sections():
     df = _df([("2024-03-10", "Globes", 9, "rates up"),
               ("2024-03-10", "Calcalist", 8, "tech rally")])
-    seed = _compose_seed(df, pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-10"))
+    seed = _compose_seed(df, pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-10"), "source")
     assert "distinct voice" in seed                  # perspective-aware preamble present
     assert "### Source: Globes (1 headlines)" in seed
     assert "### Source: Calcalist (1 headlines)" in seed
+
+
+def test_flat_mode_dedups_cross_provider_echo():
+    rows = [("2024-03-10", "Globes", 9, "rate hike"),     # same story, two outlets
+            ("2024-03-10", "Calcalist", 8, "rate hike"),
+            ("2024-03-10", "Globes", 7, "tech rally")]
+    out = _shape_for_mode(_df(rows), "flat", per_source_cap=40, total_cap=100)
+    assert len(out) == 2                             # duplicate headline merged
+
+
+def test_compose_seed_flat_is_provider_agnostic():
+    df = _df([("2024-03-10", "Globes", 9, "rate hike")])
+    seed = _compose_seed(df, pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-10"), "flat")
+    assert "pooled" in seed                          # flat preamble
+    assert "### Source" not in seed and "Globes" not in seed   # no source attribution
+    assert "rate hike" in seed

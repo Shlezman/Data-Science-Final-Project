@@ -38,8 +38,10 @@ def main() -> None:
     p.add_argument("--date", default="", help="Trading day YYYY-MM-DD (default: latest with news).")
     p.add_argument("--seeds", type=int, default=1)
     p.add_argument("--lookback", type=int, default=SEED_LOOKBACK_DAYS)
+    p.add_argument("--modes", default="", help="Comma list of sim modes (default: config SIM_MODES).")
     p.add_argument("--miro-url", default="")
     args = p.parse_args()
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()] or None
 
     engine = get_engine()
     day = pd.Timestamp(args.date) if args.date else _latest_trading_day_with_news(engine)
@@ -47,7 +49,7 @@ def main() -> None:
         logger.error("no trading day with news found — scrape first.")
         return
     logger.info("Mode C daily sim for {} ({} seed(s), lookback {}d)", day.date(), args.seeds, args.lookback)
-    run_window([day], seeds=args.seeds, lookback=args.lookback, engine=engine,
+    run_window([day], modes=modes, seeds=args.seeds, lookback=args.lookback, engine=engine,
                base_url=args.miro_url or None)
 
 

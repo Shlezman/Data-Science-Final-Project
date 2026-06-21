@@ -32,6 +32,12 @@ ENABLE_REDDIT = _flag("SENTISENSE_MIRO_REDDIT", "false")
 # Lookback window for the per-day causal seed (days of headlines ≤ T fed as seed material).
 SEED_LOOKBACK_DAYS = int(os.getenv("SENTISENSE_MIRO_LOOKBACK", "7"))
 
+# Sim modes run per day (each → its own cached row + sim_<mode>_* feature block):
+#   'source' — per-provider voices (one agent per news outlet)
+#   'flat'   — whole-day news pooled, provider-agnostic (deduped, no source attribution)
+_modes = os.getenv("SENTISENSE_MIRO_MODES", "source,flat")
+SIM_MODES = [m.strip() for m in _modes.split(",") if m.strip()] or ["source"]
+
 # Seed shaping for source-as-agent (each news outlet = a distinct voice in the graph).
 # Headlines are grouped per source so GraphRAG surfaces outlets as entities → agents, and
 # capped PER SOURCE so a prolific channel can't drown a sparse one (the volume-skew fix).

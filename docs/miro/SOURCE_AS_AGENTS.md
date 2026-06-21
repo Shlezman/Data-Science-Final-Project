@@ -1,3 +1,27 @@
+# Source-as-agent + provider-agnostic: the two sim modes
+
+## Two complementary views per day
+Each trading day is simulated in **two modes** (`SIM_MODES`, default `source,flat`), each a
+separate cached run and feature block:
+
+| Mode | Seed | Question it answers | Feature columns |
+|------|------|---------------------|-----------------|
+| `source` | one section per outlet, per-source capped, perspective-aware preamble | "What does each channel's crowd think, and where do they diverge?" | `sim_source_dir_score / _confidence / _disagreement / _n_agents / _seeds` |
+| `flat` | whole-day news **pooled**, deduped, **source stripped** | "What does the day's news say as one aggregate narrative?" | `sim_flat_dir_score / _confidence / _disagreement / _n_agents / _seeds` |
+
+Plus two **cross-mode** signals when both ran: `sim_src_flat_gap` (source−flat dir_score) and
+`sim_src_flat_agree` (1 if the per-provider and pooled crowds point the same way). Divergence
+between the two views is itself a feature — it flags days where channel framing matters.
+
+All columns are `sim_*`-prefixed, so `build_datasets(with_sim=True)` and the
+`pipeline_compare --with-sim` ablation pick them up automatically (XGBoost/LSTM/TimesFM are
+HPO'd on the augmented set). Both modes are seeded strictly on news ≤ T (leak-safe); the
+`flat` graph/report are stored with `mode='flat'`, `graph_api` defaults to the `source` graph
+(the richer per-outlet one) for the UI. Run both with `scripts/run_miro_window.py`
+(`--modes source,flat`); `narrative_sim.mode` (migration 003) tags each row.
+
+---
+
 # Source-as-agent: handling multi-channel perspective
 
 ## How a day-sim actually works (no summarization)

@@ -36,8 +36,10 @@ def main() -> None:
     p.add_argument("--last-n", type=int, default=0, help="Use the last N trading days (overrides --from).")
     p.add_argument("--seeds", type=int, default=1, help="Multi-seed runs per day (variance → mean±std).")
     p.add_argument("--lookback", type=int, default=SEED_LOOKBACK_DAYS, help="Seed lookback in days.")
+    p.add_argument("--modes", default="", help="Comma list of sim modes (default: config SIM_MODES, e.g. source,flat).")
     p.add_argument("--miro-url", default="", help="Override MiroFish base URL.")
     args = p.parse_args()
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()] or None
 
     days = _trading_days()
     if args.dto:
@@ -52,7 +54,7 @@ def main() -> None:
 
     logger.info("MiroFish window: {} trading days [{} … {}], {} seed(s), lookback {}d",
                 len(days), days.min().date(), days.max().date(), args.seeds, args.lookback)
-    run_window(list(days), seeds=args.seeds, lookback=args.lookback,
+    run_window(list(days), modes=modes, seeds=args.seeds, lookback=args.lookback,
                base_url=args.miro_url or None)
 
 

@@ -367,26 +367,45 @@ def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: 
 
 _SIM_SQL = text(
     """
-    SELECT sim_date::date AS date,
-           AVG(dir_score)    AS sim_dir_score,
-           AVG(confidence)   AS sim_confidence,
-           AVG(disagreement) AS sim_disagreement,
-           AVG(n_agents)     AS sim_n_agents,
-           COUNT(*)          AS sim_seeds
+    SELECT sim_date::date AS date, mode,
+           AVG(dir_score)    AS dir_score,
+           AVG(confidence)   AS confidence,
+           AVG(disagreement) AS disagreement,
+           AVG(n_agents)     AS n_agents,
+           COUNT(*)          AS seeds
     FROM narrative_sim
     WHERE sim_date <= :cutoff
-    GROUP BY sim_date
+    GROUP BY sim_date, mode
     ORDER BY sim_date
     """
 )
+_SIM_METRICS = ["dir_score", "confidence", "disagreement", "n_agents", "seeds"]
+
+
+def _pivot_sim_long(df: pd.DataFrame) -> pd.DataFrame:
+    """Pivot the long per-(date, mode) sim frame wide → ``sim_<mode>_<metric>`` columns.
+
+    Adds cross-mode signals when both 'source' and 'flat' views exist for a day:
+    ``sim_src_flat_gap`` (source−flat dir) and ``sim_src_flat_agree`` (same sign → 1).
+    """
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    wide = df.pivot(index="date", columns="mode", values=_SIM_METRICS).sort_index()
+    wide.columns = [f"sim_{mode}_{metric}" for metric, mode in wide.columns]
+    src, flat = "sim_source_dir_score", "sim_flat_dir_score"
+    if src in wide.columns and flat in wide.columns:
+        wide["sim_src_flat_gap"] = wide[src] - wide[flat]
+        wide["sim_src_flat_agree"] = (np.sign(wide[src]) == np.sign(wide[flat])).astype(float)
+    return wide
 
 
 def build_sim_features(engine=None, cutoff=CUTOFF_DATE) -> pd.DataFrame:
-    """Daily MiroFish narrative-sim features (mean over seeds), date-indexed, ≤ cutoff.
+    """Daily MiroFish narrative-sim features per mode (mean over seeds), date-indexed, ≤ cutoff.
 
-    Columns ``sim_dir_score / sim_confidence / sim_disagreement / sim_n_agents /
-    sim_seeds``. The sim for day T is seeded on news ≤ T (causal), so it's a leak-safe
-    day-T feature. Empty frame if the table/rows are absent (run scripts/run_miro_window.py).
+    One block per sim mode — ``sim_source_*`` (per-provider voices) and ``sim_flat_*``
+    (provider-agnostic pooled day) — plus cross-mode ``sim_src_flat_gap`` / ``_agree``.
+    The sim for day T is seeded on news ≤ T (causal), so every column is a leak-safe day-T
+    feature. Empty frame if the table/rows are absent (run scripts/run_miro_window.py).
     """
     engine = engine or get_engine()
     try:
@@ -399,11 +418,9 @@ def build_sim_features(engine=None, cutoff=CUTOFF_DATE) -> pd.DataFrame:
         logger.warning("No MiroFish sim rows ≤ {} — run scripts/run_miro_window.py first.",
                        pd.Timestamp(cutoff).date())
         return pd.DataFrame()
-    df["date"] = pd.to_datetime(df["date"])
-    out = df.set_index("date")[["sim_dir_score", "sim_confidence", "sim_disagreement",
-                                "sim_n_agents", "sim_seeds"]]
-    logger.info("Sim features: {} days ({} … {})", len(out),
-                out.index.min().date(), out.index.max().date())
+    out = _pivot_sim_long(df)
+    logger.info("Sim features: {} days, modes={} ({} … {})", len(out),
+                sorted(df["mode"].unique()), out.index.min().date(), out.index.max().date())
     return out
 
 
