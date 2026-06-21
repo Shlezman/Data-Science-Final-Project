@@ -65,7 +65,10 @@ def ensure_extension(engine) -> None:
 
 
 def ensure_table(engine, dim: int, *, rebuild: bool = False) -> None:
-    """Create ``headline_vectors`` (vector(dim) + HNSW cosine index). ``rebuild`` drops first."""
+    """Create ``headline_vectors`` (vector(dim) + a cheap date index). ``rebuild`` drops first.
+
+    The HNSW index is built AFTER the bulk load (see :func:`build_index`) — inserting millions
+    of rows into a live HNSW index is far slower than load-then-index."""
     with engine.begin() as conn:
         if rebuild:
             conn.execute(text("DROP TABLE IF EXISTS headline_vectors"))
@@ -81,11 +84,19 @@ def ensure_table(engine, dim: int, *, rebuild: bool = False) -> None:
                 PRIMARY KEY (headline_id, embed_model)
             )
             """))   # dim is an int read from the DB, not user input — safe to interpolate
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_headline_vectors_date "
+                          "ON headline_vectors (date)"))
+
+
+def build_index(engine) -> None:
+    """Build the HNSW cosine index once, after the bulk load (idempotent)."""
+    logger.info("Building HNSW index (cosine) — one-time, can take a while on millions of rows…")
+    with engine.begin() as conn:
+        conn.execute(text("SET maintenance_work_mem = '1GB'"))   # speeds the build (session-local)
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_headline_vectors_hnsw "
             "ON headline_vectors USING hnsw (embedding vector_cosine_ops)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_headline_vectors_date "
-                          "ON headline_vectors (date)"))
+    logger.info("HNSW index ready.")
 
 
 def _vec_literal(blob: bytes, dim: int) -> str:
@@ -184,6 +195,7 @@ def main() -> None:
     ensure_extension(engine)
     ensure_table(engine, dim, rebuild=args.rebuild)
     n = fill(engine, args.model, dim, batch=args.batch)
+    build_index(engine)   # HNSW after the bulk load
     logger.info("Loaded {:,} vectors into headline_vectors.", n)
 
 
