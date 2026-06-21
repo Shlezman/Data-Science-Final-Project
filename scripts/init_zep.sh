@@ -66,6 +66,10 @@ for i in $(seq 1 30); do
   if curl -sf "http://localhost:${ZEP_PORT}/healthz" >/dev/null 2>&1; then
     echo "Zep is up on http://localhost:${ZEP_PORT}"
     echo "Put in MiroFish .env:  ZEP_API_URL=http://localhost:${ZEP_PORT}  ZEP_API_KEY=local"
+    echo "⚠️  zep-cloud==3.13.0 may NOT honor ZEP_API_URL — confirm with:"
+    echo "      bash scripts/verify_local_egress.sh"
+    echo "    If it reports the SDK ignores the env var, run:"
+    echo "      python scripts/patch_mirofish_zep_local.py   # forwards base_url in code"
     exit 0
   fi
   sleep 2

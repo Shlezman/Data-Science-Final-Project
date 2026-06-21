@@ -23,12 +23,14 @@ import time
 from loguru import logger
 
 from sentisense.sim.config import (
+    ALLOW_REMOTE_MIRO,
     ENABLE_REDDIT,
     ENABLE_TWITTER,
     MIRO_URL,
     POLL_SECONDS,
     TIMEOUT_SECONDS,
 )
+from sentisense.sim.preflight import assert_local
 
 
 class MiroError(RuntimeError):
@@ -45,6 +47,7 @@ class MiroClient:
         except ModuleNotFoundError as exc:
             raise MiroError("sentisense.sim needs 'requests' — `uv sync --extra miro` "
                             "(or pip install requests).") from exc
+        assert_local(base_url, allow_remote=ALLOW_REMOTE_MIRO)
         self.base = base_url.rstrip("/")
         self.poll = poll
         self.stage_timeout = timeout
