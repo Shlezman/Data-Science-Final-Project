@@ -50,6 +50,17 @@ notebook = [
     "shap>=0.44",
     "umap-learn>=0.5",
 ]
+# Temporal Fusion Transformer (leaderboard TFT row). pytorch-forecasting MIT, lightning
+# Apache-2.0. Install: uv sync --extra ml --extra tft   (torch comes from `ml`).
+tft = [
+    "pytorch-forecasting>=1.0",
+    "lightning>=2.2",
+]
+# Chronos (Amazon) zero-shot foundation forecaster (leaderboard Chronos rows). Apache-2.0.
+# Install: uv sync --extra ml --extra chronos   (pulls transformers; torch from `ml`).
+chronos = [
+    "chronos-forecasting>=1.2",
+]
 # TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
 # PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
 # it into the project venv on the server with one of:

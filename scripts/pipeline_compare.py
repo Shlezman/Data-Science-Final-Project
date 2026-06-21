@@ -1,20 +1,23 @@
 """One leaderboard across every forecaster × both data regimes — out-of-sample only.
 
-Rows : Buy&Hold · XGBoost · LSTM · TimesFM-zeroshot · TimesFM-finetuned ·
-       TimesFM-cov · TimesFM-nocov            (per regime)
+Rows : Buy&Hold · XGBoost · LSTM · GRU · TCN · PatchTST · TFT ·
+       Chronos-{zeroshot,tuned} · TimesFM-{zeroshot,tuned,finetuned,cov,nocov}  (per regime)
 Regimes : CUT  (data ≤ 2023-10-07, the regime-break guard)
           FULL (entire timeline)              ← the CUT-vs-FULL delta is the deliverable
 Cols : ROC-AUC · F1 · MCC · accuracy · cumulative return · Sharpe · max drawdown
 
 Every model is reduced to a uniform ``(scores: Series, labels: Series)`` on its held-out
 window, then scored by the EXISTING ``metrics_at`` + the shared backtest helpers — no
-metric is re-implemented here. TimesFM rows need the ``timesfm`` extra + GPU; each model
-is guarded so a missing dep / failure skips just that row.
+metric is re-implemented here. Each model is HPO'd (GRU/TCN/PatchTST + TFT via Optuna;
+Chronos/TimesFM sweep context length + threshold). Heavy rows need extra deps + GPU
+(``ml`` for the torch zoo, ``tft``/``chronos``/``timesfm`` extras); each model is guarded
+so a missing dep / failure skips just that row. Writes leaderboard.md by default.
 
 Run (server-side, from repo root):
-    uv run python scripts/pipeline_compare.py
+    uv run python scripts/pipeline_compare.py                        # full board → leaderboard.md
     uv run python scripts/pipeline_compare.py --regimes CUT          # one regime
-    uv run python scripts/pipeline_compare.py --no-timesfm           # XGB/LSTM/B&H only
+    uv run python scripts/pipeline_compare.py --no-timesfm --no-tft  # subset
+    uv run python scripts/pipeline_compare.py --seq-trials 40 --tft-trials 15
 """
 
 from __future__ import annotations
@@ -98,6 +101,70 @@ def _lstm(ml: pd.DataFrame):
     return proba, labels
 
 
+def _seq(ml: pd.DataFrame, arch: str, *, tune_trials: int = 0):
+    """GRU/TCN/PatchTST classifier via the generic arch-parametric Optuna HPO → (scores, labels).
+
+    Resumes a per-arch study from the project DB; if none exists and ``tune_trials`` > 0,
+    runs HPO first (these architectures have no pre-tuned study, unlike LSTM)."""
+    import optuna
+    from sentisense.db import get_connection_url
+    from sentisense.hpo.optuna_lstm import has_completed_trials
+    from sentisense.hpo.optuna_seq import run_seq_hpo, seq_holdout_eval, study_name_for
+    name = study_name_for(arch)
+    try:
+        study = optuna.load_study(study_name=name, storage=get_connection_url())
+    except Exception:  # noqa: BLE001
+        study = None
+    if study is None or not has_completed_trials(study):
+        if tune_trials <= 0:
+            raise RuntimeError(f"{arch} study '{name}' has no trials — pass --seq-trials > 0.")
+        study = run_seq_hpo(ml, arch, n_trials=tune_trials, study_name=name)
+    return seq_holdout_eval(ml, arch, study.best_params)
+
+
+def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
+    """{form: (scores, labels, threshold)} for Chronos — zero-shot + context-len-tuned.
+
+    Same forecast→direction bridge as TimesFM (univariate foundation model). HPO sweeps the
+    context length and tunes the decision threshold on the VALIDATION slice only (no leak)."""
+    from sentisense.models.chronos_forecaster import load_chronos, make_chronos_forecast_fn
+    from sentisense.models.timesfm_forecaster import walk_forward_directions
+    ctx_grid = ctx_grid or _TIMESFM_CTX_GRID
+    p = price[price.index <= pd.Timestamp(cutoff)].sort_index()
+    returns = np.log(p / p.shift(1)).dropna()
+    n = len(returns); v0 = int(n * 0.70); v1 = int(n * 0.85)
+    val_index, test_index = returns.index[v0:v1], returns.index[v1:]
+    fn = make_chronos_forecast_fn(load_chronos())
+    out: dict = {}
+    s, lab = walk_forward_directions(returns, test_index, fn, context_len=max(ctx_grid))
+    if len(s):
+        out["Chronos-zeroshot"] = (s, lab, 0.5)
+    best = None
+    for cl in ctx_grid:
+        sv, lv = walk_forward_directions(returns, val_index, fn, context_len=cl)
+        if not len(sv) or len(np.unique(lv.to_numpy())) < 2:
+            continue
+        thr = _youden(lv.to_numpy(), sv.to_numpy())
+        auc = direction_metrics(sv.to_numpy(), lv.to_numpy(), thr)["roc_auc"]
+        if best is None or auc > best["auc"]:
+            best = {"cl": cl, "thr": thr, "auc": auc}
+    if best:
+        logger.info("Chronos HPO → context_len={} threshold={:.3f} (val ROC-AUC={:.4f})",
+                    best["cl"], best["thr"], best["auc"])
+        s, lab = walk_forward_directions(returns, test_index, fn, context_len=best["cl"])
+        if len(s):
+            out["Chronos-tuned"] = (s, lab, best["thr"])
+    return out
+
+
+def _tft(mt: pd.DataFrame, price: pd.Series, cutoff, *, n_trials: int = 8):
+    """TFT (pytorch-forecasting) with sentiment covariates → (scores, labels, threshold) or None."""
+    from sentisense.models.tft_forecaster import tft_directions
+    news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_"))]
+    cov = mt[news_cols] if news_cols else None
+    return tft_directions(price, cutoff, covariate_frame=cov, n_trials=n_trials)
+
+
 def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
                    ctx_grid=None) -> dict:
     """Return {form_name: (scores, labels, threshold)} for the TimesFM forms in this regime.
@@ -166,7 +233,9 @@ def _buy_and_hold(price: pd.Series, ref_index: pd.DatetimeIndex):
     return pd.Series(1.0, index=common), d.reindex(common)
 
 
-def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
+def build_leaderboard(regimes: list[str], use_timesfm: bool, *, use_seq: bool = True,
+                      use_chronos: bool = True, use_tft: bool = True,
+                      seq_trials: int = 20, tft_trials: int = 8) -> pd.DataFrame:
     from sentisense.features import build_datasets
     price = _load_price()
     rows: dict[tuple, dict] = {}
@@ -179,12 +248,17 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
         def add(model_name, scores, labels, threshold=0.5):
             rows[(model_name, regime)] = _row(scores, labels, price, threshold)
 
-        for name, fn in [("XGBoost", lambda: _xgb(mt)), ("LSTM", lambda: _lstm(ml))]:
+        # Classifier rows: XGBoost, LSTM (pre-tuned), + the HPO'd sequence zoo (GRU/TCN/PatchTST).
+        classifiers = [("XGBoost", lambda: _xgb(mt)), ("LSTM", lambda: _lstm(ml))]
+        if use_seq:
+            classifiers += [(arch, lambda a=arch: _seq(ml, a, tune_trials=seq_trials))
+                            for arch in ("GRU", "TCN", "PatchTST")]
+        for name, fn in classifiers:
             try:
                 s, lab = fn()
                 add(name, s, lab)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("{} [{}] skipped: {}", name, regime, str(exc)[:120])
+                logger.warning("{} [{}] skipped: {}", name, regime, str(exc)[:160])
 
         # Buy&Hold on the LSTM/XGB out-of-sample window (last 15% of mt).
         try:
@@ -200,6 +274,21 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
                     add(name, s, lab, thr)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("TimesFM [{}] skipped: {}", regime, str(exc)[:160])
+
+        if use_chronos:
+            try:
+                for name, (s, lab, thr) in _chronos_forms(price, cutoff).items():
+                    add(name, s, lab, thr)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Chronos [{}] skipped: {}", regime, str(exc)[:160])
+
+        if use_tft:
+            try:
+                res = _tft(mt, price, cutoff, n_trials=tft_trials)
+                if res:
+                    add("TFT", *res)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("TFT [{}] skipped: {}", regime, str(exc)[:160])
 
     board = pd.DataFrame(
         {f"{model} [{reg}]": {c: r.get(c) for c in _COLS} for (model, reg), r in rows.items()}
@@ -224,11 +313,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Cross-model × two-regime leaderboard.")
     parser.add_argument("--regimes", default="CUT,FULL", help="Comma list of CUT,FULL.")
     parser.add_argument("--no-timesfm", action="store_true", help="Skip TimesFM rows.")
-    parser.add_argument("--out", default="", help="Optional path to write the markdown table.")
+    parser.add_argument("--no-seq", action="store_true", help="Skip the sequence zoo (GRU/TCN/PatchTST).")
+    parser.add_argument("--no-chronos", action="store_true", help="Skip Chronos rows.")
+    parser.add_argument("--no-tft", action="store_true", help="Skip the TFT row.")
+    parser.add_argument("--seq-trials", type=int, default=20,
+                        help="Optuna trials for each new classifier (GRU/TCN/PatchTST) if untuned.")
+    parser.add_argument("--tft-trials", type=int, default=8, help="Optuna trials for TFT.")
+    parser.add_argument("--out", default="leaderboard.md", help="Path to write the markdown table.")
     args = parser.parse_args()
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
 
-    board = build_leaderboard(regimes, use_timesfm=not args.no_timesfm)
+    board = build_leaderboard(
+        regimes, use_timesfm=not args.no_timesfm, use_seq=not args.no_seq,
+        use_chronos=not args.no_chronos, use_tft=not args.no_tft,
+        seq_trials=args.seq_trials, tft_trials=args.tft_trials)
     md = _to_markdown(board)
 
     # The "ultimate" model = best out-of-sample ROC-AUC across the whole board
