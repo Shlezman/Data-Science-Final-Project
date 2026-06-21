@@ -17,6 +17,7 @@ Run (server-side; SENTISENSE_DATABASE_URL points at the native PG):
 from __future__ import annotations
 
 import argparse
+import re
 
 import numpy as np
 from loguru import logger
@@ -88,15 +89,38 @@ def ensure_table(engine, dim: int, *, rebuild: bool = False) -> None:
                           "ON headline_vectors (date)"))
 
 
-def build_index(engine) -> None:
-    """Build the HNSW cosine index once, after the bulk load (idempotent)."""
-    logger.info("Building HNSW index (cosine) — one-time, can take a while on millions of rows…")
+_MEM_RE = re.compile(r"^\d+(kB|MB|GB)$")
+
+
+def build_index(engine, *, method: str = "hnsw", mem: str = "512MB") -> None:
+    """Build the cosine index after the bulk load (idempotent), single-threaded.
+
+    Parallel index builds allocate ~maintenance_work_mem of POSIX shared memory per worker,
+    which overflows a container's small /dev/shm (the DiskFull error). We force
+    ``max_parallel_maintenance_workers = 0`` so the build uses regular memory only.
+    ``method``: 'hnsw' (best recall, heaviest), 'ivfflat' (lighter/faster build), 'none'."""
+    if method == "none":
+        logger.info("Index build skipped (--index none) — queries fall back to a brute-force scan.")
+        return
+    if not _MEM_RE.match(mem):
+        raise SystemExit(f"--index-mem {mem!r} invalid (expected like 512MB / 1GB).")
+    lists = None
+    if method == "ivfflat":
+        with engine.connect() as conn:
+            n = int(conn.execute(text("SELECT COUNT(*) FROM headline_vectors")).scalar())
+        lists = min(max(n // 1000, 100), 5000)   # pgvector rule-of-thumb
+    logger.info("Building {} index (cosine), single-threaded — can take a while on millions of rows…", method)
     with engine.begin() as conn:
-        conn.execute(text("SET maintenance_work_mem = '1GB'"))   # speeds the build (session-local)
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS idx_headline_vectors_hnsw "
-            "ON headline_vectors USING hnsw (embedding vector_cosine_ops)"))
-    logger.info("HNSW index ready.")
+        conn.execute(text("SET max_parallel_maintenance_workers = 0"))   # no /dev/shm DSM segment
+        conn.execute(text(f"SET maintenance_work_mem = '{mem}'"))        # validated above
+        if method == "ivfflat":
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_headline_vectors_ivf "
+                              f"ON headline_vectors USING ivfflat (embedding vector_cosine_ops) "
+                              f"WITH (lists = {lists})"))
+        else:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_headline_vectors_hnsw "
+                              "ON headline_vectors USING hnsw (embedding vector_cosine_ops)"))
+    logger.info("{} index ready.", method)
 
 
 def _vec_literal(blob: bytes, dim: int) -> str:
@@ -176,6 +200,11 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true", help="Report how many would load; write nothing.")
     p.add_argument("--query", type=int, default=0, help="Demo: print k nearest headlines to this headline_id.")
     p.add_argument("--k", type=int, default=5)
+    p.add_argument("--index", choices=["hnsw", "ivfflat", "none"], default="hnsw",
+                   help="ANN index to build after the load (ivfflat is lighter than hnsw).")
+    p.add_argument("--index-mem", default="512MB", help="maintenance_work_mem for the index build.")
+    p.add_argument("--index-only", action="store_true",
+                   help="Skip the fill (data already loaded) — just build the index.")
     args = p.parse_args()
 
     engine = get_engine()
@@ -192,11 +221,15 @@ def main() -> None:
                     _count_source(engine, args.model), args.model)
         return
 
+    if args.index_only:
+        build_index(engine, method=args.index, mem=args.index_mem)
+        return
+
     ensure_extension(engine)
     ensure_table(engine, dim, rebuild=args.rebuild)
     n = fill(engine, args.model, dim, batch=args.batch)
-    build_index(engine)   # HNSW after the bulk load
     logger.info("Loaded {:,} vectors into headline_vectors.", n)
+    build_index(engine, method=args.index, mem=args.index_mem)   # after the bulk load
 
 
 if __name__ == "__main__":
