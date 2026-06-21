@@ -108,7 +108,9 @@ def build_index(engine, *, method: str = "hnsw", mem: str = "512MB") -> None:
     if method == "ivfflat":
         with engine.connect() as conn:
             n = int(conn.execute(text("SELECT COUNT(*) FROM headline_vectors")).scalar())
-        lists = min(max(n // 1000, 100), 5000)   # pgvector rule-of-thumb
+        # pgvector heuristic: rows/1000 up to 1M, else sqrt(rows) (fewer lists ⇒ lower build mem).
+        lists = int(n ** 0.5) if n > 1_000_000 else min(max(n // 1000, 100), 5000)
+        lists = max(lists, 100)
     logger.info("Building {} index (cosine), single-threaded — can take a while on millions of rows…", method)
     with engine.begin() as conn:
         conn.execute(text("SET max_parallel_maintenance_workers = 0"))   # no /dev/shm DSM segment
@@ -202,7 +204,7 @@ def main() -> None:
     p.add_argument("--k", type=int, default=5)
     p.add_argument("--index", choices=["hnsw", "ivfflat", "none"], default="hnsw",
                    help="ANN index to build after the load (ivfflat is lighter than hnsw).")
-    p.add_argument("--index-mem", default="512MB", help="maintenance_work_mem for the index build.")
+    p.add_argument("--index-mem", default="2GB", help="maintenance_work_mem for the index build.")
     p.add_argument("--index-only", action="store_true",
                    help="Skip the fill (data already loaded) — just build the index.")
     args = p.parse_args()
