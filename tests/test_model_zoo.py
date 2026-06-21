@@ -49,12 +49,12 @@ def test_tft_make_frame_time_idx_and_dates():
 
 
 @pytest.mark.parametrize("arch,fixed,expect", [
-    ("TFT", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "hidden_size": 32,
+    ("TFT", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "enc": 30, "hidden_size": 32,
              "attention_head_size": 2, "hidden_continuous_size": 16},
      ["hidden_size", "attention_head_size", "hidden_continuous_size"]),
-    ("NHiTS", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "hidden_size": 128},
+    ("NHiTS", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "enc": 30, "hidden_size": 128},
      ["hidden_size"]),
-    ("NBEATS", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "widths": "32x512",
+    ("NBEATS", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "enc": 30, "widths": "32x512",
                 "backcast_loss_ratio": 0.1},
      ["widths", "backcast_loss_ratio"]),
 ])
@@ -63,8 +63,26 @@ def test_pf_param_space_per_arch(arch, fixed, expect):
     from sentisense.models.tft_forecaster import PF_ARCHS, _param_space
     assert set(PF_ARCHS) == {"TFT", "NHiTS", "NBEATS"}
     p = _param_space(optuna.trial.FixedTrial(fixed), arch)
-    assert {"learning_rate", "dropout", "batch_size"} <= set(p)   # shared knobs
-    assert all(k in p for k in expect)                            # arch-specific body
+    assert {"learning_rate", "dropout", "batch_size", "enc"} <= set(p)   # shared knobs + tunable context
+    assert all(k in p for k in expect)                                   # arch-specific body
+
+
+def test_xgb_hpo_returns_aligned_scores():
+    pytest.importorskip("optuna")
+    try:   # xgboost raises XGBoostError at IMPORT if its native lib (libomp) is missing
+        import xgboost as xgb
+        xgb.XGBClassifier(n_estimators=1).fit([[0.0], [1.0]], [0, 1])
+    except Exception as e:  # noqa: BLE001 — env issue (e.g. mac without libomp); not a code bug
+        pytest.skip(f"xgboost unavailable: {str(e)[:60]}")
+    from sentisense.models.xgb_hpo import xgb_hpo
+    rng = np.random.default_rng(0)
+    n = 120
+    df = pd.DataFrame(rng.normal(size=(n, 4)), columns=[f"f{i}" for i in range(4)])
+    df["Target"] = (df["f0"] + rng.normal(scale=0.5, size=n) > 0).astype(int)
+    params, scores, labels = xgb_hpo(df, n_trials=1)
+    assert isinstance(params, dict) and len(scores) == len(labels) > 0
+    assert scores.index.equals(labels.index)          # aligned to the test tail
+    assert ((scores >= 0) & (scores <= 1)).all()      # probabilities
 
 
 def test_nbeats_is_univariate_marker():

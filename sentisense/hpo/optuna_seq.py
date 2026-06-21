@@ -36,40 +36,43 @@ def study_name_for(arch: str) -> str:
 
 
 def _suggest(trial, arch: str, *, max_units: int, max_layers: int, window_choices: list[int]) -> dict:
-    """Arch-specific Optuna search space (shared optimisation/regularisation knobs + body)."""
+    """Arch-specific Optuna search space (shared optimisation/regularisation knobs + body).
+
+    Wide spaces — capacity caps scale with data size (passed in), the rest is broad to give
+    the search real room (deeper/wider nets, more pooling/optim choices)."""
     p = {
         "window": trial.suggest_categorical("window", window_choices),
-        "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64]),
-        "dropout": trial.suggest_float("dropout", 0.1, 0.6),
-        "weight_decay": trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
-        "grad_clip": trial.suggest_categorical("grad_clip", [0.5, 1.0, 5.0]),
-        "lr": trial.suggest_float("lr", 5e-5, 1e-2, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64, 128]),
+        "dropout": trial.suggest_float("dropout", 0.0, 0.7),
+        "weight_decay": trial.suggest_float("weight_decay", 1e-8, 1e-1, log=True),
+        "grad_clip": trial.suggest_categorical("grad_clip", [0.5, 1.0, 5.0, 10.0]),
+        "lr": trial.suggest_float("lr", 1e-5, 3e-2, log=True),
         "dense_act": trial.suggest_categorical("dense_act", ["relu", "elu", "tanh", "gelu"]),
-        "d_dense": trial.suggest_categorical("d_dense", [16, 32, 64]),
+        "d_dense": trial.suggest_categorical("d_dense", [16, 32, 64, 128]),
     }
     if arch in _RECURRENT:
         p |= {
-            "units": trial.suggest_int("units", 16, max_units, log=True),
+            "units": trial.suggest_int("units", 8, max_units, log=True),
             "n_layers": trial.suggest_int("n_layers", 1, max_layers),
-            "recurrent_dropout": trial.suggest_float("recurrent_dropout", 0.0, 0.5),
+            "recurrent_dropout": trial.suggest_float("recurrent_dropout", 0.0, 0.6),
             "bidirectional": trial.suggest_categorical("bidirectional", [False, True]),
             "pooling": trial.suggest_categorical("pooling", ["last", "avg", "max", "attn"]),
         }
     elif arch == "TCN":
         p |= {
-            "channels": trial.suggest_int("channels", 16, max_units, log=True),
-            "levels": trial.suggest_int("levels", 2, max_layers + 2),
-            "kernel_size": trial.suggest_categorical("kernel_size", [2, 3, 5]),
+            "channels": trial.suggest_int("channels", 8, max_units, log=True),
+            "levels": trial.suggest_int("levels", 2, max_layers + 4),
+            "kernel_size": trial.suggest_categorical("kernel_size", [2, 3, 5, 7]),
             "pooling": trial.suggest_categorical("pooling", ["last", "avg", "max"]),
         }
     elif arch == "PatchTST":
-        d_model = trial.suggest_categorical("d_model", [32, 64, 128])
+        d_model = trial.suggest_categorical("d_model", [32, 64, 128, 256])
         p |= {
             "d_model": d_model,
-            "n_heads": trial.suggest_categorical("n_heads", [2, 4]),
-            "depth": trial.suggest_int("depth", 1, max_layers),
-            "patch_len": trial.suggest_categorical("patch_len", [4, 8, 16]),
-            "stride": trial.suggest_categorical("stride", [2, 4, 8]),
+            "n_heads": trial.suggest_categorical("n_heads", [2, 4, 8]),   # all divide every d_model
+            "depth": trial.suggest_int("depth", 1, max_layers + 2),
+            "patch_len": trial.suggest_categorical("patch_len", [4, 8, 16, 24]),
+            "stride": trial.suggest_categorical("stride", [2, 4, 8, 12]),
         }
     return p
 
@@ -131,9 +134,9 @@ def run_seq_hpo(df: pd.DataFrame, arch: str, *, n_trials: int = OPTUNA_TRIALS,
     name = study_name or study_name_for(arch)
     dev, _ = _dev_test_split(df)
     small = len(dev) < LSTM_VIABILITY_MIN_DAYS
-    max_units = 96 if small else 192
-    max_layers = 2 if small else 3
-    window_choices = [5, 10, 15, 20] if small else [5, 10, 15, 20, 30]
+    max_units = 96 if small else 384
+    max_layers = 2 if small else 4
+    window_choices = [5, 10, 15, 20] if small else [5, 10, 15, 20, 30, 45, 60]
 
     def objective(trial) -> float:
         params = _suggest(trial, arch, max_units=max_units, max_layers=max_layers,

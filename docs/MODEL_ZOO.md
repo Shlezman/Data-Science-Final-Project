@@ -8,7 +8,7 @@ the rows are directly comparable. Each model is hyperparameter-tuned.
 ## Models + how each is tuned
 | Model | Type | Framing | HPO | Extra |
 |-------|------|---------|-----|-------|
-| XGBoost | gradient-boost | classifier | (existing fixed config) | `ml` |
+| XGBoost | gradient-boost | classifier | **Optuna** wide space (`--xgb-trials`) | `ml` |
 | LSTM | recurrent | classifier | pre-tuned Optuna study | `ml` |
 | **GRU** | recurrent | classifier | Optuna (`optuna_seq`, `--seq-trials`) | `ml` |
 | **TCN** | dilated causal conv | classifier | Optuna (`optuna_seq`) | `ml` |
@@ -36,8 +36,15 @@ uv sync --extra ml --extra tft --extra chronos      # torch zoo + TFT + Chronos
 uv run python scripts/pipeline_compare.py            # full board → leaderboard.md
 # subsets / budgets:
 uv run python scripts/pipeline_compare.py --no-timesfm --no-tft
-uv run python scripts/pipeline_compare.py --seq-trials 40 --tft-trials 15 --regimes CUT
+uv run python scripts/pipeline_compare.py --seq-trials 40 --pf-trials 15 --xgb-trials 60 --regimes CUT
 ```
+
+Search spaces are wide: the torch zoo (GRU/TCN/PatchTST) tunes window 5–60, capacity to
+384 units / depth 4, dropout 0–0.7, lr 1e-5–3e-2, pooling/activation/optim choices; the
+pytorch-forecasting models (TFT/N-HiTS/N-BEATS) tune a broadened capacity grid **plus the
+encoder/context length** (15–60); Chronos/TimesFM sweep context length 64–1024; XGBoost
+tunes a 9-dim space (trees/depth/lr/subsample/colsample/min-child/λ/α/γ). More trials =
+deeper search (`--seq-trials`, `--pf-trials`, `--xgb-trials`).
 The new classifier studies persist to the project DB (resumable). Each model is guarded —
 a missing extra or a runtime failure skips just that row, so a partial stack still produces
 a leaderboard. The "Ultimate model" line reports the best out-of-sample ROC-AUC.

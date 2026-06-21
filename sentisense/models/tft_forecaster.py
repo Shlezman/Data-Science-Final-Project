@@ -60,24 +60,25 @@ def _predicted_returns(model, training, frame: pd.DataFrame) -> pd.Series:
 
 
 def _param_space(trial, arch: str) -> dict:
-    """Per-architecture Optuna search space (shared optimisation knobs + arch body)."""
+    """Per-architecture Optuna search space (shared knobs + tunable encoder length + arch body)."""
     p = {
-        "learning_rate": trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True),
-        "dropout": trial.suggest_float("dropout", 0.0, 0.4),
-        "batch_size": trial.suggest_categorical("batch_size", [32, 64, 128]),
+        "learning_rate": trial.suggest_float("learning_rate", 5e-5, 3e-2, log=True),
+        "dropout": trial.suggest_float("dropout", 0.0, 0.5),
+        "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64, 128]),
+        "enc": trial.suggest_categorical("enc", [15, 20, 30, 45, 60]),   # encoder/context length
     }
     if arch == "TFT":
         p |= {
-            "hidden_size": trial.suggest_categorical("hidden_size", [16, 32, 64]),
+            "hidden_size": trial.suggest_categorical("hidden_size", [16, 32, 64, 128]),
             "attention_head_size": trial.suggest_categorical("attention_head_size", [1, 2, 4]),
-            "hidden_continuous_size": trial.suggest_categorical("hidden_continuous_size", [8, 16, 32]),
+            "hidden_continuous_size": trial.suggest_categorical("hidden_continuous_size", [8, 16, 32, 64]),
         }
     elif arch == "NHiTS":
-        p |= {"hidden_size": trial.suggest_categorical("hidden_size", [64, 128, 256])}
+        p |= {"hidden_size": trial.suggest_categorical("hidden_size", [64, 128, 256, 512])}
     elif arch == "NBEATS":
         p |= {
-            "widths": trial.suggest_categorical("widths", ["32x512", "16x256", "64x1024"]),
-            "backcast_loss_ratio": trial.suggest_categorical("backcast_loss_ratio", [0.0, 0.1, 1.0]),
+            "widths": trial.suggest_categorical("widths", ["16x256", "32x512", "64x1024", "128x2048"]),
+            "backcast_loss_ratio": trial.suggest_categorical("backcast_loss_ratio", [0.0, 0.1, 0.5, 1.0]),
         }
     return p
 
@@ -109,7 +110,8 @@ def _from_dataset(training, arch, params):
         return NHiTS.from_dataset(training, learning_rate=lr, hidden_size=params["hidden_size"],
                                   dropout=dr, loss=QuantileLoss(), optimizer="adam")
     if arch == "NBEATS":
-        widths = {"32x512": [32, 512], "16x256": [16, 256], "64x1024": [64, 1024]}[params["widths"]]
+        widths = {"16x256": [16, 256], "32x512": [32, 512], "64x1024": [64, 1024],
+                  "128x2048": [128, 2048]}[params["widths"]]
         return NBeats.from_dataset(training, learning_rate=lr, widths=widths, dropout=dr,
                                    backcast_loss_ratio=params["backcast_loss_ratio"], optimizer="adam")
     raise ValueError(f"unknown pytorch-forecasting arch {arch!r}")
@@ -121,6 +123,7 @@ def _train_one(frame, cov_cols, params, train_max_idx, *, arch, max_epochs, enc)
     from lightning.pytorch.callbacks import EarlyStopping
 
     pl.seed_everything(SEED, workers=True)
+    enc = int(params.get("enc", enc))   # encoder length is tunable (falls back to the default)
     training = _build_dataset(frame, cov_cols, arch, train_max_idx, enc)
     train_dl = training.to_dataloader(train=True, batch_size=params["batch_size"])
     trainer = pl.Trainer(max_epochs=max_epochs, accelerator="auto", devices=1, enable_progress_bar=False,

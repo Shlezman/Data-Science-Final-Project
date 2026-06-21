@@ -50,9 +50,9 @@ def _load_price() -> pd.Series:
     return ta["Price"].astype(str).str.replace(",", "", regex=False).astype(float)
 
 
-# TimesFM hyperparameter sweep: context length (its main knob — frozen foundation model,
-# so no architecture HPO). The decision threshold is tuned alongside, on validation only.
-_TIMESFM_CTX_GRID = [128, 256, 512]
+# Context-length sweep for the frozen foundation forecasters (TimesFM, Chronos) — their
+# main knob. The decision threshold is tuned alongside, on validation only. Wide grid.
+_TIMESFM_CTX_GRID = [64, 128, 256, 384, 512, 768, 1024]
 
 
 def _youden(labels: np.ndarray, scores: np.ndarray) -> float:
@@ -73,20 +73,11 @@ def _row(scores: pd.Series, labels: pd.Series, price: pd.Series, threshold: floa
 
 
 # ── per-model adapters → (scores, labels) on an out-of-sample window ──────────────
-def _xgb(mt: pd.DataFrame):
-    import xgboost as xgb
-    y = mt["Target"].to_numpy().astype(int)
-    X = mt.drop(columns=["Target"])
-    n = len(mt); ntr = int(n * 0.7); nva = int(n * 0.15)
-    Xtr, ytr = X.iloc[:ntr], y[:ntr]
-    Xte, yte = X.iloc[ntr + nva:], y[ntr + nva:]
-    pos = max(int(ytr.sum()), 1); neg = max(len(ytr) - int(ytr.sum()), 1)
-    clf = xgb.XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.03,
-                            subsample=0.8, colsample_bytree=0.8, scale_pos_weight=neg / pos,
-                            eval_metric="logloss", random_state=SEED, verbosity=0)
-    clf.fit(Xtr, ytr)
-    p = clf.predict_proba(Xte)[:, 1]
-    return pd.Series(p, index=Xte.index), pd.Series(yte, index=Xte.index)
+def _xgb(mt: pd.DataFrame, *, n_trials: int = 40):
+    """XGBoost via wide Optuna HPO (val-tuned, OOS test) → (scores, labels)."""
+    from sentisense.models.xgb_hpo import xgb_hpo
+    _, scores, labels = xgb_hpo(mt, n_trials=n_trials)
+    return scores, labels
 
 
 def _lstm(ml: pd.DataFrame):
@@ -238,7 +229,8 @@ def _buy_and_hold(price: pd.Series, ref_index: pd.DatetimeIndex):
 
 def build_leaderboard(regimes: list[str], use_timesfm: bool, *, use_seq: bool = True,
                       use_chronos: bool = True, use_tft: bool = True, use_nhits: bool = True,
-                      use_nbeats: bool = True, seq_trials: int = 20, pf_trials: int = 8) -> pd.DataFrame:
+                      use_nbeats: bool = True, seq_trials: int = 20, pf_trials: int = 8,
+                      xgb_trials: int = 40) -> pd.DataFrame:
     from sentisense.features import build_datasets
     price = _load_price()
     rows: dict[tuple, dict] = {}
@@ -252,7 +244,7 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, use_seq: bool = 
             rows[(model_name, regime)] = _row(scores, labels, price, threshold)
 
         # Classifier rows: XGBoost, LSTM (pre-tuned), + the HPO'd sequence zoo (GRU/TCN/PatchTST).
-        classifiers = [("XGBoost", lambda: _xgb(mt)), ("LSTM", lambda: _lstm(ml))]
+        classifiers = [("XGBoost", lambda: _xgb(mt, n_trials=xgb_trials)), ("LSTM", lambda: _lstm(ml))]
         if use_seq:
             classifiers += [(arch, lambda a=arch: _seq(ml, a, tune_trials=seq_trials))
                             for arch in ("GRU", "TCN", "PatchTST")]
@@ -328,6 +320,7 @@ def main() -> None:
                         help="Optuna trials for each new classifier (GRU/TCN/PatchTST) if untuned.")
     parser.add_argument("--pf-trials", "--tft-trials", dest="pf_trials", type=int, default=8,
                         help="Optuna trials for each pytorch-forecasting model (TFT/N-HiTS/N-BEATS).")
+    parser.add_argument("--xgb-trials", type=int, default=40, help="Optuna trials for XGBoost.")
     parser.add_argument("--out", default="leaderboard.md", help="Path to write the markdown table.")
     args = parser.parse_args()
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
@@ -336,7 +329,7 @@ def main() -> None:
         regimes, use_timesfm=not args.no_timesfm, use_seq=not args.no_seq,
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
-        seq_trials=args.seq_trials, pf_trials=args.pf_trials)
+        seq_trials=args.seq_trials, pf_trials=args.pf_trials, xgb_trials=args.xgb_trials)
     md = _to_markdown(board)
 
     # The "ultimate" model = best out-of-sample ROC-AUC across the whole board
