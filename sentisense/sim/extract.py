@@ -91,3 +91,27 @@ def sections_to_markdown(sections) -> str:
     """Join report sections (ordered) into one markdown string for explainability."""
     ordered = sorted(sections or [], key=lambda s: s.get("section_index", 0))
     return "\n\n".join(s.get("content", "") for s in ordered)
+
+
+def source_agent_coverage(sources, graph) -> dict:
+    """How many news sources surfaced as nodes in the MiroFish graph (source-as-agent check).
+
+    A source 'matches' if its name appears (case-insensitive substring, either direction)
+    in any graph node's id or label. This is the A3 verification seam: low coverage means
+    GraphRAG did not turn outlets into distinct entities, so the explicit-profile patch
+    (scripts/patch_mirofish_source_agents.py) is needed.
+
+    Args:
+        sources: Iterable of source names that went into the seed.
+        graph: A normalized graph dict ({"nodes": [...]}) from ``normalize_graph``.
+
+    Returns:
+        ``{n_sources, matched, coverage, missing}`` — coverage is matched/n_sources (0 if none).
+    """
+    srcs = [str(s).strip() for s in (sources or []) if str(s).strip()]
+    labels = [f"{n.get('id', '')} {n.get('label', '')}".lower()
+              for n in (graph or {}).get("nodes", [])]
+    missing = [s for s in srcs if not any(s.lower() in lab or (lab and lab in s.lower()) for lab in labels)]
+    matched = len(srcs) - len(missing)
+    return {"n_sources": len(srcs), "matched": matched,
+            "coverage": (matched / len(srcs)) if srcs else 0.0, "missing": missing}

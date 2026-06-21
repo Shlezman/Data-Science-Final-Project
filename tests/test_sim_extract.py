@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import math
 
-from sentisense.sim.extract import sections_to_markdown, votes_to_features
+from sentisense.sim.extract import (
+    sections_to_markdown,
+    source_agent_coverage,
+    votes_to_features,
+)
 from sentisense.sim.graph import normalize_graph
 
 
@@ -92,3 +96,14 @@ def test_normalize_graph_entities_relations_keys():
 def test_normalize_graph_empty():
     g = normalize_graph({})
     assert g["nodes"] == [] and g["edges"] == [] and g["meta"]["n_nodes"] == 0
+
+
+def test_source_agent_coverage_partial():
+    graph = {"nodes": [{"id": "n1", "label": "Globes"}, {"id": "n2", "label": "Bank of Israel"}]}
+    cov = source_agent_coverage(["Globes", "Calcalist"], graph)
+    assert cov["n_sources"] == 2 and cov["matched"] == 1
+    assert cov["coverage"] == 0.5 and cov["missing"] == ["Calcalist"]
+
+
+def test_source_agent_coverage_empty_sources():
+    assert source_agent_coverage([], {"nodes": []})["coverage"] == 0.0

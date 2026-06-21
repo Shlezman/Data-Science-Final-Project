@@ -16,15 +16,29 @@ from loguru import logger
 from sqlalchemy import text
 
 from sentisense.db import get_engine
-from sentisense.sim.config import DEFAULT_QUESTION, LLM_MODEL, SEED_LOOKBACK_DAYS
-from sentisense.sim.extract import sections_to_markdown, votes_to_features
+from sentisense.sim.config import (
+    DEFAULT_QUESTION,
+    LLM_MODEL,
+    SEED_FETCH_CAP,
+    SEED_LOOKBACK_DAYS,
+    SEED_PER_SOURCE_CAP,
+    SEED_TOTAL_CAP,
+    SIM_ENTITY_TYPES,
+    SOURCE_AS_AGENTS,
+)
+from sentisense.sim.extract import sections_to_markdown, source_agent_coverage, votes_to_features
 from sentisense.sim.graph import normalize_graph
 from sentisense.sim.miro_client import MiroError
 
-SEED_CAP = 250   # cap headlines per seed (bound MiroFish graph-build cost)
+# Preamble that nudges GraphRAG to treat each outlet as a distinct voice (source-as-agent).
+_SOURCE_PREAMBLE = (
+    "Israeli financial/general news headlines by SOURCE, {lo}..{hi}. Each source below is a "
+    "separate news outlet with its own editorial perspective and agenda — treat each as a "
+    "distinct voice, not as one consensus.\n"
+)
 
-# Take the NEWEST `cap` headlines in the window (most recent news carries the most signal
-# for a next-day prediction); they are re-sorted chronologically before seeding.
+# Fetch the NEWEST headlines in the window (recent news carries the most next-day signal);
+# balancing per-source happens in pandas so a prolific outlet can't dominate the seed.
 _SEED_SQL = text("""
     SELECT date::date AS date, source, hour, headline
     FROM raw_headlines
@@ -59,17 +73,45 @@ def seed_window(sim_date, lookback: int = SEED_LOOKBACK_DAYS) -> tuple[pd.Timest
     return hi - pd.Timedelta(days=lookback), hi
 
 
-def build_sim_seed(engine, sim_date, *, lookback: int = SEED_LOOKBACK_DAYS, cap: int = SEED_CAP):
-    """Build the leak-safe seed text (headlines in (T-lookback, T]) + a stable hash + count."""
+def _balance_by_source(df: pd.DataFrame, *, per_source_cap: int, total_cap: int) -> pd.DataFrame:
+    """Keep the newest ``per_source_cap`` rows per source, then the newest ``total_cap`` overall."""
+    newest_first = df.sort_values(["date", "hour"], ascending=False)
+    capped = newest_first.groupby("source", group_keys=False, sort=False).head(per_source_cap)
+    return capped.head(total_cap)
+
+
+def _compose_seed(df: pd.DataFrame, lo, hi) -> str:
+    """Render the (already balanced) frame as the seed text — per-source sections if enabled."""
+    if not SOURCE_AS_AGENTS:
+        lines = [f"[{r.date} {r.source} {r.hour}] {r.headline}" for r in df.itertuples()]
+        return f"Israeli news headlines, {lo.date()}..{hi.date()}:\n" + "\n".join(lines)
+
+    parts = [_SOURCE_PREAMBLE.format(lo=lo.date(), hi=hi.date())]
+    by_volume = df.groupby("source", sort=False).size().sort_values(ascending=False)
+    for source in by_volume.index:                       # densest outlet first
+        rows = df[df["source"] == source].sort_values(["date", "hour"])
+        parts.append(f"\n### Source: {source} ({len(rows)} headlines)")
+        parts.extend(f"[{r.date} {r.hour}] {r.headline}" for r in rows.itertuples())
+    return "\n".join(parts)
+
+
+def build_sim_seed(engine, sim_date, *, lookback: int = SEED_LOOKBACK_DAYS,
+                   per_source_cap: int = SEED_PER_SOURCE_CAP, total_cap: int = SEED_TOTAL_CAP):
+    """Build the leak-safe seed text (headlines in (T-lookback, T]) + a stable hash + count.
+
+    Headlines are balanced per source (newest ``per_source_cap`` each, then newest
+    ``total_cap`` overall) so a high-volume outlet can't dominate, then rendered as one
+    section per source so each outlet surfaces as a distinct voice in the MiroFish graph.
+    """
     lo, hi = seed_window(sim_date, lookback)
     with engine.connect() as conn:
-        df = pd.read_sql(_SEED_SQL, conn, params={"lo": lo.date(), "hi": hi.date(), "cap": cap})
-    if len(df) == cap:
-        logger.warning("seed for {} hit SEED_CAP={} — older headlines in window dropped", hi.date(), cap)
-    df = df.sort_values(["date", "hour"]).reset_index(drop=True)   # newest-N fetched DESC → chronological
-    lines = [f"[{r.date} {r.source} {r.hour}] {r.headline}" for r in df.itertuples()]
-    seed = f"Israeli news headlines, {lo.date()}..{hi.date()}:\n" + "\n".join(lines)
-    return seed, hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16], len(df)
+        df = pd.read_sql(_SEED_SQL, conn, params={"lo": lo.date(), "hi": hi.date(), "cap": SEED_FETCH_CAP})
+    if len(df) == SEED_FETCH_CAP:
+        logger.warning("seed for {} hit FETCH_CAP={} before balancing — window is very dense", hi.date(), SEED_FETCH_CAP)
+    df = _balance_by_source(df, per_source_cap=per_source_cap, total_cap=total_cap)
+    seed = _compose_seed(df, lo, hi)
+    sources = df["source"].drop_duplicates().tolist()
+    return seed, hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16], len(df), sources
 
 
 def run_day(client, engine, sim_date, *, seed_idx: int = 0,
@@ -77,7 +119,7 @@ def run_day(client, engine, sim_date, *, seed_idx: int = 0,
             question: str = DEFAULT_QUESTION):
     """Run one causal day-sim; cache features + graph + report. None if skipped/empty."""
     d = pd.Timestamp(sim_date).date()
-    seed, seed_hash, n = build_sim_seed(engine, sim_date, lookback=lookback)
+    seed, seed_hash, n, sources = build_sim_seed(engine, sim_date, lookback=lookback)
     if n == 0:
         logger.warning("no headlines ≤ {} (lookback {}d) — skip", d, lookback)
         return None
@@ -86,12 +128,16 @@ def run_day(client, engine, sim_date, *, seed_idx: int = 0,
             logger.info("cached {} seed#{} — skip", d, seed_idx)
             return None
 
-    art = client.run_day_sim(seed, question, name=f"ta125_{d}_{seed_idx}")
+    art = client.run_day_sim(seed, question, name=f"ta125_{d}_{seed_idx}",
+                             entity_types=SIM_ENTITY_TYPES)
     sim_id = art.get("simulation_id")
     if not sim_id:   # PK of _graph/_report — a null here would silently corrupt the cache
         raise MiroError(f"MiroFish returned no simulation_id for {d} seed#{seed_idx}")
     feats = votes_to_features(art["votes"])
     g = normalize_graph(art["graph"])
+    cov = source_agent_coverage(sources, g)   # A3 seam: did outlets become graph entities?
+    logger.info("source→graph coverage {}/{} ({:.0%}){}", cov["matched"], cov["n_sources"],
+                cov["coverage"], f" — missing {cov['missing'][:5]}" if cov["missing"] else "")
     with engine.begin() as conn:
         conn.execute(_INS_SIM, {
             "sim_date": d, "seed_hash": seed_hash, "llm_model": llm_model, "seed_idx": seed_idx,

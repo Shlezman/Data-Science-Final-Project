@@ -102,8 +102,11 @@ class MiroClient:
         })
         return self._data(body).get("simulation_id") or body.get("simulation_id")
 
-    def prepare(self, simulation_id: str) -> None:
-        self._json("POST", "/api/simulation/prepare", json={"simulation_id": simulation_id})
+    def prepare(self, simulation_id: str, *, entity_types: list[str] | None = None) -> None:
+        payload = {"simulation_id": simulation_id}
+        if entity_types:   # scope entity→profile generation toward source/org entities
+            payload["entity_types"] = entity_types
+        self._json("POST", "/api/simulation/prepare", json=payload)
         self._poll("/api/simulation/prepare/status",
                    payload={"simulation_id": simulation_id},
                    done=lambda b: self._data(b).get("status") in ("ready", "done", "completed", "success"),
@@ -138,7 +141,8 @@ class MiroClient:
                                      json={"simulation_id": simulation_id, "question": question}))
 
     # ── high-level: one full causal day-sim ───────────────────────────────────
-    def run_day_sim(self, seed_text: str, question: str, *, name: str) -> dict:
+    def run_day_sim(self, seed_text: str, question: str, *, name: str,
+                    entity_types: list[str] | None = None) -> dict:
         """Run the whole pipeline for one decision day; return the raw artifacts.
 
         Returns ``{simulation_id, graph_id, report_id, sections, graph, votes}`` — the
@@ -149,7 +153,7 @@ class MiroClient:
         project_id = self.create_project(seed_text, name)
         graph_id = self.build_graph(project_id)
         simulation_id = self.create_simulation(project_id, graph_id)
-        self.prepare(simulation_id)
+        self.prepare(simulation_id, entity_types=entity_types)
         self.start(simulation_id)
         report_id = self.generate_report(simulation_id)
         out = {
