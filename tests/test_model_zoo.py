@@ -48,6 +48,30 @@ def test_tft_make_frame_time_idx_and_dates():
     assert cols == ["mean_x"] and len(didx) == len(frame)        # one return dropped (diff)
 
 
+@pytest.mark.parametrize("arch,fixed,expect", [
+    ("TFT", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "hidden_size": 32,
+             "attention_head_size": 2, "hidden_continuous_size": 16},
+     ["hidden_size", "attention_head_size", "hidden_continuous_size"]),
+    ("NHiTS", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "hidden_size": 128},
+     ["hidden_size"]),
+    ("NBEATS", {"learning_rate": 1e-3, "dropout": 0.2, "batch_size": 64, "widths": "32x512",
+                "backcast_loss_ratio": 0.1},
+     ["widths", "backcast_loss_ratio"]),
+])
+def test_pf_param_space_per_arch(arch, fixed, expect):
+    optuna = pytest.importorskip("optuna")
+    from sentisense.models.tft_forecaster import PF_ARCHS, _param_space
+    assert set(PF_ARCHS) == {"TFT", "NHiTS", "NBEATS"}
+    p = _param_space(optuna.trial.FixedTrial(fixed), arch)
+    assert {"learning_rate", "dropout", "batch_size"} <= set(p)   # shared knobs
+    assert all(k in p for k in expect)                            # arch-specific body
+
+
+def test_nbeats_is_univariate_marker():
+    from sentisense.models.tft_forecaster import _UNIVARIATE
+    assert "NBEATS" in _UNIVARIATE and "TFT" not in _UNIVARIATE
+
+
 def test_chronos_load_raises_without_dep():
     pytest.importorskip  # noqa: B018
     try:

@@ -13,17 +13,21 @@ the rows are directly comparable. Each model is hyperparameter-tuned.
 | **GRU** | recurrent | classifier | Optuna (`optuna_seq`, `--seq-trials`) | `ml` |
 | **TCN** | dilated causal conv | classifier | Optuna (`optuna_seq`) | `ml` |
 | **PatchTST** | patched transformer | classifier | Optuna (`optuna_seq`) | `ml` |
-| **TFT** | temporal fusion transformer | forecast→direction | Optuna (`--tft-trials`) | `ml` + `tft` |
+| **TFT** | temporal fusion transformer | forecast→direction | Optuna (`--pf-trials`) | `ml` + `tft` |
+| **N-HiTS** | hierarchical interpolation | forecast→direction | Optuna (`--pf-trials`) | `ml` + `tft` |
+| **N-BEATS** | basis-expansion (univariate) | forecast→direction | Optuna (`--pf-trials`) | `ml` + `tft` |
 | **Chronos** | foundation (Amazon) | forecast→direction | context-len + threshold sweep | `ml` + `chronos` |
 | TimesFM | foundation (Google) | forecast→direction | context-len + threshold sweep | manual install |
 | Buy&Hold | benchmark | — | — | — |
 
 Classifiers (GRU/TCN/PatchTST) train on the per-source sequence dataset (`ml`) reusing the
 existing windowed, train-only-scaled loaders + generic Optuna HPO in
-`sentisense/hpo/optuna_seq.py` (the well-tuned LSTM path is untouched). TFT/Chronos/TimesFM
-forecast the next-day log-return and map sign→direction with a validation-tuned threshold,
-reusing the leak-safe `walk_forward_directions` bridge. All HPO selects on a validation
-slice only; the test tail stays sacred.
+`sentisense/hpo/optuna_seq.py` (the well-tuned LSTM path is untouched). TFT / N-HiTS /
+N-BEATS (pytorch-forecasting, shared adapter in `tft_forecaster.py`; N-BEATS is univariate
+so covariates are dropped) and Chronos / TimesFM forecast the next-day log-return and map
+sign→direction with a validation-tuned threshold (the foundation models reuse the leak-safe
+`walk_forward_directions` bridge). All HPO selects on a validation slice only; the test tail
+stays sacred.
 
 ## Run (server-side, GPU)
 ```bash
