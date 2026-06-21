@@ -35,6 +35,36 @@ def test_votes_unparseable_is_nan():
     assert f["n_votes"] == 0 and math.isnan(f["dir_score"]) and math.isnan(f["confidence"])
 
 
+def test_votes_unanimous_neutral_is_confident():
+    # all-neutral ⇒ agents AGREE on neutral: dir 0, but confidence 1 (not collapsed to 0)
+    f = votes_to_features([{"stance": "neutral"}, {"stance": "hold"}, {"stance": "flat"}])
+    assert f["dir_score"] == 0.0 and f["confidence"] == 1.0 and f["disagreement"] == 0.0
+
+
+def test_votes_even_split_is_low_confidence():
+    # genuine +1/-1 split ⇒ dir 0 AND confidence 0 (distinct from unanimous-neutral above)
+    f = votes_to_features([{"stance": "up"}, {"stance": "down"}])
+    assert f["dir_score"] == 0.0 and f["confidence"] == 0.0 and f["disagreement"] > 0
+
+
+def test_stance_neutral_qualifier_overrides_directional():
+    # "bullish mixed signals" carries a neutral qualifier → neutral, not +1
+    f = votes_to_features([{"answer": "bullish mixed signals"}])
+    assert f["dir_score"] == 0.0
+
+
+def test_normalize_graph_label_is_not_type():
+    n = normalize_graph({"nodes": [{"label": "Netanyahu"}]})["nodes"][0]
+    assert n["type"] == "entity"      # label text must NOT leak into `type`
+    assert n["label"] == "Netanyahu" and n["id"] == "Netanyahu"   # label is a valid id source
+
+
+def test_normalize_graph_idless_node_positional_fallback():
+    n = normalize_graph({"nodes": [{"weight": 5}]})["nodes"][0]
+    assert n["id"] == "node_0"        # no id-like key → positional fallback, not "None"
+    assert n["type"] == "entity"
+
+
 def test_sections_ordered_markdown():
     secs = [{"section_index": 2, "content": "B"}, {"section_index": 1, "content": "A"}]
     assert sections_to_markdown(secs) == "A\n\nB"

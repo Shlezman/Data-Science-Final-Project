@@ -34,7 +34,7 @@ def _j(v):
 
 def _to_graph(row) -> dict:
     return {"sim_run_id": row.sim_run_id, "date": str(row.sim_date), "graph_id": row.graph_id,
-            "nodes": _j(row.nodes), "edges": _j(row.edges), "meta": _j(row.meta)}
+            "nodes": _j(row.nodes) or [], "edges": _j(row.edges) or [], "meta": _j(row.meta) or {}}
 
 
 def graph_for_date(date, engine=None) -> dict | None:

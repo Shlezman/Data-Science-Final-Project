@@ -19,14 +19,17 @@ from sentisense.db import get_engine
 from sentisense.sim.config import DEFAULT_QUESTION, LLM_MODEL, SEED_LOOKBACK_DAYS
 from sentisense.sim.extract import sections_to_markdown, votes_to_features
 from sentisense.sim.graph import normalize_graph
+from sentisense.sim.miro_client import MiroError
 
 SEED_CAP = 250   # cap headlines per seed (bound MiroFish graph-build cost)
 
+# Take the NEWEST `cap` headlines in the window (most recent news carries the most signal
+# for a next-day prediction); they are re-sorted chronologically before seeding.
 _SEED_SQL = text("""
     SELECT date::date AS date, source, hour, headline
     FROM raw_headlines
     WHERE date > :lo AND date <= :hi AND headline IS NOT NULL AND headline <> ''
-    ORDER BY date, hour
+    ORDER BY date DESC, hour DESC
     LIMIT :cap
 """)
 _HAS_SQL = text("SELECT 1 FROM narrative_sim WHERE sim_date=:d AND seed_hash=:h "
@@ -61,6 +64,9 @@ def build_sim_seed(engine, sim_date, *, lookback: int = SEED_LOOKBACK_DAYS, cap:
     lo, hi = seed_window(sim_date, lookback)
     with engine.connect() as conn:
         df = pd.read_sql(_SEED_SQL, conn, params={"lo": lo.date(), "hi": hi.date(), "cap": cap})
+    if len(df) == cap:
+        logger.warning("seed for {} hit SEED_CAP={} — older headlines in window dropped", hi.date(), cap)
+    df = df.sort_values(["date", "hour"]).reset_index(drop=True)   # newest-N fetched DESC → chronological
     lines = [f"[{r.date} {r.source} {r.hour}] {r.headline}" for r in df.itertuples()]
     seed = f"Israeli news headlines, {lo.date()}..{hi.date()}:\n" + "\n".join(lines)
     return seed, hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16], len(df)
@@ -81,9 +87,11 @@ def run_day(client, engine, sim_date, *, seed_idx: int = 0,
             return None
 
     art = client.run_day_sim(seed, question, name=f"ta125_{d}_{seed_idx}")
+    sim_id = art.get("simulation_id")
+    if not sim_id:   # PK of _graph/_report — a null here would silently corrupt the cache
+        raise MiroError(f"MiroFish returned no simulation_id for {d} seed#{seed_idx}")
     feats = votes_to_features(art["votes"])
     g = normalize_graph(art["graph"])
-    sim_id = art["simulation_id"]
     with engine.begin() as conn:
         conn.execute(_INS_SIM, {
             "sim_date": d, "seed_hash": seed_hash, "llm_model": llm_model, "seed_idx": seed_idx,

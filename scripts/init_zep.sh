@@ -40,9 +40,12 @@ if [ -f Makefile ] && grep -q '^build:' Makefile; then make build; else go build
 
 echo "==> config (local Postgres + local Gemma-4 embedder; NO external services)"
 # CONFIRM: key names against the cloned repo's config schema (config.yaml / zep.yaml / env).
+# Auth is off (local-only dummy key), so the bind host MUST stay loopback — otherwise any
+# host on the network could call Zep unauthenticated. CONFIRM the host key name per version.
 cat > "$ZEP_DIR/.env.local" <<EOF
 ZEP_STORE_TYPE=postgres
 ZEP_STORE_POSTGRES_DSN=${ZEP_PG_DSN}
+ZEP_SERVER_HOST=127.0.0.1
 ZEP_SERVER_PORT=${ZEP_PORT}
 ZEP_LLM_SERVICE=openai
 ZEP_LLM_OPENAI_ENDPOINT=${LLM_BASE_URL}
@@ -50,6 +53,7 @@ ZEP_LLM_MODEL=${LLM_MODEL}
 ZEP_OPENAI_API_KEY=local
 ZEP_AUTH_REQUIRED=false
 EOF
+chmod 600 "$ZEP_DIR/.env.local"   # config file holds the DSN — not world-readable
 
 echo "==> launch (nohup → ${LOG})"
 ZEP_BIN="$([ -x ./zep ] && echo ./zep || ls ./bin/zep 2>/dev/null || echo ./zep)"

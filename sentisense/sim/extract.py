@@ -32,12 +32,12 @@ def _stance(x) -> float | None:
             pass
         toks = set(re.findall(r"[a-z]+", t))
         bull, bear, neut = toks & _BULL, toks & _BEAR, toks & _NEUTRAL
-        if bull and not bear:
-            return 1.0
-        if bear and not bull:
-            return -1.0
-        if neut or (bull and bear):
+        if neut or (bull and bear):   # a neutral qualifier ("bullish mixed") wins over one-sided
             return 0.0
+        if bull:
+            return 1.0
+        if bear:
+            return -1.0
     return None
 
 
@@ -81,7 +81,7 @@ def votes_to_features(votes) -> dict:
                 "disagreement": float("nan"), "n_votes": 0}
     a = np.asarray(stances, dtype=float)
     dir_score = float(a.mean())
-    maj = 1.0 if dir_score >= 0 else -1.0
+    maj = np.sign(dir_score)   # 0 when consensus is neutral — unanimous-neutral ⇒ confidence 1
     confidence = float((np.sign(a) == maj).mean())
     return {"dir_score": dir_score, "confidence": confidence,
             "disagreement": float(a.std()), "n_votes": int(a.size)}

@@ -40,11 +40,11 @@ def normalize_graph(raw) -> dict:
     edges_raw = _first_list(raw, ("edges", "relations", "links", "relationships", "triples"))
 
     nodes = []
-    for n in nodes_raw:
-        nid = _get(n, "id", "uuid", "name", "label") if isinstance(n, dict) else n
+    for i, n in enumerate(nodes_raw):
+        nid = (_get(n, "id", "uuid", "name", "label") if isinstance(n, dict) else n) or f"node_{i}"
         nodes.append({
             "id": str(nid),
-            "type": str(_get(n, "type", "label", "category", "entity_type", default="entity")),
+            "type": str(_get(n, "type", "category", "entity_type", default="entity")),
             "label": str(_get(n, "name", "label", "title", "summary", default=nid)),
             "attrs": n if isinstance(n, dict) else {},
         })
