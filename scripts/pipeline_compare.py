@@ -148,7 +148,8 @@ def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
     return out
 
 
-def _pf(arch: str, mt: pd.DataFrame, price: pd.Series, cutoff, *, n_trials: int = 8):
+def _pf(arch: str, mt: pd.DataFrame, price: pd.Series, cutoff, *, n_trials: int = 8,
+        max_epochs: int = 30):
     """pytorch-forecasting model (TFT/NHiTS/NBEATS) → (scores, labels, threshold) or None.
 
     Passes sentiment news features as covariates (NBEATS is univariate → covariates dropped
@@ -156,7 +157,8 @@ def _pf(arch: str, mt: pd.DataFrame, price: pd.Series, cutoff, *, n_trials: int 
     from sentisense.models.tft_forecaster import pf_directions
     news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_"))]
     cov = mt[news_cols] if news_cols else None
-    return pf_directions(arch, price, cutoff, covariate_frame=cov, n_trials=n_trials)
+    return pf_directions(arch, price, cutoff, covariate_frame=cov, n_trials=n_trials,
+                         max_epochs=max_epochs)
 
 
 def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
@@ -230,7 +232,7 @@ def _buy_and_hold(price: pd.Series, ref_index: pd.DatetimeIndex):
 def build_leaderboard(regimes: list[str], use_timesfm: bool, *, use_seq: bool = True,
                       use_chronos: bool = True, use_tft: bool = True, use_nhits: bool = True,
                       use_nbeats: bool = True, seq_trials: int = 20, pf_trials: int = 8,
-                      xgb_trials: int = 40) -> pd.DataFrame:
+                      pf_epochs: int = 30, xgb_trials: int = 40) -> pd.DataFrame:
     from sentisense.features import build_datasets
     price = _load_price()
     rows: dict[tuple, dict] = {}
@@ -282,7 +284,7 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, use_seq: bool = 
             if not on:
                 continue
             try:
-                res = _pf(arch, mt, price, cutoff, n_trials=pf_trials)
+                res = _pf(arch, mt, price, cutoff, n_trials=pf_trials, max_epochs=pf_epochs)
                 if res:
                     add(arch, *res)
             except Exception as exc:  # noqa: BLE001
@@ -320,6 +322,8 @@ def main() -> None:
                         help="Optuna trials for each new classifier (GRU/TCN/PatchTST) if untuned.")
     parser.add_argument("--pf-trials", "--tft-trials", dest="pf_trials", type=int, default=8,
                         help="Optuna trials for each pytorch-forecasting model (TFT/N-HiTS/N-BEATS).")
+    parser.add_argument("--pf-epochs", type=int, default=30,
+                        help="Max epochs per pytorch-forecasting fit (lower = faster smoke checks).")
     parser.add_argument("--xgb-trials", type=int, default=40, help="Optuna trials for XGBoost.")
     parser.add_argument("--out", default="leaderboard.md", help="Path to write the markdown table.")
     args = parser.parse_args()
@@ -329,7 +333,8 @@ def main() -> None:
         regimes, use_timesfm=not args.no_timesfm, use_seq=not args.no_seq,
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
-        seq_trials=args.seq_trials, pf_trials=args.pf_trials, xgb_trials=args.xgb_trials)
+        seq_trials=args.seq_trials, pf_trials=args.pf_trials, pf_epochs=args.pf_epochs,
+        xgb_trials=args.xgb_trials)
     md = _to_markdown(board)
 
     # The "ultimate" model = best out-of-sample ROC-AUC across the whole board
