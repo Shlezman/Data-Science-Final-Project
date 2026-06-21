@@ -13,12 +13,15 @@ enables the extension, creates `headline_vectors`, and fills it from the embeddi
 - Source data: `headline_embeddings` (float32 BYTEA) ⋈ `raw_headlines` (date/source/text).
 
 ## One-time: install the extension (no Docker)
-The `vector` extension must exist in the PG server. On the box:
+The `vector` extension must exist in the PG server. Match YOUR PG major (drop `sudo` if
+already root, e.g. in a container):
 ```bash
-# Ubuntu/Debian (match your PG major, e.g. 16):
-sudo apt-get install -y postgresql-16-pgvector
-# or from source:
-git clone https://github.com/pgvector/pgvector && cd pgvector && make && sudo make install
+PGVER=$(psql "$SENTISENSE_DATABASE_URL" -tAc 'SHOW server_version_num' | cut -c1-2)   # e.g. 14
+apt-get update && apt-get install -y postgresql-${PGVER}-pgvector
+# if no apt package, build from source:
+apt-get install -y build-essential postgresql-server-dev-${PGVER} git
+git clone --depth 1 https://github.com/pgvector/pgvector /tmp/pgvector
+make -C /tmp/pgvector && make -C /tmp/pgvector install
 ```
 The script then runs `CREATE EXTENSION IF NOT EXISTS vector` itself.
 

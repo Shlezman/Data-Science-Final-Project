@@ -26,11 +26,14 @@ from sentisense.config import EMBED_MODEL
 from sentisense.db import get_engine
 
 _EXT_HINT = (
-    "pgvector extension unavailable. Install it on the box (no Docker):\n"
-    "  Ubuntu/Debian:  sudo apt-get install -y postgresql-$(pg_lsclusters -h | awk '{print $1; exit}')-pgvector\n"
-    "                  (or postgresql-16-pgvector for PG 16)\n"
-    "  from source:    git clone https://github.com/pgvector/pgvector && cd pgvector && make && sudo make install\n"
-    "  then re-run this script (it issues CREATE EXTENSION vector)."
+    "pgvector extension unavailable in this Postgres. Install it for YOUR PG major (drop\n"
+    "`sudo` if already root), then re-run (this script issues CREATE EXTENSION vector):\n"
+    "  PGVER=$(psql -tAc 'SHOW server_version_num' | cut -c1-2)   # e.g. 14\n"
+    "  apt-get update && apt-get install -y postgresql-${PGVER}-pgvector\n"
+    "  # if no apt package — build from source:\n"
+    "  apt-get install -y build-essential postgresql-server-dev-${PGVER} git\n"
+    "  git clone --depth 1 https://github.com/pgvector/pgvector /tmp/pgvector\n"
+    "  make -C /tmp/pgvector && make -C /tmp/pgvector install"
 )
 
 
@@ -104,7 +107,14 @@ _INSERT = text(
     """)
 
 
-def fill(engine, model: str, dim: int, *, batch: int = 2000, dry_run: bool = False) -> int:
+def _count_source(engine, model: str) -> int:
+    """How many cached embeddings exist for ``model`` (upper bound on what a fill would load)."""
+    with engine.connect() as conn:
+        return int(conn.execute(
+            text("SELECT COUNT(*) FROM headline_embeddings WHERE embed_model=:m"), {"m": model}).scalar())
+
+
+def fill(engine, model: str, dim: int, *, batch: int = 2000) -> int:
     """Copy not-yet-loaded embeddings into headline_vectors (keyset paginated). Returns count."""
     last, written = -1, 0
     while True:
@@ -113,9 +123,6 @@ def fill(engine, model: str, dim: int, *, batch: int = 2000, dry_run: bool = Fal
         if not rows:
             break
         last = int(rows[-1].headline_id)
-        if dry_run:
-            written += len(rows)
-            continue
         payload = [{"headline_id": int(r.headline_id), "embed_model": model, "date": r.date,
                     "source": r.source, "headline": r.headline,
                     "embedding": _vec_literal(r.embedding, dim)} for r in rows]
@@ -161,11 +168,15 @@ def main() -> None:
             logger.info("  {:.4f}  [{}] {} — {}", r["distance"], r["date"], r["source"], r["headline"][:80])
         return
 
-    if not args.dry_run:
-        ensure_extension(engine)
-        ensure_table(engine, dim, rebuild=args.rebuild)
-    n = fill(engine, args.model, dim, batch=args.batch, dry_run=args.dry_run)
-    logger.info("{} {:,} vectors into headline_vectors.", "Would load" if args.dry_run else "Loaded", n)
+    if args.dry_run:   # read-only: don't touch the (maybe-absent) target table
+        logger.info("Would load up to {:,} vectors (cached embeddings for {}).",
+                    _count_source(engine, args.model), args.model)
+        return
+
+    ensure_extension(engine)
+    ensure_table(engine, dim, rebuild=args.rebuild)
+    n = fill(engine, args.model, dim, batch=args.batch)
+    logger.info("Loaded {:,} vectors into headline_vectors.", n)
 
 
 if __name__ == "__main__":
