@@ -70,36 +70,37 @@ def _row(scores: pd.Series, labels: pd.Series, price: pd.Series, threshold: floa
 
 
 # ── per-model adapters → (scores, labels) on an out-of-sample window ──────────────
-def _xgb(mt: pd.DataFrame):
-    import xgboost as xgb
-    y = mt["Target"].to_numpy().astype(int)
-    X = mt.drop(columns=["Target"])
-    n = len(mt); ntr = int(n * 0.7); nva = int(n * 0.15)
-    Xtr, ytr = X.iloc[:ntr], y[:ntr]
-    Xte, yte = X.iloc[ntr + nva:], y[ntr + nva:]
-    pos = max(int(ytr.sum()), 1); neg = max(len(ytr) - int(ytr.sum()), 1)
-    clf = xgb.XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.03,
-                            subsample=0.8, colsample_bytree=0.8, scale_pos_weight=neg / pos,
-                            eval_metric="logloss", random_state=SEED, verbosity=0)
-    clf.fit(Xtr, ytr)
-    p = clf.predict_proba(Xte)[:, 1]
-    return pd.Series(p, index=Xte.index), pd.Series(yte, index=Xte.index)
+def _xgb(mt: pd.DataFrame, *, n_trials: int = 30):
+    """XGBoost via compact Optuna HPO (val-tuned, OOS test) → (scores, labels)."""
+    from sentisense.models.xgb_hpo import xgb_hpo
+    _, scores, labels = xgb_hpo(mt, n_trials=n_trials)
+    return scores, labels
 
 
-def _lstm(ml: pd.DataFrame):
+def _lstm(ml: pd.DataFrame, *, study_name: str | None = None, tune_trials: int = 0):
+    """LSTM holdout from a tuned study. If the named study has no trials and tune_trials>0,
+    run HPO first (used for the sim-augmented '+sim' study)."""
     import optuna
     from sentisense.db import get_connection_url
-    from sentisense.hpo import final_holdout_eval
+    from sentisense.hpo import final_holdout_eval, run_hpo
     from sentisense.hpo.optuna_lstm import STUDY_SCORES, has_completed_trials
-    study = optuna.load_study(study_name=STUDY_SCORES, storage=get_connection_url())
-    if not has_completed_trials(study):
-        raise RuntimeError("score-LSTM study has no completed trials — run tune first.")
+    name = study_name or STUDY_SCORES
+    try:
+        study = optuna.load_study(study_name=name, storage=get_connection_url())
+    except Exception:  # noqa: BLE001
+        study = None
+    if study is None or not has_completed_trials(study):
+        if tune_trials > 0:
+            logger.info("LSTM study '{}' empty — running HPO ({} trials)…", name, tune_trials)
+            study = run_hpo(ml, n_trials=tune_trials, study_name=name)
+        else:
+            raise RuntimeError(f"LSTM study '{name}' has no trials — run tune (or pass tune_trials).")
     _, proba, labels = final_holdout_eval(ml, study.best_params, n_seeds=2)
     return proba, labels
 
 
 def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
-                   ctx_grid=None) -> dict:
+                   ctx_grid=None, sim_cov: pd.DataFrame | None = None) -> dict:
     """Return {form_name: (scores, labels, threshold)} for the TimesFM forms in this regime.
 
     Includes ``TimesFM-tuned`` — the best (context_len, decision-threshold) chosen on a
@@ -146,6 +147,9 @@ def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
         logger.info("TimesFM HPO → ultimate: context_len={} threshold={:.3f} (val ROC-AUC={:.4f})",
                     best["context_len"], best["threshold"], best["val_auc"])
         run("TimesFM-tuned", context_len=best["context_len"], threshold=best["threshold"])
+        if sim_cov is not None and not sim_cov.empty:
+            run("TimesFM-tuned+sim", covariate_frame=sim_cov,
+                context_len=best["context_len"], threshold=best["threshold"])
 
     finetune_on_train(model, train_returns)   # best-effort; falls back to zero-shot
     run("TimesFM-finetuned")
@@ -166,8 +170,10 @@ def _buy_and_hold(price: pd.Series, ref_index: pd.DatetimeIndex):
     return pd.Series(1.0, index=common), d.reindex(common)
 
 
-def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
+def build_leaderboard(regimes: list[str], use_timesfm: bool, *, with_sim: bool = False,
+                      xgb_trials: int = 30, lstm_sim_trials: int = 0) -> pd.DataFrame:
     from sentisense.features import build_datasets
+    from sentisense.hpo.optuna_lstm import STUDY_SCORES
     price = _load_price()
     rows: dict[tuple, dict] = {}
 
@@ -175,16 +181,32 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
         cutoff = _REGIMES[regime]
         logger.info("══ regime {} (cutoff {}) ══", regime, pd.Timestamp(cutoff).date())
         mt, ml = build_datasets(cutoff=cutoff)
+        mt_sim = ml_sim = None
+        sim_cov = None
+        if with_sim:
+            mt_sim, ml_sim = build_datasets(cutoff=cutoff, with_sim=True)
+            sim_cols = [c for c in mt_sim.columns if c.startswith("sim_")]
+            if not sim_cols:
+                logger.warning("with-sim: no sim_* features (run run_miro_window.py) — skipping +sim rows.")
+                mt_sim = ml_sim = None
+            else:
+                sim_cov = mt_sim[sim_cols]
 
         def add(model_name, scores, labels, threshold=0.5):
             rows[(model_name, regime)] = _row(scores, labels, price, threshold)
 
-        for name, fn in [("XGBoost", lambda: _xgb(mt)), ("LSTM", lambda: _lstm(ml))]:
+        # Base models (XGBoost is now Optuna-HPO'd; LSTM from its tuned study).
+        base = [("XGBoost", lambda: _xgb(mt, n_trials=xgb_trials)), ("LSTM", lambda: _lstm(ml))]
+        if mt_sim is not None:   # +sim arm (HPO re-run on the sim-augmented features)
+            base += [("XGBoost+sim", lambda: _xgb(mt_sim, n_trials=xgb_trials)),
+                     ("LSTM+sim", lambda: _lstm(ml_sim, study_name=f"{STUDY_SCORES}_sim",
+                                                tune_trials=lstm_sim_trials))]
+        for name, fn in base:
             try:
                 s, lab = fn()
                 add(name, s, lab)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("{} [{}] skipped: {}", name, regime, str(exc)[:120])
+                logger.warning("{} [{}] skipped: {}", name, regime, str(exc)[:140])
 
         # Buy&Hold on the LSTM/XGB out-of-sample window (last 15% of mt).
         try:
@@ -196,7 +218,7 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool) -> pd.DataFrame:
 
         if use_timesfm:
             try:
-                for name, (s, lab, thr) in _timesfm_forms(mt, ml, price, cutoff).items():
+                for name, (s, lab, thr) in _timesfm_forms(mt, ml, price, cutoff, sim_cov=sim_cov).items():
                     add(name, s, lab, thr)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("TimesFM [{}] skipped: {}", regime, str(exc)[:160])
@@ -224,11 +246,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Cross-model × two-regime leaderboard.")
     parser.add_argument("--regimes", default="CUT,FULL", help="Comma list of CUT,FULL.")
     parser.add_argument("--no-timesfm", action="store_true", help="Skip TimesFM rows.")
+    parser.add_argument("--with-sim", action="store_true",
+                        help="Add MiroFish sim-augmented rows (XGBoost+sim, LSTM+sim, TimesFM-tuned+sim).")
+    parser.add_argument("--xgb-trials", type=int, default=30, help="XGBoost Optuna trials.")
+    parser.add_argument("--lstm-sim-trials", type=int, default=0,
+                        help="If >0, HPO the LSTM+sim study with this many trials (else expects it pre-tuned).")
     parser.add_argument("--out", default="", help="Optional path to write the markdown table.")
     args = parser.parse_args()
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
 
-    board = build_leaderboard(regimes, use_timesfm=not args.no_timesfm)
+    board = build_leaderboard(regimes, use_timesfm=not args.no_timesfm, with_sim=args.with_sim,
+                              xgb_trials=args.xgb_trials, lstm_sim_trials=args.lstm_sim_trials)
     md = _to_markdown(board)
 
     # The "ultimate" model = best out-of-sample ROC-AUC across the whole board

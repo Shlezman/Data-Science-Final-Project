@@ -365,12 +365,55 @@ def chronological_split(df: pd.DataFrame, *, val_frac: float = 0.15, test_frac: 
             X_te.astype(np.float32), y_te, X_tr.shape[1])
 
 
+_SIM_SQL = text(
+    """
+    SELECT sim_date::date AS date,
+           AVG(dir_score)    AS sim_dir_score,
+           AVG(confidence)   AS sim_confidence,
+           AVG(disagreement) AS sim_disagreement,
+           AVG(n_agents)     AS sim_n_agents,
+           COUNT(*)          AS sim_seeds
+    FROM narrative_sim
+    WHERE sim_date <= :cutoff
+    GROUP BY sim_date
+    ORDER BY sim_date
+    """
+)
+
+
+def build_sim_features(engine=None, cutoff=CUTOFF_DATE) -> pd.DataFrame:
+    """Daily MiroFish narrative-sim features (mean over seeds), date-indexed, ≤ cutoff.
+
+    Columns ``sim_dir_score / sim_confidence / sim_disagreement / sim_n_agents /
+    sim_seeds``. The sim for day T is seeded on news ≤ T (causal), so it's a leak-safe
+    day-T feature. Empty frame if the table/rows are absent (run scripts/run_miro_window.py).
+    """
+    engine = engine or get_engine()
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(_SIM_SQL, conn, params={"cutoff": cutoff})
+    except Exception as exc:  # noqa: BLE001 — table may not exist before the migration/run
+        logger.warning("narrative_sim unavailable ({}) — no sim features.", str(exc)[:90])
+        return pd.DataFrame()
+    if df.empty:
+        logger.warning("No MiroFish sim rows ≤ {} — run scripts/run_miro_window.py first.",
+                       pd.Timestamp(cutoff).date())
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"])
+    out = df.set_index("date")[["sim_dir_score", "sim_confidence", "sim_disagreement",
+                                "sim_n_agents", "sim_seeds"]]
+    logger.info("Sim features: {} days ({} … {})", len(out),
+                out.index.min().date(), out.index.max().date())
+    return out
+
+
 def build_datasets(
     engine=None,
     *,
     top_n: int = TOP_N_SOURCES,
     extra_daily_features: pd.DataFrame | None = None,
     cutoff=CUTOFF_DATE,
+    with_sim: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Assemble the (daily-mean, per-source) modeling frames, cutoff-applied.
 
@@ -382,11 +425,19 @@ def build_datasets(
             frames before feature engineering. Must already be leakage-safe.
         cutoff: Upper date bound (default = project cutoff). Pass a later date to
             build over more history (full-history comparison pipeline).
+        with_sim: If True, join the MiroFish daily sim features (``sim_*``) as an extra
+            leak-safe layer → every forecaster (XGBoost/LSTM/TimesFM) sees them. Days
+            without a cached sim get 0 (filled in _finalize).
 
     Returns:
         ``(mt, ml)`` — daily-mean and per-source frames, each with a ``Target`` column.
     """
     engine = engine or get_engine()
+    if with_sim:
+        sim = build_sim_features(engine, cutoff)
+        if not sim.empty:
+            extra_daily_features = (sim if extra_daily_features is None
+                                    else extra_daily_features.join(sim, how="outer"))
     raw = _load_raw_scores(engine, cutoff)
     daily_mean = _build_daily_mean(raw)
     per_source = _build_per_source_wide(raw, top_n)
