@@ -48,12 +48,20 @@ def _active_dim(engine, model: str) -> int:
 
 
 def ensure_extension(engine) -> None:
-    """Enable the pgvector extension (needs it installed in the PG server)."""
+    """Enable the pgvector extension. No-op if already present (so a non-superuser run works
+    after a superuser has created it once — CREATE EXTENSION needs superuser/owner)."""
+    with engine.connect() as conn:
+        if conn.execute(text("SELECT 1 FROM pg_extension WHERE extname='vector'")).first():
+            return
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    except Exception as exc:  # noqa: BLE001 — extension binary not installed / no privilege
-        raise SystemExit(f"{_EXT_HINT}\n  (error: {str(exc)[:160]})")
+    except Exception as exc:  # noqa: BLE001 — binary not installed, or not superuser
+        raise SystemExit(
+            f"{_EXT_HINT}\n  (error: {str(exc)[:160]})\n"
+            "  Already built the .so but hit a privilege error? Create it once as the PG\n"
+            "  superuser, then re-run this (it will skip the create):\n"
+            "    su postgres -c \"psql -d sentisense -c 'CREATE EXTENSION IF NOT EXISTS vector;'\"")
 
 
 def ensure_table(engine, dim: int, *, rebuild: bool = False) -> None:
