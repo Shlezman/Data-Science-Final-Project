@@ -145,6 +145,7 @@ def backfill(
     max_days: int | None,
     start_before: datetime | None,
     *,
+    batch_size: int = 5,
     dry_run: bool = False,
 ) -> None:
     """
@@ -228,7 +229,8 @@ def backfill(
         )
 
         # ── Scrape via subprocess (reused helper) ───────────────────────
-        rows = scrape_dates(end_date=cursor_date, days=batch_window, pages=pages)
+        rows = scrape_dates(end_date=cursor_date, days=batch_window, pages=pages,
+                            batch_size=batch_size)
         total_scraped += len(rows)
         total_days += batch_window
 
@@ -361,6 +363,14 @@ def main() -> None:
         help="Max pages to scrape per date (default: 100).",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=5,
+        help="Dates scraped CONCURRENTLY per scraper batch (one Firefox each, "
+             "default: 5). Raise for more parallelism; also raise --window so there "
+             "are enough dates per iteration to fill the larger batch.",
+    )
+    parser.add_argument(
         "--max-days",
         type=int,
         default=None,
@@ -397,6 +407,8 @@ def main() -> None:
         parser.error("--max-days must be >= 1 when provided")
     if args.pages < 1:
         parser.error("--pages must be >= 1")
+    if args.batch_size < 1:
+        parser.error("--batch-size must be >= 1")
 
     today_il = datetime.now(_IL_TZ).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
@@ -415,6 +427,7 @@ def main() -> None:
         pages=args.pages,
         max_days=args.max_days,
         start_before=args.start_before,
+        batch_size=args.batch_size,
         dry_run=args.dry_run,
     )
 

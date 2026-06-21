@@ -151,20 +151,17 @@ def scrape_dates(
             "uv not found — install from https://docs.astral.sh/uv/"
         ) from exc
 
-    # Read the scraper output
+    # Read the scraper output (get_data writes the single headlines.csv once).
     output_file = SCRAPER_DIR.parent / "headlines.csv"
     if not output_file.exists():
         logger.warning("Scraper produced no output file")
         return []
 
     # Always remove the temp file, even if CSV parsing raises — otherwise a
-    # malformed output would be re-read on the next cron run as "new data".
+    # malformed output would be re-read on the next run as "new data".
     try:
         with open(output_file, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-
-        # Apply column renames
+            rows = list(csv.DictReader(f))
         for row in rows:
             if "importance_level" in row and "popularity" not in row:
                 row["popularity"] = row.pop("importance_level")

@@ -1,0 +1,71 @@
+[project]
+name = "sentisense"
+version = "0.1.0"
+description = "SentiSense Phase 2&3 — leakage-safe financial modeling, baselines, and LSTM HPO over Hebrew-news sentiment features for next-day TA-125 direction."
+requires-python = ">=3.12"
+# Base deps cover Phase 0 (connection) + Phase 1 ingest/coverage + Phase 2 introspection.
+# Heavier ML/embedding deps are optional extras so early gates don't force a giant install.
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "loguru>=0.7.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Phase 3 finance loaders (yfinance markets + Frankfurter FX). Install: uv sync --extra finance
+finance = [
+    "yfinance>=0.2.40",
+    "requests>=2.31",
+]
+# Phase 5 baselines + Phase 6 LSTM HPO. Install: uv sync --extra ml
+ml = [
+    "scikit-learn>=1.4",
+    "xgboost>=2.0",
+    "lightgbm>=4.3",
+    "catboost>=1.2",
+    "optuna>=3.6",
+    "matplotlib>=3.8",
+    "statsmodels>=0.14",
+    "torch>=2.2",
+]
+
+# Test deps. Install: uv sync --extra dev
+dev = [
+    "pytest>=8.0",
+]
+# Phase 4 narrative-detection embeddings (Hebrew-aware). Install: uv sync --extra embed
+embed = [
+    "sentence-transformers>=3.0",
+    "torch>=2.2",
+]
+# Analysis/explainability notebook (sentisense_analysis.ipynb).
+# Install: uv sync --extra ml --extra notebook  (matplotlib/sklearn/xgboost/optuna come from `ml`)
+# Licenses: seaborn BSD-3, shap MIT, umap-learn BSD-3, jupyterlab BSD-3 — all permissive.
+notebook = [
+    "jupyterlab>=4.0",
+    "seaborn>=0.13",
+    "shap>=0.44",
+    "umap-learn>=0.5",
+]
+# TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
+# PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
+# it into the project venv on the server with one of:
+#   uv pip install 'timesfm[torch]'                                   # once on PyPI
+#   git clone https://github.com/google-research/timesfm && uv pip install -e '.[torch]'
+# Checkpoint google/timesfm-2.5-200m-pytorch downloads via huggingface_hub (HF_TOKEN env
+# if gated — never hardcoded). sentisense.models.timesfm_forecaster lazy-imports it and
+# fails fast with this hint if absent.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sentisense*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

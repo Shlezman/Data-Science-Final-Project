@@ -134,6 +134,13 @@ FORCE_COMPLETIONS_API: bool = _env("FORCE_COMPLETIONS_API", "false").lower() in 
 # want to push batch size past 60.
 COMPLETIONS_MAX_TOKENS: int = int(_env("COMPLETIONS_MAX_TOKENS", "16384"))
 
+# Model context window (max_model_len). Single source of truth for keeping
+# prompt + output within the server limit — vLLM rejects any request where
+# prompt_tokens + max_tokens > max_model_len with a 400. Default 128K
+# (Mistral-Small-4 on vLLM); set SENTISENSE_CONTEXT_WINDOW=32768 for 32K models,
+# 8192 for Ollama qwen2.5:14b.
+CONTEXT_WINDOW: int = int(_env("CONTEXT_WINDOW", "131072"))
+
 
 # ---------------------------------------------------------------------------
 # Retry / resilience settings
