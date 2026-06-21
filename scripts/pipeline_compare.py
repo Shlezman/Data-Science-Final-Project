@@ -1,10 +1,17 @@
-"""One leaderboard across every forecaster × both data regimes — out-of-sample only.
+"""One leaderboard: every model × data-type × regime — out-of-sample only.
 
-Rows : Buy&Hold · XGBoost · LSTM · GRU · TCN · PatchTST · TFT · NHiTS · NBEATS ·
-       Chronos-{zeroshot,tuned} · TimesFM-{zeroshot,tuned,finetuned,cov,nocov}  (per regime)
-Regimes : CUT  (data ≤ 2023-10-07, the regime-break guard)
-          FULL (entire timeline)              ← the CUT-vs-FULL delta is the deliverable
+Grid axes:
+  Models     : XGBoost · LSTM · GRU · TCN · PatchTST (classifiers) ·
+               TFT · NHiTS · NBEATS · Chronos · TimesFM (forecasters) · Buy&Hold
+  Data-type  : scored (LLM news scores) · embedded (e5 centroid) · fused (both)
+               — classifiers run on all three; forecasters use scored covariates +
+               univariate (the 768-d centroid is NOT fed as TFT covariates).
+  Regime     : CUT (≤ 2023-10-07, the regime-break guard) · FULL (entire timeline)
 Cols : ROC-AUC · F1 · MCC · accuracy · cumulative return · Sharpe · max drawdown
+
+Row labels: ``model [datatype/regime]`` (classifiers) / ``model [cov=…/regime]`` /
+``model [regime]`` (forecasters). Every cell self-reports ran/skipped in the Coverage
+section of leaderboard.md — no silent skips.
 
 Every model is reduced to a uniform ``(scores: Series, labels: Series)`` on its held-out
 window, then scored by the EXISTING ``metrics_at`` + the shared backtest helpers — no
@@ -92,16 +99,16 @@ def _lstm(ml: pd.DataFrame):
     return proba, labels
 
 
-def _seq(ml: pd.DataFrame, arch: str, *, tune_trials: int = 0):
-    """GRU/TCN/PatchTST classifier via the generic arch-parametric Optuna HPO → (scores, labels).
+def _seq(ml: pd.DataFrame, arch: str, *, tune_trials: int = 0, study_name: str | None = None):
+    """LSTM/GRU/TCN/PatchTST classifier via the generic arch-parametric Optuna HPO → (scores, labels).
 
-    Resumes a per-arch study from the project DB; if none exists and ``tune_trials`` > 0,
-    runs HPO first (these architectures have no pre-tuned study, unlike LSTM)."""
+    Resumes the study ``study_name`` (unique per data-type×regime cell) from the project DB;
+    if none exists and ``tune_trials`` > 0, runs HPO first."""
     import optuna
     from sentisense.db import get_connection_url
     from sentisense.hpo.optuna_lstm import has_completed_trials
     from sentisense.hpo.optuna_seq import run_seq_hpo, seq_holdout_eval, study_name_for
-    name = study_name_for(arch)
+    name = study_name or study_name_for(arch)
     try:
         study = optuna.load_study(study_name=name, storage=get_connection_url())
     except Exception:  # noqa: BLE001
@@ -148,15 +155,13 @@ def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
     return out
 
 
-def _pf(arch: str, mt: pd.DataFrame, price: pd.Series, cutoff, *, n_trials: int = 8,
-        max_epochs: int = 30):
+def _pf(arch: str, price: pd.Series, cutoff, *, cov: pd.DataFrame | None = None,
+        n_trials: int = 8, max_epochs: int = 30):
     """pytorch-forecasting model (TFT/NHiTS/NBEATS) → (scores, labels, threshold) or None.
 
-    Passes sentiment news features as covariates (NBEATS is univariate → covariates dropped
-    inside ``pf_directions``)."""
+    ``cov`` is the covariate frame for this cell (None = univariate; NBEATS always
+    univariate inside ``pf_directions``)."""
     from sentisense.models.tft_forecaster import pf_directions
-    news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_"))]
-    cov = mt[news_cols] if news_cols else None
     return pf_directions(arch, price, cutoff, covariate_frame=cov, n_trials=n_trials,
                          max_epochs=max_epochs)
 
@@ -229,78 +234,126 @@ def _buy_and_hold(price: pd.Series, ref_index: pd.DatetimeIndex):
     return pd.Series(1.0, index=common), d.reindex(common)
 
 
-def build_leaderboard(regimes: list[str], use_timesfm: bool, *, use_seq: bool = True,
-                      use_chronos: bool = True, use_tft: bool = True, use_nhits: bool = True,
-                      use_nbeats: bool = True, seq_trials: int = 20, pf_trials: int = 8,
-                      pf_epochs: int = 30, xgb_trials: int = 40) -> pd.DataFrame:
-    from sentisense.features import build_datasets
+_DATA_TYPES = ("scored", "embedded", "fused")
+_SEQ_ARCHS = ("LSTM", "GRU", "TCN", "PatchTST")
+
+
+def _cov_cols(df: pd.DataFrame, dtype: str) -> pd.DataFrame | None:
+    """Forecaster covariate frame for ``dtype`` (low-dim signal cols only — never the 768-d
+    embedding centroid, which would blow up a TFT). Returns None if no usable cols."""
+    if dtype == "scored":
+        cols = [c for c in df.columns if c.startswith(("mean_", "ix_"))]
+    else:                       # embedded/fused → the cheap embedding summaries, not embc_*
+        cols = [c for c in df.columns if c in ("emb_dispersion", "emb_count")]
+    return df[cols] if cols else None
+
+
+def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA_TYPES,
+                      use_seq: bool = True, use_chronos: bool = True, use_tft: bool = True,
+                      use_nhits: bool = True, use_nbeats: bool = True, seq_trials: int = 20,
+                      pf_trials: int = 8, pf_epochs: int = 30, xgb_trials: int = 40):
+    """Grid: model × data-type (scored/embedded/fused) × regime (CUT/FULL).
+
+    Returns ``(board, status)`` — the metrics DataFrame and a per-cell ran/skip map so the
+    run self-reports what executed (no more silent skips). Classifiers run on every data
+    type; forecasters use scored covariates (+ univariate) — the 768-d embedding centroid is
+    NOT fed as covariates (it would overwhelm a TFT)."""
+    from sentisense.features import build_datasets, build_embedding_dataset, build_fused_dataset
     price = _load_price()
-    rows: dict[tuple, dict] = {}
+    rows: dict[str, dict] = {}
+    status: dict[str, str] = {}
+
+    def add(label, scores, labels, threshold=0.5):
+        rows[label] = _row(scores, labels, price, threshold)
+        status[label] = "ran"
+
+    def attempt(label, thunk):
+        """Run a cell; record ran/skip. thunk → (s,lab) | (s,lab,thr) | {name:(s,lab,thr)} | None."""
+        try:
+            res = thunk()
+        except Exception as exc:  # noqa: BLE001 — one cell must not sink the grid
+            status[label] = f"skip: {str(exc)[:130]}"
+            logger.warning("{} skipped: {}", label, str(exc)[:160])
+            return
+        if res is None:
+            status[label] = "skip: no output"
+            logger.warning("{} skipped: no output", label)
+        elif isinstance(res, dict):
+            for nm, (s, lab, thr) in res.items():
+                add(nm, s, lab, thr)
+        elif len(res) == 3:
+            add(label, res[0], res[1], res[2])
+        else:
+            add(label, res[0], res[1])
 
     for regime in regimes:
         cutoff = _REGIMES[regime]
         logger.info("══ regime {} (cutoff {}) ══", regime, pd.Timestamp(cutoff).date())
-        mt, ml = build_datasets(cutoff=cutoff)
 
-        def add(model_name, scores, labels, threshold=0.5):
-            rows[(model_name, regime)] = _row(scores, labels, price, threshold)
+        # Build each data-type's frames for this regime: dtype → (tabular_df, sequence_df).
+        frames: dict[str, tuple] = {}
+        if "scored" in data_types:
+            mt, ml = build_datasets(cutoff=cutoff)
+            frames["scored"] = (mt, ml)
+        if "embedded" in data_types:
+            emb = build_embedding_dataset(cutoff=cutoff)
+            if emb.empty:
+                status[f"[embedded/{regime}]"] = "skip: no embeddings cached (run embed stage)"
+            else:
+                frames["embedded"] = (emb, emb)
+        if "fused" in data_types:
+            fused = build_fused_dataset(cutoff=cutoff)
+            if fused.empty:
+                status[f"[fused/{regime}]"] = "skip: no embeddings cached (run embed stage)"
+            else:
+                frames["fused"] = (fused, fused)
 
-        # Classifier rows: XGBoost, LSTM (pre-tuned), + the HPO'd sequence zoo (GRU/TCN/PatchTST).
-        classifiers = [("XGBoost", lambda: _xgb(mt, n_trials=xgb_trials)), ("LSTM", lambda: _lstm(ml))]
-        if use_seq:
-            classifiers += [(arch, lambda a=arch: _seq(ml, a, tune_trials=seq_trials))
-                            for arch in ("GRU", "TCN", "PatchTST")]
-        for name, fn in classifiers:
-            try:
-                s, lab = fn()
-                add(name, s, lab)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("{} [{}] skipped: {}", name, regime, str(exc)[:160])
+        # ── Classifiers: every model × every available data type ──────────────────
+        for dtype, (tab, seq) in frames.items():
+            sfx = f"{dtype}/{regime}"
+            attempt(f"XGBoost [{sfx}]", lambda tab=tab: _xgb(tab, n_trials=xgb_trials))
+            if use_seq:
+                for arch in _SEQ_ARCHS:
+                    study = f"sentisense_{arch.lower()}_{dtype}_{regime.lower()}"
+                    attempt(f"{arch} [{sfx}]",
+                            lambda seq=seq, arch=arch, study=study:
+                                _seq(seq, arch, tune_trials=seq_trials, study_name=study))
 
-        # Buy&Hold on the LSTM/XGB out-of-sample window (last 15% of mt).
-        try:
-            ref = mt.index[int(len(mt) * 0.85):]
-            s, lab = _buy_and_hold(price, ref)
-            add("Buy&Hold", s, lab)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Buy&Hold [{}] skipped: {}", regime, str(exc)[:120])
+        # Buy&Hold benchmark (data-type-independent) on the last-15% window.
+        if "scored" in frames:
+            mt = frames["scored"][0]
+            attempt(f"Buy&Hold [{regime}]",
+                    lambda mt=mt: _buy_and_hold(price, mt.index[int(len(mt) * 0.85):]))
 
-        if use_timesfm:
-            try:
-                for name, (s, lab, thr) in _timesfm_forms(mt, ml, price, cutoff).items():
-                    add(name, s, lab, thr)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("TimesFM [{}] skipped: {}", regime, str(exc)[:160])
-
+        # ── Forecasters (price→direction); scored covariates + univariate, per regime ──
+        scored = frames.get("scored")
+        if use_timesfm and scored is not None:
+            attempt(f"TimesFM [{regime}]",
+                    lambda: _timesfm_forms(scored[0], scored[1], price, cutoff))
         if use_chronos:
-            try:
-                for name, (s, lab, thr) in _chronos_forms(price, cutoff).items():
-                    add(name, s, lab, thr)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Chronos [{}] skipped: {}", regime, str(exc)[:160])
-
-        # pytorch-forecasting forecasters (forecast→direction), each Optuna-HPO'd + guarded.
-        for arch, on in [("TFT", use_tft), ("NHiTS", use_nhits), ("NBEATS", use_nbeats)]:
+            attempt(f"Chronos [{regime}]", lambda: _chronos_forms(price, cutoff))
+        cov = _cov_cols(scored[0], "scored") if scored is not None else None
+        for arch, on in [("TFT", use_tft), ("NHiTS", use_nhits)]:
             if not on:
                 continue
-            try:
-                res = _pf(arch, mt, price, cutoff, n_trials=pf_trials, max_epochs=pf_epochs)
-                if res:
-                    add(arch, *res)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("{} [{}] skipped: {}", arch, regime, str(exc)[:160])
+            attempt(f"{arch} [cov=scored/{regime}]",
+                    lambda arch=arch: _pf(arch, price, cutoff, cov=cov, n_trials=pf_trials, max_epochs=pf_epochs))
+            attempt(f"{arch} [cov=none/{regime}]",
+                    lambda arch=arch: _pf(arch, price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
+        if use_nbeats:
+            attempt(f"NBEATS [{regime}]",
+                    lambda: _pf("NBEATS", price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
 
-    board = pd.DataFrame(
-        {f"{model} [{reg}]": {c: r.get(c) for c in _COLS} for (model, reg), r in rows.items()}
-    ).T
-    return board[_COLS]
+    board = pd.DataFrame({label: {c: r.get(c) for c in _COLS} for label, r in rows.items()}).T
+    board = board[_COLS] if not board.empty else board
+    return board, status
 
 
 def _to_markdown(board: pd.DataFrame) -> str:
     """GitHub-flavoured markdown table — no `tabulate` dependency (pandas.to_markdown needs it)."""
     df = board.round(4)
     cols = [str(c) for c in df.columns]
-    head = "| model [regime] | " + " | ".join(cols) + " |"
+    head = "| model [datatype/regime] | " + " | ".join(cols) + " |"
     sep = "|" + "---|" * (len(cols) + 1)
     out = [head, sep]
     for idx, row in df.iterrows():
@@ -312,6 +365,8 @@ def _to_markdown(board: pd.DataFrame) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Cross-model × two-regime leaderboard.")
     parser.add_argument("--regimes", default="CUT,FULL", help="Comma list of CUT,FULL.")
+    parser.add_argument("--data-types", default="scored,embedded,fused",
+                        help="Comma list of scored,embedded,fused (the feature-set axis).")
     parser.add_argument("--no-timesfm", action="store_true", help="Skip TimesFM rows.")
     parser.add_argument("--no-seq", action="store_true", help="Skip the sequence zoo (GRU/TCN/PatchTST).")
     parser.add_argument("--no-chronos", action="store_true", help="Skip Chronos rows.")
@@ -328,17 +383,16 @@ def main() -> None:
     parser.add_argument("--out", default="leaderboard.md", help="Path to write the markdown table.")
     args = parser.parse_args()
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
+    data_types = tuple(d.strip() for d in args.data_types.split(",") if d.strip() in _DATA_TYPES)
 
-    board = build_leaderboard(
-        regimes, use_timesfm=not args.no_timesfm, use_seq=not args.no_seq,
+    board, status = build_leaderboard(
+        regimes, use_timesfm=not args.no_timesfm, data_types=data_types, use_seq=not args.no_seq,
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
         seq_trials=args.seq_trials, pf_trials=args.pf_trials, pf_epochs=args.pf_epochs,
         xgb_trials=args.xgb_trials)
-    md = _to_markdown(board)
+    md = _to_markdown(board) if not board.empty else "_(no cells produced output)_"
 
-    # The "ultimate" model = best out-of-sample ROC-AUC across the whole board
-    # (TimesFM-tuned carries its swept context_len/threshold — logged during the run).
     best_line = ""
     if not board.empty and board["roc_auc"].notna().any():
         bi = board["roc_auc"].astype(float).idxmax()
@@ -347,10 +401,21 @@ def main() -> None:
                           if c in board.columns and pd.notna(board.loc[bi, c]))
         best_line = f"**Ultimate model (best out-of-sample ROC-AUC):** `{bi}` — {parts}"
 
-    logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}\n\n{}", md, best_line)
+    # Coverage report — every cell self-reports ran vs skipped(+reason). No more silent skips.
+    ran = sorted(k for k, v in status.items() if v == "ran")
+    skipped = sorted((k, v) for k, v in status.items() if v != "ran")
+    cov_lines = [f"## Coverage — {len(ran)} ran, {len(skipped)} skipped", "",
+                 f"**Ran ({len(ran)}):** " + (", ".join(f"`{r}`" for r in ran) or "—"), ""]
+    if skipped:
+        cov_lines.append("**Skipped (why):**")
+        cov_lines += [f"- `{k}` — {v.removeprefix('skip: ')}" for k, v in skipped]
+    coverage = "\n".join(cov_lines)
+
+    logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}\n\n{}\n\n{}", md, best_line, coverage)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
-            f.write("# SentiSense model leaderboard (out-of-sample)\n\n" + md + "\n\n" + best_line + "\n")
+            f.write("# SentiSense model leaderboard (out-of-sample)\n\n"
+                    + md + "\n\n" + best_line + "\n\n" + coverage + "\n")
         logger.info("Wrote {}", args.out)
 
 

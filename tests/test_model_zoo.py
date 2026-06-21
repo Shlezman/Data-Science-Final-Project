@@ -90,6 +90,19 @@ def test_nbeats_is_univariate_marker():
     assert "NBEATS" in _UNIVARIATE and "TFT" not in _UNIVARIATE
 
 
+def test_cov_cols_excludes_768d_centroid():
+    import importlib.util as u
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "scripts" / "pipeline_compare.py"
+    spec = u.spec_from_file_location("pc", p); m = u.module_from_spec(spec); spec.loader.exec_module(m)
+    df = pd.DataFrame({"mean_x": [1.0], "ix_y": [2.0], "embc_000": [3.0],
+                       "emb_dispersion": [0.1], "emb_count": [4.0], "Target": [1]})
+    assert list(m._cov_cols(df, "scored").columns) == ["mean_x", "ix_y"]            # news only
+    emb = m._cov_cols(df, "embedded")
+    assert list(emb.columns) == ["emb_dispersion", "emb_count"]                     # NOT embc_* (768-d)
+    assert m._cov_cols(pd.DataFrame({"Target": [1]}), "scored") is None             # nothing usable
+
+
 def test_chronos_load_raises_without_dep():
     pytest.importorskip  # noqa: B018
     try:
