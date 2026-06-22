@@ -437,21 +437,22 @@ def _finance_base(extra_daily_features: pd.DataFrame | None = None):
     return base, trading_days, price_full
 
 
-def build_embedding_dataset(engine=None) -> pd.DataFrame:
+def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE) -> pd.DataFrame:
     """Daily e5-centroid dataset for the 'embedded data' LSTM (PCA applied at train time).
 
     Per trading day: the MEAN of that day's headline embeddings (rolled Fri/Sat → Sun
     like the news), giving an ``emb_000..emb_NNN`` daily centroid, merged with the same
     finance/calendar block + leak-free TA-125 features + next-day target + cutoff.
 
-    Dimensionality reduction (PCA → ~50-d) is NOT done here; it is fit on the TRAIN
-    fold only inside the HPO/eval split (see sentisense.models.sequence) to stay
-    leakage-safe. Returns an empty frame if no embeddings are cached.
+    ``cutoff`` bounds the history (default = project cutoff; pass a later date for the
+    full-history comparison). Dimensionality reduction (PCA → ~50-d) is NOT done here; it
+    is fit on the TRAIN fold only inside the HPO/eval split to stay leakage-safe. Returns
+    an empty frame if no embeddings are cached.
     """
     engine = engine or get_engine()
     from sentisense.embed import load_embeddings
 
-    meta, vectors = load_embeddings(engine)
+    meta, vectors = load_embeddings(engine, cutoff)
     if len(meta) == 0 or vectors.size == 0:
         logger.warning("No embeddings cached — run the 'embed' stage first. "
                        "Returning empty embedding dataset.")
@@ -474,9 +475,9 @@ def build_embedding_dataset(engine=None) -> pd.DataFrame:
     emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
     merged = base.join(emb_td, how="left").join(extras_td, how="left")
-    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)))
+    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)), cutoff)
     logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + dispersion/count + finance)",
-                CUTOFF_DATE_ISO, df.shape, dim)
+                pd.Timestamp(cutoff).date(), df.shape, dim)
     return df
 
 
@@ -502,7 +503,7 @@ def postcutoff_directions() -> pd.Series:
     return post.rename("Target")
 
 
-def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES) -> pd.DataFrame:
+def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE) -> pd.DataFrame:
     """Fused dataset: per-source SCORE features ⊕ daily embedding CENTROID, one calendar.
 
     Combines the per-source score pivot (``ml`` shape), the sentiment×relevance
@@ -516,13 +517,13 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES) -> pd.DataFr
     engine = engine or get_engine()
     from sentisense.embed import load_embeddings
 
-    meta, vectors = load_embeddings(engine)
+    meta, vectors = load_embeddings(engine, cutoff)
     if len(meta) == 0 or vectors.size == 0:
         logger.warning("No embeddings cached — fused dataset needs both scores AND "
                        "embeddings. Returning empty frame (run the 'embed' stage).")
         return pd.DataFrame()
 
-    raw = _load_raw_scores(engine)
+    raw = _load_raw_scores(engine, cutoff)
     per_source = _build_per_source_wide(raw, top_n)
     interactions = _build_interactions(raw)
 
@@ -543,7 +544,7 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES) -> pd.DataFr
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
 
     merged = base.join(ps_td, how="left").join(emb_td, how="left").join(extras_td, how="left")
-    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)))
+    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)), cutoff)
     logger.info("Fused dataset built (<= {}): {} (per-source scores + {}-d centroid + finance)",
-                CUTOFF_DATE_ISO, df.shape, dim)
+                pd.Timestamp(cutoff).date(), df.shape, dim)
     return df

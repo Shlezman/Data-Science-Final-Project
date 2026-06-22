@@ -50,6 +50,20 @@ notebook = [
     "shap>=0.44",
     "umap-learn>=0.5",
 ]
+# Temporal Fusion Transformer (leaderboard TFT row). pytorch-forecasting MIT, lightning
+# Apache-2.0. Install: uv sync --extra ml --extra tft   (torch comes from `ml`).
+tft = [
+    "pytorch-forecasting>=1.0",
+    "lightning>=2.2",
+]
+# Chronos (Amazon) zero-shot foundation forecaster (leaderboard Chronos rows). Apache-2.0.
+# Install: uv sync --extra ml --extra chronos   (pulls transformers; torch from `ml`).
+# transformers is pinned < 4.49: newer releases reference torch.float8_e8m0fnu (a torch-2.7
+# dtype) which the cu121-pinned torch 2.5.1 lacks → import crash. 4.48.x works with torch 2.5.
+chronos = [
+    "chronos-forecasting>=1.2",
+    "transformers>=4.40,<4.49",
+]
 # TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
 # PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
 # it into the project venv on the server with one of:
@@ -58,6 +72,28 @@ notebook = [
 # Checkpoint google/timesfm-2.5-200m-pytorch downloads via huggingface_hub (HF_TOKEN env
 # if gated — never hardcoded). sentisense.models.timesfm_forecaster lazy-imports it and
 # fails fast with this hint if absent.
+
+# Pin torch to the CUDA 12.1 (cu121) wheels for GPU. The server's NVIDIA driver is CUDA 12.3
+# (12030); the DEFAULT torch wheel is built for CUDA 12.9 → "driver too old" / libcudnn.so.9
+# at import, which silently skips every torch model. A cu121 build (CUDA 12.1 ≤ 12.3) runs on
+# this driver and fully supports the RTX 4090. Pinning the index makes `uv sync` reproducible
+# so torch never re-breaks. (CPU fallback if the driver/GPU is unavailable: swap the URL to
+# https://download.pytorch.org/whl/cpu.)
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu121", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["setuptools>=64"]
