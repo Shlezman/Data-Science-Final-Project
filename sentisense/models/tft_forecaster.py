@@ -116,9 +116,12 @@ def _build_dataset(frame, cov_cols, arch, train_max_idx, enc):
     if arch in _UNIVARIATE:   # N-BEATS: target-only dataset (library requirement)
         return TimeSeriesDataSet(rows, time_varying_unknown_reals=["r"],
                                  add_relative_time_idx=False, add_target_scales=False, **common)
+    # TFT supports relative-time-idx + known reals + target scaling; N-HiTS (like N-BEATS)
+    # rejects add_relative_time_idx, so it takes the covariates as plain unknown reals only.
+    is_tft = arch == "TFT"
     return TimeSeriesDataSet(rows, time_varying_unknown_reals=["r", *cov_cols],
-                             time_varying_known_reals=["time_idx"],
-                             add_relative_time_idx=True, add_target_scales=True, **common)
+                             time_varying_known_reals=["time_idx"] if is_tft else [],
+                             add_relative_time_idx=is_tft, add_target_scales=is_tft, **common)
 
 
 def _from_dataset(training, arch, params):
@@ -194,6 +197,8 @@ def pf_directions(arch: str, price: pd.Series, cutoff, *, covariate_frame: pd.Da
         return (pd.Series(forecast_to_proba(f_arr), index=dec_dates, name="proba"),
                 pd.Series(labels, index=dec_dates, name="label"))
 
+    _logged: list[int] = []   # log the full traceback once per arch (visible without DEBUG)
+
     def objective(trial) -> float:
         params = _param_space(trial, arch)
         try:
@@ -203,9 +208,11 @@ def pf_directions(arch: str, price: pd.Series, cutoff, *, covariate_frame: pd.Da
             if len(s) and len(np.unique(lab)) > 1:
                 return float(roc_auc_score(lab, s))
         except Exception as exc:  # noqa: BLE001 — bad config shouldn't kill the study
-            import traceback
             logger.warning("{} trial failed: {}", arch, str(exc)[:120])
-            logger.debug("{} trial traceback:\n{}", arch, traceback.format_exc())   # full cause if needed
+            if not _logged:
+                import traceback
+                logger.warning("{} first-failure traceback:\n{}", arch, traceback.format_exc())
+                _logged.append(1)
         return 0.5
 
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=SEED))

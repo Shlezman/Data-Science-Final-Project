@@ -47,13 +47,14 @@ def make_chronos_forecast_fn(pipe):
     import torch
 
     def forecast_fn(context: np.ndarray, cov_window=None) -> float:   # noqa: ARG001 — univariate
-        ctx = torch.tensor(np.asarray(context, dtype=np.float32))
+        ctx = torch.tensor(np.asarray(context, dtype=np.float32))     # 1-D series
         try:
-            quantiles, _ = pipe.predict_quantiles(
-                context=ctx, prediction_length=1, quantile_levels=[0.5])
-            return float(np.asarray(quantiles)[0, 0, 0])      # median of the 1-step horizon
-        except AttributeError:
-            fc = pipe.predict(ctx, prediction_length=1)        # (1, num_samples, 1)
-            return float(np.median(np.asarray(fc)[0, :, 0]))
+            # context/inputs is the FIRST positional arg (named `inputs` on Bolt) — pass
+            # positionally so it works across the Bolt and T5 pipeline APIs.
+            quantiles, _ = pipe.predict_quantiles(ctx, prediction_length=1, quantile_levels=[0.5])
+            return float(np.asarray(quantiles).reshape(-1)[0])         # the single 0.5-quantile step
+        except (AttributeError, NotImplementedError):
+            fc = pipe.predict(ctx, prediction_length=1)                # (1, num_samples, 1)
+            return float(np.median(np.asarray(fc).reshape(-1)))
 
     return forecast_fn
