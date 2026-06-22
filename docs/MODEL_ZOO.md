@@ -92,3 +92,15 @@ deeper search (`--seq-trials`, `--pf-trials`, `--xgb-trials`).
 The new classifier studies persist to the project DB (resumable). Each model is guarded —
 a missing extra or a runtime failure skips just that row, so a partial stack still produces
 a leaderboard. The "Ultimate model" line reports the best out-of-sample ROC-AUC.
+
+## Accuracy-boost additions (feat/accuracy-boost)
+- **Overnight track** (`--overnight`): open(T+1) decision contract — adds the day-T global
+  close returns (S&P/Nasdaq/VIX/Brent/USD-ILS, `ovn_` block) that drive TA-125's next open;
+  leak-safe (one shift ahead of the close(T) baseline), cells tagged `+ovn`. Run baseline +
+  `--overnight` and compare to isolate the overnight signal. Nasdaq added to the base assets.
+- **Bootstrap ROC-AUC CI** (`auc_lo`/`auc_hi` columns): 95% CI per cell — if it straddles 0.5
+  the cell is indistinguishable from chance (the honest read).
+- **Soft-vote ensemble**: per track, rank-normalised mean of all member cells → `Ensemble [track]`
+  row (a fair-comparison row; an ensemble of chance-level models stays ~chance).
+- **Abstention**: accuracy when acting only on the most-confident fraction (acc@coverage),
+  reported per ensemble in the Coverage section — trades coverage for accuracy.

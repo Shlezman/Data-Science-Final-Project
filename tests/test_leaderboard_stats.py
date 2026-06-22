@@ -35,3 +35,22 @@ def test_auc_ci_single_class_is_nan():
 def test_auc_ci_columns_in_cols():
     m = _load_pc()
     assert "auc_lo" in m._COLS and "auc_hi" in m._COLS
+
+
+def test_track_of_parses_tag():
+    m = _load_pc()
+    assert m._track_of("GRU [scored/FULL+ovn]") == "FULL+ovn"
+    assert m._track_of("Chronos-zeroshot [CUT]") == "CUT"
+    assert m._track_of("Buy&Hold [FULL]") == "FULL"
+    assert m._track_of("noBracket") is None
+
+
+def test_abstention_lifts_accuracy_on_confident_subset():
+    import pandas as pd
+    m = _load_pc()
+    idx = pd.date_range("2024-01-01", periods=8, freq="D")
+    s = pd.Series([0.9, 0.1, 0.8, 0.2, 0.55, 0.45, 0.52, 0.48], index=idx)   # 4 high-conf, 4 low-conf
+    y = pd.Series([1, 0, 1, 0, 0, 1, 0, 1], index=idx)                       # high-conf correct, low-conf wrong
+    ab = m._abstention(s, y)
+    assert ab[1.0] == 0.5           # acting on all → 50%
+    assert ab[0.5] == 1.0           # acting on the most-confident half → 100%

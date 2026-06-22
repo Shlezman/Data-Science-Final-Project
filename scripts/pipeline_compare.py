@@ -302,6 +302,27 @@ def _classifier_labels(dtype: str, regime: str, use_seq: bool) -> list[str]:
     return labs
 
 
+def _track_of(label: str) -> str | None:
+    """The regime/track tag inside a cell label, e.g. 'GRU [scored/FULL+ovn]' → 'FULL+ovn'."""
+    if "[" not in label:
+        return None
+    return label.rsplit("[", 1)[1].rstrip("]").rsplit("/", 1)[-1]
+
+
+def _abstention(scores: pd.Series, labels: pd.Series,
+                coverages=(1.0, 0.75, 0.5, 0.25)) -> dict:
+    """Accuracy when acting only on the most-confident fraction (|p-0.5| highest). Selective
+    prediction: trade coverage for accuracy. Returns {coverage: accuracy}."""
+    conf = (scores - 0.5).abs().sort_values(ascending=False)
+    out = {}
+    for cov in coverages:
+        sel = conf.index[: max(int(len(conf) * cov), 1)]
+        dec = (scores.reindex(sel) > 0.5).astype(int).to_numpy()
+        y = labels.reindex(sel).to_numpy()
+        out[cov] = float((dec == y).mean()) if len(y) else float("nan")
+    return out
+
+
 def _cov_cols(df: pd.DataFrame, dtype: str) -> pd.DataFrame | None:
     """Forecaster covariate frame for ``dtype`` (low-dim signal cols only — never the 768-d
     embedding centroid, which would blow up a TFT). Returns None if no usable cols."""
@@ -330,15 +351,22 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
     price = _load_price()
     rows: dict[str, dict] = {}
     status: dict[str, str] = {}
+    preds: dict[str, tuple] = {}     # row_label → (scores, labels) for the soft-vote ensemble
     cache = _load_cache(cache_path, fresh)
 
+    def _restore_preds(rl, row):
+        if "_proba" in row and "_dates" in row and "_labels" in row:
+            idx = pd.to_datetime(row["_dates"])
+            preds[rl] = (pd.Series(row["_proba"], index=idx), pd.Series(row["_labels"], index=idx))
+
     def restore(label) -> bool:
-        """Load a cell's cached rows into the board. True if it was cached."""
+        """Load a cell's cached rows (+ proba for the ensemble) into the board. True if cached."""
         if fresh or label not in cache:
             return False
         for rl, row in cache[label].items():
             rows[rl] = row
             status[rl] = "cached"
+            _restore_preds(rl, row)
         return True
 
     def attempt(label, thunk):
@@ -350,9 +378,13 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
 
         def emit(rl, s, lab, thr=0.5):
             row = _row(s, lab, price, thr)
+            row["_proba"] = [float(x) for x in s.to_numpy()]       # retained for the ensemble +
+            row["_dates"] = [str(d) for d in s.index]              # cached so a resume can ensemble too
+            row["_labels"] = [int(x) for x in lab.to_numpy()]
             rows[rl] = row
             produced[rl] = row
             status[rl] = "ran"
+            preds[rl] = (s, lab)
 
         try:
             res = thunk()
@@ -439,9 +471,37 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
             attempt(f"NBEATS [{rtag}]",
                     lambda: _pf("NBEATS", price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
 
+    # ── Soft-vote ensemble per track + abstention curves ──────────────────────────
+    # Rank-normalise each member's scores (keeps each model's ROC-AUC, makes scales
+    # comparable across heterogeneous models) then average. An ensemble of chance-level
+    # members stays ~chance — this is a fair-comparison row, not a magic lift.
+    from collections import defaultdict
+    by_track: dict[str, list] = defaultdict(list)
+    for lbl, (s, lab) in preds.items():
+        if lbl.startswith(("Ensemble", "Buy&Hold")):
+            continue
+        t = _track_of(lbl)
+        if t:
+            by_track[t].append((s, lab))
+    notes: list[str] = []
+    for track, members in sorted(by_track.items()):
+        if len(members) < 3:
+            continue
+        common = sorted(set.intersection(*[set(s.index) for s, _ in members]))
+        if len(common) < 30:
+            logger.warning("Ensemble [{}] skipped: only {} common dates across members", track, len(common))
+            continue
+        ens = pd.concat([s.reindex(common).rank(pct=True) for s, _ in members], axis=1).mean(axis=1)
+        lab0 = members[0][1].reindex(common)
+        rows[f"Ensemble [{track}]"] = _row(ens, lab0, price, 0.5)
+        status[f"Ensemble [{track}]"] = "ran"
+        ab = _abstention(ens, lab0)
+        notes.append(f"- `Ensemble [{track}]` ({len(members)} models, {len(common)} days) "
+                     "acc@coverage: " + ", ".join(f"{int(c * 100)}%={a:.3f}" for c, a in ab.items()))
+
     board = pd.DataFrame({label: {c: r.get(c) for c in _COLS} for label, r in rows.items()}).T
     board = board[_COLS] if not board.empty else board
-    return board, status
+    return board, status, notes
 
 
 def _to_markdown(board: pd.DataFrame) -> str:
@@ -485,7 +545,7 @@ def main() -> None:
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
     data_types = tuple(d.strip() for d in args.data_types.split(",") if d.strip() in _DATA_TYPES)
 
-    board, status = build_leaderboard(
+    board, status, notes = build_leaderboard(
         regimes, use_timesfm=not args.no_timesfm, data_types=data_types, use_seq=not args.no_seq,
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
@@ -511,6 +571,8 @@ def main() -> None:
     if skipped:
         cov_lines.append("**Skipped (why):**")
         cov_lines += [f"- `{k}` — {v.removeprefix('skip: ')}" for k, v in skipped]
+    if notes:
+        cov_lines += ["", "## Ensemble abstention (accuracy when acting on the most-confident fraction)", *notes]
     coverage = "\n".join(cov_lines)
 
     logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}\n\n{}\n\n{}", md, best_line, coverage)
