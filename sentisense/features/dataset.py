@@ -156,9 +156,11 @@ def _load_finance() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
 
     start = "2015-12-17"
     end = pd.Timestamp.today().strftime("%Y-%m-%d")
-    market = yf.download(["^GSPC", "^VIX", "BZ=F"], start=start, end=end, progress=False)["Close"]
-    # yfinance returns multi-ticker Close columns alphabetically (BZ=F, ^GSPC, ^VIX).
-    market.columns = ["Brent_Oil", "SP500", "VIX"]
+    # ^IXIC (Nasdaq) added — tech-heavy, strong overnight driver of TA-125. Rename BY TICKER
+    # (not positional) so column order from yfinance can't silently mis-map.
+    _tk = {"^GSPC": "SP500", "^IXIC": "Nasdaq", "^VIX": "VIX", "BZ=F": "Brent_Oil"}
+    market = yf.download(list(_tk), start=start, end=end, progress=False)["Close"]
+    market = market.rename(columns=_tk)[list(_tk.values())]
     market_clean = market.add_prefix("Market_")
 
     resp = requests.get(f"https://api.frankfurter.app/{start}..?from=USD&to=ILS", timeout=30)
@@ -235,11 +237,15 @@ def add_ta125_features(df: pd.DataFrame, price_series: pd.Series) -> pd.DataFram
 # often driven more by global moves than local news, so these usually add real signal.
 _CROSS_ASSETS = {
     "SP500": "Market_SP500",
+    "Nasdaq": "Market_Nasdaq",
     "VIX": "Market_VIX",
     "Brent": "Market_Brent_Oil",
     "USDILS": "FX_USD_ILS",
     "VTA35": "VTA35_Price",
 }
+# Global assets whose close(T) lands AFTER TA-125 close(T) but BEFORE open(T+1) → the
+# genuine "overnight" signal (VTA-35 is local same-day, so it's excluded here).
+_OVERNIGHT_ASSETS = {k: v for k, v in _CROSS_ASSETS.items() if k != "VTA35"}
 
 
 def add_cross_asset_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -259,6 +265,27 @@ def add_cross_asset_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{name}_logret_lag3"] = logret.shift(3)
         df[f"{name}_logret_5d_mean"] = logret.shift(1).rolling(5).mean()
         df[f"{name}_logret_5d_std"] = logret.shift(1).rolling(5).std()
+    return df
+
+
+def add_overnight_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Overnight global-close returns — for the OPEN(T+1) decision contract ONLY.
+
+    add_cross_asset_features shifts ≥1 so it's safe for a CLOSE(T) decision. These use the
+    day-T close-to-close return with NO extra shift: the most recent global close BEFORE
+    TA-125's open(T+1) (US/Nasdaq/VIX/Brent/USD-ILS all settle after TA close(T) but before
+    its next open), which is exactly the gap-driving signal. Known at open(T+1); a LEAK for a
+    close(T) decision — hence the separate ``ovn_`` block + the build_datasets(overnight=)
+    flag. Never derived from TA-125 itself, so it cannot peek at the target.
+    """
+    df = df.copy()
+    for name, col in _OVERNIGHT_ASSETS.items():
+        if col not in df.columns:
+            continue
+        s = df[col].astype(float).replace(0.0, np.nan)
+        logret = np.log(s / s.shift(1))
+        df[f"ovn_{name}_ret"] = logret                      # day-T global move (known at open T+1)
+        df[f"ovn_{name}_2dret"] = logret.rolling(2).sum()   # 2-day momentum into the open
     return df
 
 
@@ -371,6 +398,7 @@ def build_datasets(
     top_n: int = TOP_N_SOURCES,
     extra_daily_features: pd.DataFrame | None = None,
     cutoff=CUTOFF_DATE,
+    overnight: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Assemble the (daily-mean, per-source) modeling frames, cutoff-applied.
 
@@ -401,13 +429,16 @@ def build_datasets(
     ps_td = _roll_to_trading_days(per_source, trading_days, agg="sum")
 
     def _assemble(news_td):
-        return _finalize(add_cross_asset_features(
-            add_ta125_features(base.join(news_td, how="left"), price_full)), cutoff)
+        feat = add_cross_asset_features(add_ta125_features(base.join(news_td, how="left"), price_full))
+        if overnight:                       # open(T+1)-decision overnight global block
+            feat = add_overnight_features(feat)
+        return _finalize(feat, cutoff)
 
     mt = _assemble(dm_td)
     ml = _assemble(ps_td)
 
-    logger.info("Datasets built (<= {}): mt={}, ml={}", pd.Timestamp(cutoff).date(), mt.shape, ml.shape)
+    logger.info("Datasets built (<= {}, overnight={}): mt={}, ml={}",
+                pd.Timestamp(cutoff).date(), overnight, mt.shape, ml.shape)
     logger.info("  trading-day rows: mt={:,}, ml={:,}  (LSTM-viability bar ~750)", len(mt), len(ml))
     return mt, ml
 
@@ -437,7 +468,7 @@ def _finance_base(extra_daily_features: pd.DataFrame | None = None):
     return base, trading_days, price_full
 
 
-def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE) -> pd.DataFrame:
+def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool = False) -> pd.DataFrame:
     """Daily e5-centroid dataset for the 'embedded data' LSTM (PCA applied at train time).
 
     Per trading day: the MEAN of that day's headline embeddings (rolled Fri/Sat → Sun
@@ -475,9 +506,12 @@ def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE) -> pd.DataFrame:
     emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
     merged = base.join(emb_td, how="left").join(extras_td, how="left")
-    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)), cutoff)
-    logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + dispersion/count + finance)",
-                pd.Timestamp(cutoff).date(), df.shape, dim)
+    feat = add_cross_asset_features(add_ta125_features(merged, price_full))
+    if overnight:
+        feat = add_overnight_features(feat)
+    df = _finalize(feat, cutoff)
+    logger.info("Embedding dataset built (<= {}, overnight={}): {} ({}-d centroid + finance)",
+                pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df
 
 
@@ -503,7 +537,8 @@ def postcutoff_directions() -> pd.Series:
     return post.rename("Target")
 
 
-def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE) -> pd.DataFrame:
+def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE,
+                        overnight: bool = False) -> pd.DataFrame:
     """Fused dataset: per-source SCORE features ⊕ daily embedding CENTROID, one calendar.
 
     Combines the per-source score pivot (``ml`` shape), the sentiment×relevance
@@ -544,7 +579,10 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
 
     merged = base.join(ps_td, how="left").join(emb_td, how="left").join(extras_td, how="left")
-    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)), cutoff)
-    logger.info("Fused dataset built (<= {}): {} (per-source scores + {}-d centroid + finance)",
-                pd.Timestamp(cutoff).date(), df.shape, dim)
+    feat = add_cross_asset_features(add_ta125_features(merged, price_full))
+    if overnight:
+        feat = add_overnight_features(feat)
+    df = _finalize(feat, cutoff)
+    logger.info("Fused dataset built (<= {}, overnight={}): {} (scores + {}-d centroid + finance)",
+                pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df
