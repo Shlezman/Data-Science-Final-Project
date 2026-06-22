@@ -65,6 +65,24 @@ _LOAD_SQL = text(
 )
 
 
+# Keyset-paginated variant for the streaming centroid: bounded by ``headline_id`` (the
+# leading column of the PK ``(headline_id, embed_model)``), so each page is an index range
+# scan with NO global sort, and peak client RAM is one page regardless of corpus size or
+# whether the driver honours server-side streaming.
+_PAGE_SQL = text(
+    """
+    SELECT he.headline_id, rh.date::date AS date, he.dim, he.embedding
+    FROM headline_embeddings he
+    JOIN raw_headlines rh ON rh.id = he.headline_id
+    WHERE he.embed_model = :model
+      AND rh.date <= :cutoff
+      AND he.headline_id > :last_id
+    ORDER BY he.headline_id
+    LIMIT :page
+    """
+)
+
+
 def ensure_table(engine) -> None:
     """Apply the embeddings-cache migration (idempotent CREATE TABLE IF NOT EXISTS)."""
     ddl = _MIGRATION.read_text(encoding="utf-8")
@@ -139,11 +157,16 @@ def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = Fals
     return written
 
 
-def daily_embedding_centroid(engine=None, cutoff=CUTOFF_DATE, *, chunksize: int = 100_000) -> pd.DataFrame:
-    """Per-date e5 centroid (+ dispersion + count), STREAMED so RAM stays bounded.
+def daily_embedding_centroid(engine=None, cutoff=CUTOFF_DATE, *, page: int = 100_000) -> pd.DataFrame:
+    """Per-date e5 centroid (+ dispersion + count), keyset-paginated so RAM stays bounded.
 
-    Accumulates per-date sum and sum-of-squares over DB chunks → mean + per-dim std, instead
-    of materialising the full ~3M×768 matrix at once (which OOMs on the full-history corpus).
+    Accumulates per-date sum and sum-of-squares over fixed-size pages → mean + per-dim std,
+    instead of materialising the full ~3M×768 matrix at once (which OOMs on the full-history
+    corpus). Pages are keyset-bounded by ``headline_id`` (PK leading column) so each query is
+    an index range scan with no global sort and peak client RAM is one page (~``page``×768×4
+    bytes), regardless of corpus size or whether the driver honours server-side streaming. The
+    sum/sum-of-squares/count accumulation is order-independent, so pages need no date ordering.
+
     Returns a date-indexed frame: ``embc_000..NNN`` (mean), ``emb_dispersion`` (mean per-dim
     std), ``emb_count``. Empty frame if no embeddings cached.
     """
@@ -152,21 +175,26 @@ def daily_embedding_centroid(engine=None, cutoff=CUTOFF_DATE, *, chunksize: int 
     sqsums: dict = {}
     counts: dict = {}
     dim = None
-    with engine.connect().execution_options(stream_results=True) as conn:
-        for chunk in pd.read_sql(_LOAD_SQL, conn, params={"model": EMBED_MODEL, "cutoff": cutoff},
-                                 chunksize=chunksize):
-            if chunk.empty:
-                continue
-            if dim is None:
-                dim = int(chunk["dim"].iloc[0])
-            vecs = np.vstack([np.frombuffer(b, dtype=np.float32) for b in chunk["embedding"]]).reshape(-1, dim)
-            dates = pd.to_datetime(chunk["date"]).to_numpy()
-            for d in np.unique(dates):
-                v = vecs[dates == d].astype(np.float64)
-                key = pd.Timestamp(d)
-                if key not in sums:
-                    sums[key] = np.zeros(dim); sqsums[key] = np.zeros(dim); counts[key] = 0
-                sums[key] += v.sum(0); sqsums[key] += (v ** 2).sum(0); counts[key] += len(v)
+    last_id = -1
+    while True:
+        with engine.connect() as conn:
+            chunk = pd.read_sql(_PAGE_SQL, conn, params={
+                "model": EMBED_MODEL, "cutoff": cutoff, "last_id": last_id, "page": page})
+        if chunk.empty:
+            break
+        if dim is None:
+            dim = int(chunk["dim"].iloc[0])
+        vecs = np.vstack([np.frombuffer(b, dtype=np.float32) for b in chunk["embedding"]]).reshape(-1, dim)
+        dates = pd.to_datetime(chunk["date"]).to_numpy()
+        for d in np.unique(dates):
+            v = vecs[dates == d].astype(np.float64)
+            key = pd.Timestamp(d)
+            if key not in sums:
+                sums[key] = np.zeros(dim); sqsums[key] = np.zeros(dim); counts[key] = 0
+            sums[key] += v.sum(0); sqsums[key] += (v ** 2).sum(0); counts[key] += len(v)
+        last_id = int(chunk["headline_id"].iloc[-1])
+        if len(chunk) < page:
+            break
     if dim is None or not counts:
         return pd.DataFrame()
     order = sorted(sums)
@@ -176,7 +204,7 @@ def daily_embedding_centroid(engine=None, cutoff=CUTOFF_DATE, *, chunksize: int 
     out = pd.DataFrame(mean, index=idx, columns=[f"embc_{i:03d}" for i in range(dim)])
     out["emb_dispersion"] = np.sqrt(var).mean(axis=1)
     out["emb_count"] = [counts[d] for d in order]
-    logger.info("Daily centroid (streamed, <= {}): {} days × {}-d", pd.Timestamp(cutoff).date(), len(out), dim)
+    logger.info("Daily centroid (keyset-paged, <= {}): {} days × {}-d", pd.Timestamp(cutoff).date(), len(out), dim)
     return out
 
 
