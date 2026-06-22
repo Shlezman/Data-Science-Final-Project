@@ -21,6 +21,8 @@ across 3 feature representations and 2 market regimes on an identical out-of-sam
   indistinguishable from chance** on held-out data (best OOS ROC-AUC ≈ 0.58, most cells
   0.47–0.57, MCC ≈ 0). This is consistent with the weak-form Efficient Market Hypothesis and
   is itself a defensible, rigorously-established result — not a failure.
+- **Two PRs in review** (land next): **#25** accuracy-boost (overnight features + confidence
+  intervals + ensemble) and **#22** MiroFish multi-agent narrative simulation.
 
 ---
 
@@ -107,11 +109,14 @@ contribution.
 
 ---
 
-## In flight (not yet merged) — the accuracy-boost branch
+## Upcoming — two open PRs in review
 
-Branch `feat/accuracy-boost` is an experiment to squeeze out any remaining signal and, more
-importantly, to **quantify the uncertainty** so "≈ chance" becomes a defensible statistical
-claim rather than a hunch:
+Two pull requests are open and will land next.
+
+### PR #25 — accuracy boost (`feat/accuracy-boost`, +660 / −87)
+
+An experiment to squeeze out any remaining signal and, more importantly, to **quantify the
+uncertainty** so "≈ chance" becomes a defensible statistical claim rather than a hunch:
 
 - **Overnight global features** — day-T close returns of S&P 500, Nasdaq, VIX, Brent, USD-ILS.
   These are known before the next TA-125 open, so they are leak-safe for an *open(T+1)*
@@ -129,6 +134,47 @@ claim rather than a hunch:
 **Status:** the overnight grid is queued to run on the GPU server; results + the CI verdict
 will follow.
 
+### PR #22 — MiroFish narrative simulation (`feat/miro-simulation`, +3,413 / −61)
+
+A new **narrative-simulation layer**. MiroFish is a multi-agent social-simulation engine
+(CAMEL-AI OASIS + GraphRAG + agent memory, vendored as a submodule at `external/MiroFish`).
+It does *not* predict prices — it simulates how a crowd's narrative around the day's news
+evolves, and we mine that for signal and explainability. Three uses:
+
+- **A — Causal sim-feature.** Each trading day is seeded strictly on news ≤ T (leak-safe),
+  the agents are interviewed, and their answers are reduced to a deterministic numeric vote
+  (direction score, confidence, disagreement, magnitude). These `sim_*` columns feed the
+  existing XGBoost / LSTM / TimesFM forecasters via a **with-sim vs without-sim ablation**
+  (`pipeline_compare --with-sim`).
+- **B — Event-study explainability.** Rich per-agent reports + the agent interaction graph
+  on high-impact dates (war onset, rate decisions) — stored for the report.
+- **C — Live forward gauge.** One sim/day going forward, with the agent graph persisted for
+  the future dashboard UI.
+
+Two complementary **simulation modes** run per day (each cached separately):
+
+| Mode | Seed | Answers |
+|------|------|---------|
+| `source` | one section per news outlet, perspective-aware | "What does each channel's crowd think, and where do they diverge?" |
+| `flat` | whole-day news pooled, source stripped | "What does the day's news say as one aggregate narrative?" |
+
+Their divergence (`sim_src_flat_gap`, `sim_src_flat_agree`) is itself a feature — it flags
+days where channel framing matters.
+
+**Engineering notes:**
+- **Local-only, zero external egress** — LLM is Gemma-4 on the 4090 (Ollama/vLLM,
+  OpenAI-compatible), memory/graph via a **self-hosted Zep** (not Zep Cloud). Honors the org
+  data-handling policy; verified by `scripts/verify_local_egress.sh`.
+- SentiSense talks to MiroFish over **HTTP only** (`sentisense/sim/` client orchestrates the
+  9-step build→simulate→report pipeline with polling) — it never imports the AGPL engine
+  in-process.
+- New tables (`narrative_sim`, `narrative_sim_graph`, `narrative_sim_report`) + migrations,
+  plus 4 test modules.
+
+**Honest north star (same as the rest of the project):** the sim-feature's lift is something
+to be **measured, not assumed**. Even at zero lift, the explainability reports + agent-graph
+assets are valuable on their own.
+
 ---
 
 ## Next steps
@@ -141,8 +187,12 @@ will follow.
    - predict next-day **absolute return / realized volatility** (regression) instead of sign;
    - **multi-day horizon** (5-day direction) where sentiment may aggregate into signal;
    - **event-conditioned** prediction (only days with a high-relevance news spike).
-3. **Write up the negative result** for the report with the leaderboard + CIs as evidence —
-   a clean, well-instrumented "markets are efficient at the daily horizon" finding.
+3. **Merge the two open PRs** (#25 accuracy-boost, #22 MiroFish) and run the **with-sim
+   ablation** — does the narrative-simulation feature move any cell's ROC-AUC beyond its
+   confidence interval? (Measured, not assumed.)
+4. **Write up the negative result** for the report with the leaderboard + CIs as evidence —
+   a clean, well-instrumented "markets are efficient at the daily horizon" finding, with the
+   MiroFish explainability reports as the qualitative companion.
 
 ---
 
