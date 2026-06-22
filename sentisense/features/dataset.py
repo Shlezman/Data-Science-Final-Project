@@ -486,26 +486,19 @@ def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool 
     an empty frame if no embeddings are cached.
     """
     engine = engine or get_engine()
-    from sentisense.embed import load_embeddings
+    from sentisense.embed import daily_embedding_centroid
 
-    meta, vectors = load_embeddings(engine, cutoff)
-    if len(meta) == 0 or vectors.size == 0:
+    # Streamed per-date centroid: never materialises the full ~3M×768 matrix (OOM-safe on
+    # the full-history corpus). 'embc_*' so PCA (pca_prefix='embc_') reduces ONLY the
+    # centroid block — the scalar dispersion/count + finance/TA-125 features stay raw.
+    cen = daily_embedding_centroid(engine, cutoff)
+    if cen.empty:
         logger.warning("No embeddings cached — run the 'embed' stage first. "
                        "Returning empty embedding dataset.")
         return pd.DataFrame()
-
-    dim = vectors.shape[1]
-    # Centroid columns are 'embc_*' so PCA (pca_prefix='embc_') reduces ONLY the
-    # centroid block — the scalar dispersion/count + finance/TA-125 features stay raw.
-    centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
-                            columns=[f"embc_{i:03d}" for i in range(dim)])
-    grp = centroid.groupby(level=0)
-    centroid_by_date = grp.mean()
-    # Intra-day dispersion (mean per-dim std) + headline count — signal the centroid drops.
-    extras = pd.DataFrame({
-        "emb_dispersion": grp.std().mean(axis=1).fillna(0.0),
-        "emb_count": grp.size(),
-    })
+    centroid_by_date = cen[[c for c in cen.columns if c.startswith("embc_")]]
+    extras = cen[["emb_dispersion", "emb_count"]]
+    dim = centroid_by_date.shape[1]
 
     base, trading_days, price_full = _finance_base()
     emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
@@ -555,10 +548,11 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     un-reduced. Returns an empty frame if no embeddings are cached (fused needs both).
     """
     engine = engine or get_engine()
-    from sentisense.embed import load_embeddings
+    from sentisense.embed import daily_embedding_centroid
 
-    meta, vectors = load_embeddings(engine, cutoff)
-    if len(meta) == 0 or vectors.size == 0:
+    # Streamed per-date centroid (OOM-safe on the full-history corpus — see build_embedding_dataset).
+    cen = daily_embedding_centroid(engine, cutoff)
+    if cen.empty:
         logger.warning("No embeddings cached — fused dataset needs both scores AND "
                        "embeddings. Returning empty frame (run the 'embed' stage).")
         return pd.DataFrame()
@@ -567,15 +561,9 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     per_source = _build_per_source_wide(raw, top_n)
     interactions = _build_interactions(raw)
 
-    dim = vectors.shape[1]
-    centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
-                            columns=[f"embc_{i:03d}" for i in range(dim)])
-    grp = centroid.groupby(level=0)
-    centroid_by_date = grp.mean()
-    extras = pd.DataFrame({
-        "emb_dispersion": grp.std().mean(axis=1).fillna(0.0),
-        "emb_count": grp.size(),
-    })
+    centroid_by_date = cen[[c for c in cen.columns if c.startswith("embc_")]]
+    extras = cen[["emb_dispersion", "emb_count"]]
+    dim = centroid_by_date.shape[1]
 
     base, trading_days, price_full = _finance_base()
     base = base.join(_roll_to_trading_days(interactions, trading_days, agg="mean"), how="left")

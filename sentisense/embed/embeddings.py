@@ -139,6 +139,47 @@ def embed_missing(engine=None, *, batch: int = EMBED_BATCH, dry_run: bool = Fals
     return written
 
 
+def daily_embedding_centroid(engine=None, cutoff=CUTOFF_DATE, *, chunksize: int = 100_000) -> pd.DataFrame:
+    """Per-date e5 centroid (+ dispersion + count), STREAMED so RAM stays bounded.
+
+    Accumulates per-date sum and sum-of-squares over DB chunks → mean + per-dim std, instead
+    of materialising the full ~3M×768 matrix at once (which OOMs on the full-history corpus).
+    Returns a date-indexed frame: ``embc_000..NNN`` (mean), ``emb_dispersion`` (mean per-dim
+    std), ``emb_count``. Empty frame if no embeddings cached.
+    """
+    engine = engine or get_engine()
+    sums: dict = {}
+    sqsums: dict = {}
+    counts: dict = {}
+    dim = None
+    with engine.connect().execution_options(stream_results=True) as conn:
+        for chunk in pd.read_sql(_LOAD_SQL, conn, params={"model": EMBED_MODEL, "cutoff": cutoff},
+                                 chunksize=chunksize):
+            if chunk.empty:
+                continue
+            if dim is None:
+                dim = int(chunk["dim"].iloc[0])
+            vecs = np.vstack([np.frombuffer(b, dtype=np.float32) for b in chunk["embedding"]]).reshape(-1, dim)
+            dates = pd.to_datetime(chunk["date"]).to_numpy()
+            for d in np.unique(dates):
+                v = vecs[dates == d].astype(np.float64)
+                key = pd.Timestamp(d)
+                if key not in sums:
+                    sums[key] = np.zeros(dim); sqsums[key] = np.zeros(dim); counts[key] = 0
+                sums[key] += v.sum(0); sqsums[key] += (v ** 2).sum(0); counts[key] += len(v)
+    if dim is None or not counts:
+        return pd.DataFrame()
+    order = sorted(sums)
+    mean = np.vstack([sums[d] / counts[d] for d in order])
+    var = np.clip(np.vstack([sqsums[d] / counts[d] - (sums[d] / counts[d]) ** 2 for d in order]), 0.0, None)
+    idx = pd.DatetimeIndex(order)
+    out = pd.DataFrame(mean, index=idx, columns=[f"embc_{i:03d}" for i in range(dim)])
+    out["emb_dispersion"] = np.sqrt(var).mean(axis=1)
+    out["emb_count"] = [counts[d] for d in order]
+    logger.info("Daily centroid (streamed, <= {}): {} days × {}-d", pd.Timestamp(cutoff).date(), len(out), dim)
+    return out
+
+
 def load_embeddings(engine=None, cutoff=CUTOFF_DATE) -> tuple[pd.DataFrame, np.ndarray]:
     """Load all cached embeddings ≤ ``cutoff`` for the active model.
 
