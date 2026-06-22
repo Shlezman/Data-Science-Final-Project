@@ -126,8 +126,9 @@ def _seq(ml: pd.DataFrame, arch: str, *, tune_trials: int = 0, study_name: str |
     return seq_holdout_eval(ml, arch, study.best_params)
 
 
-def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
-    """{form: (scores, labels, threshold)} for Chronos — zero-shot + context-len-tuned.
+def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None, tag: str = "") -> dict:
+    """{form [tag]: (scores, labels, threshold)} for Chronos — zero-shot + context-len-tuned.
+    ``tag`` namespaces rows by regime/track so they don't collide in the board/cache.
 
     Same forecast→direction bridge as TimesFM (univariate foundation model). HPO sweeps the
     context length and tunes the decision threshold on the VALIDATION slice only (no leak)."""
@@ -140,9 +141,10 @@ def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
     val_index, test_index = returns.index[v0:v1], returns.index[v1:]
     fn = make_chronos_forecast_fn(load_chronos())
     out: dict = {}
+    _lbl = lambda name: f"{name} [{tag}]" if tag else name
     s, lab = walk_forward_directions(returns, test_index, fn, context_len=max(ctx_grid))
     if len(s):
-        out["Chronos-zeroshot"] = (s, lab, 0.5)
+        out[_lbl("Chronos-zeroshot")] = (s, lab, 0.5)
     best = None
     for cl in ctx_grid:
         sv, lv = walk_forward_directions(returns, val_index, fn, context_len=cl)
@@ -157,7 +159,7 @@ def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
                     best["cl"], best["thr"], best["auc"])
         s, lab = walk_forward_directions(returns, test_index, fn, context_len=best["cl"])
         if len(s):
-            out["Chronos-tuned"] = (s, lab, best["thr"])
+            out[_lbl("Chronos-tuned")] = (s, lab, best["thr"])
     return out
 
 
@@ -173,8 +175,11 @@ def _pf(arch: str, price: pd.Series, cutoff, *, cov: pd.DataFrame | None = None,
 
 
 def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
-                   ctx_grid=None) -> dict:
-    """Return {form_name: (scores, labels, threshold)} for the TimesFM forms in this regime.
+                   ctx_grid=None, tag: str = "") -> dict:
+    """Return {form_name [tag]: (scores, labels, threshold)} for the TimesFM forms.
+
+    ``tag`` namespaces the row labels by regime/track (e.g. 'FULL', 'FULL+ovn') so the
+    multiple forms don't collide across regimes/the overnight track in the board/cache.
 
     Includes ``TimesFM-tuned`` — the best (context_len, decision-threshold) chosen on a
     VALIDATION slice [70%,85%) by val ROC-AUC, then evaluated on the held-out test
@@ -201,7 +206,7 @@ def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
         s, lab = walk_forward_directions(returns, test_index, fn,
                                          context_len=context_len, covariate_frame=covariate_frame)
         if len(s):
-            out[name] = (s, lab, threshold)
+            out[f"{name} [{tag}]" if tag else name] = (s, lab, threshold)
 
     run("TimesFM-zeroshot")
 
@@ -225,7 +230,7 @@ def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
     run("TimesFM-finetuned")
 
     # Covariate ablation: sentiment news features (daily-mean) as XReg.
-    news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_"))]
+    news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_", "ovn_"))]  # ovn_ on the overnight track
     cov = mt[news_cols] if news_cols else None
     run("TimesFM-cov", covariate_frame=cov)
     run("TimesFM-nocov")
@@ -396,17 +401,18 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
         scored = frames.get("scored")
         if use_timesfm and scored is not None:
             attempt(f"TimesFM [{rtag}]",
-                    lambda: _timesfm_forms(scored[0], scored[1], price, cutoff))
+                    lambda: _timesfm_forms(scored[0], scored[1], price, cutoff, tag=rtag))
         if use_chronos:
-            attempt(f"Chronos [{rtag}]", lambda: _chronos_forms(price, cutoff))
+            attempt(f"Chronos [{rtag}]", lambda: _chronos_forms(price, cutoff, tag=rtag))
         cov = _cov_cols(scored[0], "scored") if scored is not None else None   # incl. ovn_ when overnight
         for arch, on in [("TFT", use_tft), ("NHiTS", use_nhits)]:
             if not on:
                 continue
             attempt(f"{arch} [cov=scored/{rtag}]",
                     lambda arch=arch: _pf(arch, price, cutoff, cov=cov, n_trials=pf_trials, max_epochs=pf_epochs))
-            attempt(f"{arch} [cov=none/{rtag}]",
-                    lambda arch=arch: _pf(arch, price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
+            if not overnight:   # cov=none is univariate → identical to baseline; skip on the +ovn track
+                attempt(f"{arch} [cov=none/{rtag}]",
+                        lambda arch=arch: _pf(arch, price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
         if use_nbeats:
             attempt(f"NBEATS [{rtag}]",
                     lambda: _pf("NBEATS", price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))

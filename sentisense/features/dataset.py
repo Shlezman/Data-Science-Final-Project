@@ -159,9 +159,14 @@ def _load_finance() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
     # ^IXIC (Nasdaq) added — tech-heavy, strong overnight driver of TA-125. Rename BY TICKER
     # (not positional) so column order from yfinance can't silently mis-map.
     _tk = {"^GSPC": "SP500", "^IXIC": "Nasdaq", "^VIX": "VIX", "BZ=F": "Brent_Oil"}
-    market = yf.download(list(_tk), start=start, end=end, progress=False)["Close"]
-    market = market.rename(columns=_tk)[list(_tk.values())]
-    market_clean = market.add_prefix("Market_")
+    market = yf.download(list(_tk), start=start, end=end, progress=False)["Close"].rename(columns=_tk)
+    present = [c for c in _tk.values() if c in market.columns]   # degrade gracefully if a ticker is missing
+    if "SP500" not in present:
+        raise RuntimeError("yfinance returned no S&P 500 (^GSPC) — finance load failed; retry.")
+    if len(present) < len(_tk):
+        logger.warning("yfinance missing {} — proceeding without them.",
+                       sorted(set(_tk.values()) - set(present)))
+    market_clean = market[present].add_prefix("Market_")
 
     resp = requests.get(f"https://api.frankfurter.app/{start}..?from=USD&to=ILS", timeout=30)
     resp.raise_for_status()

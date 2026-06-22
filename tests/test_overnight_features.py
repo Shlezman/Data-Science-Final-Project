@@ -38,3 +38,24 @@ def test_overnight_emits_block_only_for_present_cols():
     cols = add_overnight_features(df).columns
     assert "ovn_VIX_ret" in cols and "ovn_VIX_2dret" in cols
     assert not any(c.startswith("ovn_SP500") for c in cols)   # absent asset → no column
+
+
+def test_finalize_preserves_overnight_columns():
+    from sentisense.features.dataset import _finalize
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    df = pd.DataFrame({"TA125_Price": [100.0, 101, 102, 103, 104, 105],
+                       "ovn_SP500_ret": [0.01, -0.02, 0.0, 0.03, -0.01, 0.02]}, index=idx)
+    out = _finalize(df, cutoff=pd.Timestamp("2100-01-01"))
+    assert "Target" in out.columns and "ovn_SP500_ret" in out.columns   # ovn_ survives finalize
+
+
+def test_cov_cols_includes_ovn_for_scored_only():
+    import importlib.util as u
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "scripts" / "pipeline_compare.py"
+    spec = u.spec_from_file_location("pc", p); m = u.module_from_spec(spec); spec.loader.exec_module(m)
+    df = pd.DataFrame({"mean_a": [1.0], "ix_b": [2.0], "ovn_SP500_ret": [0.1],
+                       "embc_000": [3.0], "emb_dispersion": [0.2], "emb_count": [4.0], "Target": [1]})
+    assert "ovn_SP500_ret" in m._cov_cols(df, "scored").columns          # overnight reaches forecasters
+    assert "embc_000" not in m._cov_cols(df, "scored").columns           # never the 768-d centroid
+    assert "ovn_SP500_ret" not in m._cov_cols(df, "embedded").columns    # embedded cov = summaries only
