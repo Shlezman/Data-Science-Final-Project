@@ -73,22 +73,27 @@ class TCNClassifier(nn.Module):
 
 
 class PatchTSTClassifier(nn.Module):
-    """Channel-independent patched transformer → mean-pool patches → dense head → 1 logit."""
+    """Patched transformer → mean-pool patches → dense head → 1 logit.
+
+    Each time-patch is flattened across all features (``n_features × patch_len``) into one
+    token, so the transformer batch stays B (one sequence of patches per sample). This scales
+    to high-dim inputs (e.g. the 768-d embedding centroid) — a channel-independent variant
+    (batch B×F) overflows CUDA launch limits at hundreds of channels."""
 
     def __init__(self, n_features: int, *, patch_len: int = 8, stride: int = 4,
                  d_model: int = 64, n_heads: int = 4, depth: int = 2, dropout: float = 0.2,
-                 dense_act: str = "relu", d_dense: int = 32, max_patches: int = 64):
+                 dense_act: str = "relu", d_dense: int = 32, max_patches: int = 256):
         super().__init__()
         self.n_features = n_features
         self.patch_len = patch_len
         self.stride = stride
-        self.embed = nn.Linear(patch_len, d_model)
+        self.embed = nn.Linear(patch_len * n_features, d_model)   # flatten features within a patch
         self.pos = nn.Parameter(torch.randn(1, max_patches, d_model) * 0.02)
         layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model * 2,
                                            dropout=dropout, batch_first=True, activation="gelu")
         self.encoder = nn.TransformerEncoder(layer, depth)
         act = _ACT.get(dense_act, nn.ReLU)
-        self.head = nn.Sequential(nn.Linear(n_features * d_model, d_dense), act(),
+        self.head = nn.Sequential(nn.Linear(d_model, d_dense), act(),
                                   nn.Dropout(dropout), nn.Linear(d_dense, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -96,13 +101,11 @@ class PatchTSTClassifier(nn.Module):
         if t < self.patch_len:                    # pad short windows on the left
             x = F.pad(x.transpose(1, 2), (self.patch_len - t, 0)).transpose(1, 2)
             t = self.patch_len
-        xi = x.transpose(1, 2)                                    # (B, F, T)
-        patches = xi.unfold(dimension=2, size=self.patch_len, step=self.stride)  # (B, F, P, patch_len)
-        p = patches.size(2)
-        tok = self.embed(patches) + self.pos[:, :p, :].unsqueeze(1)   # (B, F, P, d_model)
-        tok = tok.reshape(b * f, p, -1)                          # channel-independent
-        enc = self.encoder(tok).mean(dim=1)                      # (B*F, d_model) — pool patches
-        return self.head(enc.reshape(b, -1)).squeeze(-1)         # (B, F*d_model) → logit
+        patches = x.unfold(dimension=1, size=self.patch_len, step=self.stride)  # (B, P, F, patch_len)
+        p = patches.size(1)
+        tok = self.embed(patches.reshape(b, p, -1)) + self.pos[:, :p, :]        # (B, P, d_model)
+        enc = self.encoder(tok).mean(dim=1)                                     # (B, d_model)
+        return self.head(enc).squeeze(-1)                                       # (B,) logit
 
 
 TCNClassifier.__name__ = "TCNClassifier"

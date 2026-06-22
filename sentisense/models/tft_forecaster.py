@@ -47,15 +47,34 @@ def _make_frame(price: pd.Series, cutoff, covariate_frame: pd.DataFrame | None):
 
 
 def _predicted_returns(model, training, frame: pd.DataFrame) -> pd.Series:
-    """Predict one-step returns over ``frame``; return a Series indexed by predicted time_idx."""
+    """Predict one-step returns over ``frame``; return a Series indexed by predicted time_idx.
+
+    Robust to pytorch-forecasting version differences: the predict result may be a Prediction
+    namedtuple, a (output, index) tuple, or a bare tensor; ``output`` may be a CUDA tensor or
+    a list of per-batch tensors (the 'inhomogeneous array' crash). Normalise to a 1-D CPU
+    array of point forecasts."""
+    import torch
     from pytorch_forecasting import TimeSeriesDataSet
     ds = TimeSeriesDataSet.from_dataset(training, frame, predict=False, stop_randomization=True)
     dl = ds.to_dataloader(train=False, batch_size=128)
     out = model.predict(dl, mode="prediction", return_index=True)
-    preds = getattr(out, "output", out[0] if isinstance(out, tuple) else out)
-    index = getattr(out, "index", out[1] if isinstance(out, tuple) else None)
-    arr = np.asarray(preds).reshape(len(preds), -1)[:, 0]
-    tidx = index["time_idx"].to_numpy() if index is not None else np.arange(len(arr))
+
+    output = getattr(out, "output", None)
+    index = getattr(out, "index", None)
+    if output is None:                                  # tuple/list fallback
+        output = out[0] if isinstance(out, (tuple, list)) else out
+        if index is None and isinstance(out, (tuple, list)) and len(out) > 1:
+            index = out[1]
+    if isinstance(output, (list, tuple)):               # per-batch list → concat
+        output = torch.cat([o if isinstance(o, torch.Tensor) else torch.as_tensor(o) for o in output])
+    if isinstance(output, torch.Tensor):
+        output = output.detach().cpu().numpy()
+    output = np.asarray(output, dtype=np.float32)
+    arr = output.reshape(output.shape[0], -1)[:, 0]     # point forecast per sample
+    if index is not None and "time_idx" in getattr(index, "columns", []):
+        tidx = index["time_idx"].to_numpy()
+    else:
+        tidx = np.arange(len(arr))
     return pd.Series(arr, index=tidx).sort_index()
 
 
@@ -86,8 +105,11 @@ def _param_space(trial, arch: str) -> dict:
 def _build_dataset(frame, cov_cols, arch, train_max_idx, enc):
     from pytorch_forecasting import TimeSeriesDataSet
     rows = frame[frame.time_idx < train_max_idx]
+    # N-BEATS / N-HiTS require a FIXED encoder length (min == max); TFT allows a variable one.
+    fixed_enc = arch in ("NBEATS", "NHiTS")
     common = dict(time_idx="time_idx", target="r", group_ids=["group"], max_encoder_length=enc,
-                  min_encoder_length=max(enc // 2, 5), max_prediction_length=1, allow_missing_timesteps=True)
+                  min_encoder_length=enc if fixed_enc else max(enc // 2, 5),
+                  max_prediction_length=1, allow_missing_timesteps=True)
     if arch in _UNIVARIATE:   # N-BEATS: target-only dataset (library requirement)
         return TimeSeriesDataSet(rows, time_varying_unknown_reals=["r"],
                                  add_relative_time_idx=False, add_target_scales=False, **common)

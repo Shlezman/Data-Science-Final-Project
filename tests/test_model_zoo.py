@@ -132,6 +132,13 @@ def test_patchtst_forward_shape_and_short_window():
     assert m(torch.randn(3, 4, 5)).shape == (3,)    # window < patch_len → left-padded, no crash
 
 
+def test_patchtst_scales_to_high_dim():
+    torch = pytest.importorskip("torch")
+    from sentisense.models.seq_zoo import PatchTSTClassifier
+    m = PatchTSTClassifier(n_features=768, patch_len=8, stride=4, d_model=32, n_heads=4, depth=1)
+    assert m(torch.randn(4, 30, 768)).shape == (4,)   # 768-d embeddings — channel-indep variant CUDA-crashed here
+
+
 def test_zoo_registry_has_all_archs():
     pytest.importorskip("torch")
     from sentisense.models.seq_zoo import ARCHITECTURES
