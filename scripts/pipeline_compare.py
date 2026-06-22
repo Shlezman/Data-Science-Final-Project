@@ -51,7 +51,7 @@ from sentisense.models.backtest import (
 
 _FAR_FUTURE = dt.date(2100, 1, 1)
 _REGIMES = {"CUT": CUTOFF_DATE, "FULL": _FAR_FUTURE}
-_COLS = ["roc_auc", "f1", "mcc", "accuracy", "cum_return", "sharpe", "max_drawdown", "n"]
+_COLS = ["roc_auc", "auc_lo", "auc_hi", "f1", "mcc", "accuracy", "cum_return", "sharpe", "max_drawdown", "n"]
 SEED = 42
 
 
@@ -77,12 +77,34 @@ def _youden(labels: np.ndarray, scores: np.ndarray) -> float:
     return float(thr[int(np.argmax(tpr - fpr))])
 
 
+def _auc_ci(scores: np.ndarray, labels: np.ndarray, n_boot: int = 500) -> tuple[float, float]:
+    """95% bootstrap CI for ROC-AUC. If the CI straddles 0.5, the cell is not distinguishable
+    from chance — the honest read on a near-EMH task. Fixed seed → reproducible."""
+    from sklearn.metrics import roc_auc_score
+    if len(np.unique(labels)) < 2:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(SEED)
+    n = len(labels)
+    aucs = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(labels[idx])) > 1:
+            aucs.append(roc_auc_score(labels[idx], scores[idx]))
+    if not aucs:
+        return (float("nan"), float("nan"))
+    return (float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5)))
+
+
 def _row(scores: pd.Series, labels: pd.Series, price: pd.Series, threshold: float = 0.5) -> dict:
-    """Uniform scorecard for a model's (scores, labels) at ``threshold`` — reuses metrics_at + backtest."""
-    m = direction_metrics(scores.to_numpy(), labels.to_numpy(), threshold)
+    """Uniform scorecard for a model's (scores, labels) at ``threshold`` — reuses metrics_at +
+    backtest, plus a bootstrap ROC-AUC CI (auc_lo/auc_hi) so the board shows whether the cell
+    is distinguishable from chance."""
+    s, y = scores.to_numpy(), labels.to_numpy()
+    m = direction_metrics(s, y, threshold)
     nxt = next_day_returns(price, scores.index)
-    st = strategy_stats((scores.to_numpy() > threshold).astype(float), nxt)
-    return {**m, **st, "n": int(len(scores))}
+    st = strategy_stats((s > threshold).astype(float), nxt)
+    lo, hi = _auc_ci(s, y)
+    return {**m, **st, "n": int(len(scores)), "auc_lo": lo, "auc_hi": hi}
 
 
 # ── per-model adapters → (scores, labels) on an out-of-sample window ──────────────
