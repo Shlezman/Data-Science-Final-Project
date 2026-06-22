@@ -43,11 +43,20 @@ import pandas as pd
 from loguru import logger
 
 from sentisense.constants import CUTOFF_DATE, TA125_CSV
-from sentisense.models.backtest import (
-    direction_metrics,
-    next_day_returns,
-    strategy_stats,
-)
+
+try:
+    from sentisense.models.backtest import (
+        direction_metrics,
+        next_day_returns,
+        strategy_stats,
+    )
+except ModuleNotFoundError as exc:  # e.g. sklearn missing → wrong/slim env (the LLM 'processing-engine' venv)
+    raise SystemExit(
+        f"Missing modeling dependency ({exc.name}). This script runs in the ROOT 'sentisense' "
+        "project, NOT --project processing_engine. From the repo root:\n"
+        "    uv run --extra finance --extra ml --extra tft --extra chronos \\\n"
+        "        python scripts/pipeline_compare.py [args]"
+    ) from exc
 
 _FAR_FUTURE = dt.date(2100, 1, 1)
 _REGIMES = {"CUT": CUTOFF_DATE, "FULL": _FAR_FUTURE}
