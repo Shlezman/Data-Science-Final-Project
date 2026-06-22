@@ -279,7 +279,8 @@ def _cov_cols(df: pd.DataFrame, dtype: str) -> pd.DataFrame | None:
     """Forecaster covariate frame for ``dtype`` (low-dim signal cols only — never the 768-d
     embedding centroid, which would blow up a TFT). Returns None if no usable cols."""
     if dtype == "scored":
-        cols = [c for c in df.columns if c.startswith(("mean_", "ix_"))]
+        # news daily-mean + interactions, plus the overnight global block when present (ovn_)
+        cols = [c for c in df.columns if c.startswith(("mean_", "ix_", "ovn_"))]
     else:                       # embedded/fused → the cheap embedding summaries, not embc_*
         cols = [c for c in df.columns if c in ("emb_dispersion", "emb_count")]
     return df[cols] if cols else None
@@ -289,6 +290,7 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
                       use_seq: bool = True, use_chronos: bool = True, use_tft: bool = True,
                       use_nhits: bool = True, use_nbeats: bool = True, seq_trials: int = 20,
                       pf_trials: int = 8, pf_epochs: int = 30, xgb_trials: int = 40,
+                      overnight: bool = False,
                       cache_path: str = "leaderboard_cache.json", fresh: bool = False):
     """Grid: model × data-type (scored/embedded/fused) × regime (CUT/FULL).
 
@@ -350,35 +352,36 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
 
     for regime in regimes:
         cutoff = _REGIMES[regime]
-        logger.info("══ regime {} (cutoff {}) ══", regime, pd.Timestamp(cutoff).date())
+        rtag = f"{regime}+ovn" if overnight else regime   # label/cache/study tag (overnight track)
+        logger.info("══ regime {} (cutoff {}, overnight={}) ══", regime, pd.Timestamp(cutoff).date(), overnight)
 
         # Build each data-type's frames for this regime: dtype → (tabular_df, sequence_df).
         # Skip the (heavy, esp. embedded/fused 3M-vector) build when all its cells are cached.
         frames: dict[str, tuple] = {}
         if "scored" in data_types:
-            mt, ml = build_datasets(cutoff=cutoff)
+            mt, ml = build_datasets(cutoff=cutoff, overnight=overnight)
             frames["scored"] = (mt, ml)
         for dt_name, builder in (("embedded", build_embedding_dataset), ("fused", build_fused_dataset)):
             if dt_name not in data_types:
                 continue
-            if _all_cached(_classifier_labels(dt_name, regime, use_seq)):
-                logger.info("{}/{}: all cells cached — skipping dataset build", dt_name, regime)
-                for lab in _classifier_labels(dt_name, regime, use_seq):
+            if _all_cached(_classifier_labels(dt_name, rtag, use_seq)):
+                logger.info("{}/{}: all cells cached — skipping dataset build", dt_name, rtag)
+                for lab in _classifier_labels(dt_name, rtag, use_seq):
                     restore(lab)
                 continue
-            df = builder(cutoff=cutoff)
+            df = builder(cutoff=cutoff, overnight=overnight)
             if df.empty:
-                status[f"[{dt_name}/{regime}]"] = "skip: no embeddings cached (run embed stage)"
+                status[f"[{dt_name}/{rtag}]"] = "skip: no embeddings cached (run embed stage)"
             else:
                 frames[dt_name] = (df, df)
 
         # ── Classifiers: every model × every available data type ──────────────────
         for dtype, (tab, seq) in frames.items():
-            sfx = f"{dtype}/{regime}"
+            sfx = f"{dtype}/{rtag}"
             attempt(f"XGBoost [{sfx}]", lambda tab=tab: _xgb(tab, n_trials=xgb_trials))
             if use_seq:
                 for arch in _SEQ_ARCHS:
-                    study = f"sentisense_{arch.lower()}_{dtype}_{regime.lower()}"
+                    study = f"sentisense_{arch.lower()}_{dtype}_{regime.lower()}{'_ovn' if overnight else ''}"
                     attempt(f"{arch} [{sfx}]",
                             lambda seq=seq, arch=arch, study=study:
                                 _seq(seq, arch, tune_trials=seq_trials, study_name=study))
@@ -386,26 +389,26 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
         # Buy&Hold benchmark (data-type-independent) on the last-15% window.
         if "scored" in frames:
             mt = frames["scored"][0]
-            attempt(f"Buy&Hold [{regime}]",
+            attempt(f"Buy&Hold [{rtag}]",
                     lambda mt=mt: _buy_and_hold(price, mt.index[int(len(mt) * 0.85):]))
 
-        # ── Forecasters (price→direction); scored covariates + univariate, per regime ──
+        # ── Forecasters (price→direction); scored (+overnight) covariates + univariate ──
         scored = frames.get("scored")
         if use_timesfm and scored is not None:
-            attempt(f"TimesFM [{regime}]",
+            attempt(f"TimesFM [{rtag}]",
                     lambda: _timesfm_forms(scored[0], scored[1], price, cutoff))
         if use_chronos:
-            attempt(f"Chronos [{regime}]", lambda: _chronos_forms(price, cutoff))
-        cov = _cov_cols(scored[0], "scored") if scored is not None else None
+            attempt(f"Chronos [{rtag}]", lambda: _chronos_forms(price, cutoff))
+        cov = _cov_cols(scored[0], "scored") if scored is not None else None   # incl. ovn_ when overnight
         for arch, on in [("TFT", use_tft), ("NHiTS", use_nhits)]:
             if not on:
                 continue
-            attempt(f"{arch} [cov=scored/{regime}]",
+            attempt(f"{arch} [cov=scored/{rtag}]",
                     lambda arch=arch: _pf(arch, price, cutoff, cov=cov, n_trials=pf_trials, max_epochs=pf_epochs))
-            attempt(f"{arch} [cov=none/{regime}]",
+            attempt(f"{arch} [cov=none/{rtag}]",
                     lambda arch=arch: _pf(arch, price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
         if use_nbeats:
-            attempt(f"NBEATS [{regime}]",
+            attempt(f"NBEATS [{rtag}]",
                     lambda: _pf("NBEATS", price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
 
     board = pd.DataFrame({label: {c: r.get(c) for c in _COLS} for label, r in rows.items()}).T
@@ -444,6 +447,8 @@ def main() -> None:
     parser.add_argument("--pf-epochs", type=int, default=30,
                         help="Max epochs per pytorch-forecasting fit (lower = faster smoke checks).")
     parser.add_argument("--xgb-trials", type=int, default=40, help="Optuna trials for XGBoost.")
+    parser.add_argument("--overnight", action="store_true",
+                        help="Add the open(T+1) overnight global-feature track (cells tagged +ovn).")
     parser.add_argument("--cache", default="leaderboard_cache.json",
                         help="Per-cell result cache (resumes finished cells across runs).")
     parser.add_argument("--fresh", action="store_true", help="Ignore the cache; recompute every cell.")
@@ -457,7 +462,7 @@ def main() -> None:
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
         seq_trials=args.seq_trials, pf_trials=args.pf_trials, pf_epochs=args.pf_epochs,
-        xgb_trials=args.xgb_trials, cache_path=args.cache, fresh=args.fresh)
+        xgb_trials=args.xgb_trials, overnight=args.overnight, cache_path=args.cache, fresh=args.fresh)
     md = _to_markdown(board) if not board.empty else "_(no cells produced output)_"
 
     best_line = ""
