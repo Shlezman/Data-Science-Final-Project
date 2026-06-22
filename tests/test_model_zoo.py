@@ -90,11 +90,34 @@ def test_nbeats_is_univariate_marker():
     assert "NBEATS" in _UNIVARIATE and "TFT" not in _UNIVARIATE
 
 
-def test_cov_cols_excludes_768d_centroid():
+def _load_pc():
     import importlib.util as u
     from pathlib import Path
     p = Path(__file__).resolve().parent.parent / "scripts" / "pipeline_compare.py"
     spec = u.spec_from_file_location("pc", p); m = u.module_from_spec(spec); spec.loader.exec_module(m)
+    return m
+
+
+def test_leaderboard_cache_roundtrip(tmp_path):
+    m = _load_pc()
+    f = str(tmp_path / "c.json")
+    payload = {"GRU [scored/CUT]": {"GRU [scored/CUT]": {"roc_auc": 0.57, "n": 242}}}
+    m._save_cache(f, payload)
+    assert m._load_cache(f, fresh=False) == payload          # roundtrips
+    assert m._load_cache(f, fresh=True) == {}                # --fresh ignores it
+    assert m._load_cache(str(tmp_path / "nope.json"), fresh=False) == {}   # missing → empty
+
+
+def test_classifier_labels():
+    m = _load_pc()
+    assert m._classifier_labels("scored", "FULL", use_seq=False) == ["XGBoost [scored/FULL]"]
+    assert m._classifier_labels("embedded", "CUT", use_seq=True) == [
+        "XGBoost [embedded/CUT]", "LSTM [embedded/CUT]", "GRU [embedded/CUT]",
+        "TCN [embedded/CUT]", "PatchTST [embedded/CUT]"]
+
+
+def test_cov_cols_excludes_768d_centroid():
+    m = _load_pc()
     df = pd.DataFrame({"mean_x": [1.0], "ix_y": [2.0], "embc_000": [3.0],
                        "emb_dispersion": [0.1], "emb_count": [4.0], "Target": [1]})
     assert list(m._cov_cols(df, "scored").columns) == ["mean_x", "ix_y"]            # news only

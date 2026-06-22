@@ -20,17 +20,23 @@ Chronos/TimesFM sweep context length + threshold). Heavy rows need extra deps + 
 (``ml`` for the torch zoo, ``tft``/``chronos``/``timesfm`` extras); each model is guarded
 so a missing dep / failure skips just that row. Writes leaderboard.md by default.
 
+Resumable: each finished cell's metrics are cached to leaderboard_cache.json the moment it
+completes, so a re-run (or crash-resume) reuses done cells and only computes new/changed
+ones — `--fresh` ignores the cache.
+
 Run (server-side, from repo root):
     uv run python scripts/pipeline_compare.py                        # full board → leaderboard.md
     uv run python scripts/pipeline_compare.py --regimes CUT          # one regime
     uv run python scripts/pipeline_compare.py --no-timesfm --no-tft  # subset
-    uv run python scripts/pipeline_compare.py --seq-trials 40 --tft-trials 15
+    uv run python scripts/pipeline_compare.py --fresh                # recompute everything
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -238,6 +244,37 @@ _DATA_TYPES = ("scored", "embedded", "fused")
 _SEQ_ARCHS = ("LSTM", "GRU", "TCN", "PatchTST")
 
 
+def _load_cache(path: str, fresh: bool) -> dict:
+    """Per-cell result cache {attempt_label: {row_label: metrics}}; {} if fresh/absent/bad."""
+    if fresh or not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:  # noqa: BLE001 — a corrupt cache shouldn't block a run
+        logger.warning("ignoring unreadable cache {}: {}", path, str(exc)[:80])
+        return {}
+
+
+def _save_cache(path: str, cache: dict) -> None:
+    """Atomically persist the cache after each cell (crash-safe resume)."""
+    if not path:
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cache, f)
+    os.replace(tmp, path)
+
+
+def _classifier_labels(dtype: str, regime: str, use_seq: bool) -> list[str]:
+    """Deterministic cell labels a data-type frame feeds — to skip its (heavy) build when cached."""
+    sfx = f"{dtype}/{regime}"
+    labs = [f"XGBoost [{sfx}]"]
+    if use_seq:
+        labs += [f"{a} [{sfx}]" for a in _SEQ_ARCHS]
+    return labs
+
+
 def _cov_cols(df: pd.DataFrame, dtype: str) -> pd.DataFrame | None:
     """Forecaster covariate frame for ``dtype`` (low-dim signal cols only — never the 768-d
     embedding centroid, which would blow up a TFT). Returns None if no usable cols."""
@@ -251,24 +288,43 @@ def _cov_cols(df: pd.DataFrame, dtype: str) -> pd.DataFrame | None:
 def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA_TYPES,
                       use_seq: bool = True, use_chronos: bool = True, use_tft: bool = True,
                       use_nhits: bool = True, use_nbeats: bool = True, seq_trials: int = 20,
-                      pf_trials: int = 8, pf_epochs: int = 30, xgb_trials: int = 40):
+                      pf_trials: int = 8, pf_epochs: int = 30, xgb_trials: int = 40,
+                      cache_path: str = "leaderboard_cache.json", fresh: bool = False):
     """Grid: model × data-type (scored/embedded/fused) × regime (CUT/FULL).
 
-    Returns ``(board, status)`` — the metrics DataFrame and a per-cell ran/skip map so the
-    run self-reports what executed (no more silent skips). Classifiers run on every data
-    type; forecasters use scored covariates (+ univariate) — the 768-d embedding centroid is
-    NOT fed as covariates (it would overwhelm a TFT)."""
+    Returns ``(board, status)`` — the metrics DataFrame and a per-cell ran/cached/skip map.
+    Each completed cell's metrics are cached to ``cache_path`` immediately, so a re-run (or a
+    crash-resume) reuses finished cells and only recomputes new/changed ones; ``fresh`` ignores
+    the cache. Classifiers run on every data type; forecasters use scored covariates (+
+    univariate) — the 768-d embedding centroid is NOT fed as covariates (it would overwhelm TFT)."""
     from sentisense.features import build_datasets, build_embedding_dataset, build_fused_dataset
     price = _load_price()
     rows: dict[str, dict] = {}
     status: dict[str, str] = {}
+    cache = _load_cache(cache_path, fresh)
 
-    def add(label, scores, labels, threshold=0.5):
-        rows[label] = _row(scores, labels, price, threshold)
-        status[label] = "ran"
+    def restore(label) -> bool:
+        """Load a cell's cached rows into the board. True if it was cached."""
+        if fresh or label not in cache:
+            return False
+        for rl, row in cache[label].items():
+            rows[rl] = row
+            status[rl] = "cached"
+        return True
 
     def attempt(label, thunk):
-        """Run a cell; record ran/skip. thunk → (s,lab) | (s,lab,thr) | {name:(s,lab,thr)} | None."""
+        """Cached → reuse; else run, emit row(s), persist. thunk → (s,lab)|(s,lab,thr)|{name:(...)}|None."""
+        if restore(label):
+            logger.info("{} — from cache", label)
+            return
+        produced: dict[str, dict] = {}
+
+        def emit(rl, s, lab, thr=0.5):
+            row = _row(s, lab, price, thr)
+            rows[rl] = row
+            produced[rl] = row
+            status[rl] = "ran"
+
         try:
             res = thunk()
         except Exception as exc:  # noqa: BLE001 — one cell must not sink the grid
@@ -280,33 +336,41 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
             logger.warning("{} skipped: no output", label)
         elif isinstance(res, dict):
             for nm, (s, lab, thr) in res.items():
-                add(nm, s, lab, thr)
+                emit(nm, s, lab, thr)
         elif len(res) == 3:
-            add(label, res[0], res[1], res[2])
+            emit(label, res[0], res[1], res[2])
         else:
-            add(label, res[0], res[1])
+            emit(label, res[0], res[1])
+        if produced:                       # persist immediately → crash-safe resume
+            cache[label] = produced
+            _save_cache(cache_path, cache)
+
+    def _all_cached(labels) -> bool:
+        return bool(labels) and not fresh and all(label in cache for label in labels)
 
     for regime in regimes:
         cutoff = _REGIMES[regime]
         logger.info("══ regime {} (cutoff {}) ══", regime, pd.Timestamp(cutoff).date())
 
         # Build each data-type's frames for this regime: dtype → (tabular_df, sequence_df).
+        # Skip the (heavy, esp. embedded/fused 3M-vector) build when all its cells are cached.
         frames: dict[str, tuple] = {}
         if "scored" in data_types:
             mt, ml = build_datasets(cutoff=cutoff)
             frames["scored"] = (mt, ml)
-        if "embedded" in data_types:
-            emb = build_embedding_dataset(cutoff=cutoff)
-            if emb.empty:
-                status[f"[embedded/{regime}]"] = "skip: no embeddings cached (run embed stage)"
+        for dt_name, builder in (("embedded", build_embedding_dataset), ("fused", build_fused_dataset)):
+            if dt_name not in data_types:
+                continue
+            if _all_cached(_classifier_labels(dt_name, regime, use_seq)):
+                logger.info("{}/{}: all cells cached — skipping dataset build", dt_name, regime)
+                for lab in _classifier_labels(dt_name, regime, use_seq):
+                    restore(lab)
+                continue
+            df = builder(cutoff=cutoff)
+            if df.empty:
+                status[f"[{dt_name}/{regime}]"] = "skip: no embeddings cached (run embed stage)"
             else:
-                frames["embedded"] = (emb, emb)
-        if "fused" in data_types:
-            fused = build_fused_dataset(cutoff=cutoff)
-            if fused.empty:
-                status[f"[fused/{regime}]"] = "skip: no embeddings cached (run embed stage)"
-            else:
-                frames["fused"] = (fused, fused)
+                frames[dt_name] = (df, df)
 
         # ── Classifiers: every model × every available data type ──────────────────
         for dtype, (tab, seq) in frames.items():
@@ -380,6 +444,9 @@ def main() -> None:
     parser.add_argument("--pf-epochs", type=int, default=30,
                         help="Max epochs per pytorch-forecasting fit (lower = faster smoke checks).")
     parser.add_argument("--xgb-trials", type=int, default=40, help="Optuna trials for XGBoost.")
+    parser.add_argument("--cache", default="leaderboard_cache.json",
+                        help="Per-cell result cache (resumes finished cells across runs).")
+    parser.add_argument("--fresh", action="store_true", help="Ignore the cache; recompute every cell.")
     parser.add_argument("--out", default="leaderboard.md", help="Path to write the markdown table.")
     args = parser.parse_args()
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
@@ -390,7 +457,7 @@ def main() -> None:
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
         seq_trials=args.seq_trials, pf_trials=args.pf_trials, pf_epochs=args.pf_epochs,
-        xgb_trials=args.xgb_trials)
+        xgb_trials=args.xgb_trials, cache_path=args.cache, fresh=args.fresh)
     md = _to_markdown(board) if not board.empty else "_(no cells produced output)_"
 
     best_line = ""
@@ -401,11 +468,13 @@ def main() -> None:
                           if c in board.columns and pd.notna(board.loc[bi, c]))
         best_line = f"**Ultimate model (best out-of-sample ROC-AUC):** `{bi}` — {parts}"
 
-    # Coverage report — every cell self-reports ran vs skipped(+reason). No more silent skips.
+    # Coverage report — every cell self-reports ran / cached / skipped(+reason). No silent skips.
     ran = sorted(k for k, v in status.items() if v == "ran")
-    skipped = sorted((k, v) for k, v in status.items() if v != "ran")
-    cov_lines = [f"## Coverage — {len(ran)} ran, {len(skipped)} skipped", "",
-                 f"**Ran ({len(ran)}):** " + (", ".join(f"`{r}`" for r in ran) or "—"), ""]
+    cached = sorted(k for k, v in status.items() if v == "cached")
+    skipped = sorted((k, v) for k, v in status.items() if v not in ("ran", "cached"))
+    cov_lines = [f"## Coverage — {len(ran)} ran, {len(cached)} cached, {len(skipped)} skipped", "",
+                 f"**Ran ({len(ran)}):** " + (", ".join(f"`{r}`" for r in ran) or "—"), "",
+                 f"**Cached ({len(cached)}):** " + (", ".join(f"`{r}`" for r in cached) or "—"), ""]
     if skipped:
         cov_lines.append("**Skipped (why):**")
         cov_lines += [f"- `{k}` — {v.removeprefix('skip: ')}" for k, v in skipped]

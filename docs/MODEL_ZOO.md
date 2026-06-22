@@ -23,6 +23,15 @@ Row labels: `model [datatype/regime]` (classifiers), `model [cov=scored|none/reg
 `model [regime]` (forecasters). Each (model, data-type, regime) classifier cell gets its own
 resumable Optuna study (`sentisense_<arch>_<dtype>_<regime>`).
 
+## Resumable result cache
+Each finished cell's metrics are written to `leaderboard_cache.json` the instant it
+completes. A re-run (or crash-resume) **reuses cached cells and only computes new/changed
+ones** — so adding a model or fixing one cell costs that cell, not the whole grid. When a
+data-type's cells are all cached, its (heavy, esp. embedded/fused 3M-vector) dataset build
+is skipped too. `--fresh` ignores the cache; `--cache PATH` changes the file. Note: changing
+HPO budgets (`--seq-trials`/`--pf-trials`/`--xgb-trials`) does **not** auto-invalidate — use
+`--fresh` (or delete the cache) to re-tune.
+
 ## Coverage report (no more silent skips)
 `leaderboard.md` ends with a **Coverage** section listing every cell as ran or
 `skipped — <reason>`, and the run logs the same. If a model is missing from the table, its
