@@ -58,8 +58,11 @@ tft = [
 ]
 # Chronos (Amazon) zero-shot foundation forecaster (leaderboard Chronos rows). Apache-2.0.
 # Install: uv sync --extra ml --extra chronos   (pulls transformers; torch from `ml`).
+# transformers is pinned < 4.49: newer releases reference torch.float8_e8m0fnu (a torch-2.7
+# dtype) which the cu121-pinned torch 2.5.1 lacks → import crash. 4.48.x works with torch 2.5.
 chronos = [
     "chronos-forecasting>=1.2",
+    "transformers>=4.40,<4.49",
 ]
 # TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
 # PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
