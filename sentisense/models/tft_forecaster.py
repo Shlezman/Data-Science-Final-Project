@@ -75,7 +75,10 @@ def _predicted_returns(model, training, frame: pd.DataFrame) -> pd.Series:
         tidx = index["time_idx"].to_numpy()
     else:
         tidx = np.arange(len(arr))
-    return pd.Series(arr, index=tidx).sort_index()
+    # Dedupe time_idx (keep last): overlapping windows can predict the same step twice, and a
+    # duplicated index makes downstream `.loc[t]` return a vector → the 'inhomogeneous array' crash.
+    s = pd.Series(np.asarray(arr, dtype=np.float32).ravel(), index=np.asarray(tidx).ravel())
+    return s[~s.index.duplicated(keep="last")].sort_index()
 
 
 def _param_space(trial, arch: str) -> dict:
@@ -184,8 +187,8 @@ def pf_directions(arch: str, price: pd.Series, cutoff, *, covariate_frame: pd.Da
         rows = [(t, preds.loc[t]) for t in preds.index if lo_idx <= t < hi_idx and 1 <= t < n]
         if not rows:
             return pd.Series(dtype=float), pd.Series(dtype=float)
-        t_arr = np.array([t for t, _ in rows])
-        f_arr = np.array([f for _, f in rows])
+        t_arr = np.array([int(t) for t, _ in rows])
+        f_arr = np.array([float(np.ravel(f)[0]) for _, f in rows], dtype=float)   # force scalar per t
         dec_dates = dates[t_arr - 1]                    # decision day d; label is r at d+1 (= t)
         labels = (r[t_arr] > 0).astype(int)
         return (pd.Series(forecast_to_proba(f_arr), index=dec_dates, name="proba"),
@@ -200,7 +203,9 @@ def pf_directions(arch: str, price: pd.Series, cutoff, *, covariate_frame: pd.Da
             if len(s) and len(np.unique(lab)) > 1:
                 return float(roc_auc_score(lab, s))
         except Exception as exc:  # noqa: BLE001 — bad config shouldn't kill the study
+            import traceback
             logger.warning("{} trial failed: {}", arch, str(exc)[:120])
+            logger.debug("{} trial traceback:\n{}", arch, traceback.format_exc())   # full cause if needed
         return 0.5
 
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=SEED))
