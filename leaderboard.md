@@ -1,12 +1,58 @@
-SentiSense model leaderboard (out-of-sample)
+# SentiSense model leaderboard (out-of-sample)
 
-model [datatype]roc_aucf1accuracyXGBoost [embedded]0.52170.52890.5347LSTM [embedded]0.47150.3840.4706GRU [embedded]0.50910.34140.491TCN [embedded]0.46750.42750.5022PatchTST [embedded]0.45520.44920.4513XGBoost [fused]0.53960.53730.5417LSTM [fused]0.51150.47970.4802GRU [fused]0.46790.44010.4669TCN [fused]0.53030.5280.5318PatchTST [fused]0.5040.5120.5126XGBoost [scored]0.51290.49970.5035LSTM [scored]0.52040.39180.5041GRU [scored]0.57550.41180.5289TCN [scored]0.54220.49920.5094PatchTST [scored]0.5270.43210.5035Buy&Hold0.50.33020.4931Chronos-zeroshot0.42660.36170.5538Chronos-tuned0.44920.41810.5381TFT [cov=scored]0.51190.50020.5017TFT [cov=none]0.53860.52120.5296NHiTS [cov=scored]0.4830.50330.5087NHiTS [cov=none]0.48080.48120.5157NBEATS0.51060.4980.4983XGBoost [scored]0.53380.50440.5079LSTM [scored]0.51250.49380.4958GRU [scored]0.49670.42210.4644TCN [scored]0.56690.52810.531PatchTST [scored]0.45410.44150.5208XGBoost [embedded]0.53140.51290.589LSTM [embedded]0.51280.53170.5429GRU [embedded]0.46420.45930.482TCN [embedded]0.53270.32690.4238PatchTST [embedded]0.47260.38310.5283XGBoost [fused]0.52530.46160.5759LSTM [fused]0.47240.44270.5402GRU [fused]0.53590.52380.5568TCN [fused]0.45520.46670.4709PatchTST [fused]0.51120.36790.5553Buy&Hold0.50.36650.5785TFT [cov=scored]0.55240.50330.5366TFT [cov=none]0.53910.41480.5916NHiTS [cov=scored]0.48350.48690.4869NHiTS [cov=none]0.48370.48940.4895NBEATS0.52270.5080.5105
+| model [datatype] | roc_auc | f1 | accuracy |
+|---|---|---|---|
+| XGBoost [embedded] | 0.5217 | 0.5289 | 0.5347 |
+| LSTM [embedded] | 0.4715 | 0.3840 | 0.4706 |
+| GRU [embedded] | 0.5091 | 0.3414 | 0.4910 |
+| TCN [embedded] | 0.4675 | 0.4275 | 0.5022 |
+| PatchTST [embedded] | 0.4552 | 0.4492 | 0.4513 |
+| XGBoost [fused] | 0.5396 | 0.5373 | 0.5417 |
+| LSTM [fused] | 0.5115 | 0.4797 | 0.4802 |
+| GRU [fused] | 0.4679 | 0.4401 | 0.4669 |
+| TCN [fused] | 0.5303 | 0.5280 | 0.5318 |
+| PatchTST [fused] | 0.5040 | 0.5120 | 0.5126 |
+| XGBoost [scored] | 0.5129 | 0.4997 | 0.5035 |
+| LSTM [scored] | 0.5204 | 0.3918 | 0.5041 |
+| GRU [scored] | 0.5755 | 0.4118 | 0.5289 |
+| TCN [scored] | 0.5422 | 0.4992 | 0.5094 |
+| PatchTST [scored] | 0.5270 | 0.4321 | 0.5035 |
+| Buy&Hold | 0.5000 | 0.3302 | 0.4931 |
+| Chronos-zeroshot | 0.4266 | 0.3617 | 0.5538 |
+| Chronos-tuned | 0.4492 | 0.4181 | 0.5381 |
+| TFT [cov=scored] | 0.5119 | 0.5002 | 0.5017 |
+| TFT [cov=none] | 0.5386 | 0.5212 | 0.5296 |
+| NHiTS [cov=scored] | 0.4830 | 0.5033 | 0.5087 |
+| NHiTS [cov=none] | 0.4808 | 0.4812 | 0.5157 |
+| NBEATS | 0.5106 | 0.4980 | 0.4983 |
+| XGBoost [scored] | 0.5338 | 0.5044 | 0.5079 |
+| LSTM [scored] | 0.5125 | 0.4938 | 0.4958 |
+| GRU [scored] | 0.4967 | 0.4221 | 0.4644 |
+| TCN [scored] | 0.5669 | 0.5281 | 0.5310 |
+| PatchTST [scored] | 0.4541 | 0.4415 | 0.5208 |
+| XGBoost [embedded] | 0.5314 | 0.5129 | 0.5890 |
+| LSTM [embedded] | 0.5128 | 0.5317 | 0.5429 |
+| GRU [embedded] | 0.4642 | 0.4593 | 0.4820 |
+| TCN [embedded] | 0.5327 | 0.3269 | 0.4238 |
+| PatchTST [embedded] | 0.4726 | 0.3831 | 0.5283 |
+| XGBoost [fused] | 0.5253 | 0.4616 | 0.5759 |
+| LSTM [fused] | 0.4724 | 0.4427 | 0.5402 |
+| GRU [fused] | 0.5359 | 0.5238 | 0.5568 |
+| TCN [fused] | 0.4552 | 0.4667 | 0.4709 |
+| PatchTST [fused] | 0.5112 | 0.3679 | 0.5553 |
+| Buy&Hold | 0.5000 | 0.3665 | 0.5785 |
+| TFT [cov=scored] | 0.5524 | 0.5033 | 0.5366 |
+| TFT [cov=none] | 0.5391 | 0.4148 | 0.5916 |
+| NHiTS [cov=scored] | 0.4835 | 0.4869 | 0.4869 |
+| NHiTS [cov=none] | 0.4837 | 0.4894 | 0.4895 |
+| NBEATS | 0.5227 | 0.5080 | 0.5105 |
 
-Ultimate model (best out-of-sample ROC-AUC): GRU [scored] — roc_auc=0.5755, f1=0.4118
+---
 
-Coverage — 23 ran, 21 cached, 2 skipped
+**Ultimate model (best out-of-sample ROC-AUC):** `GRU [scored]` — roc_auc=0.5755, f1=0.4118
 
-Ran (23): Buy&Hold, Chronos-tuned, Chronos-zeroshot, GRU [embedded], GRU [fused], GRU [scored], LSTM [embedded], LSTM [fused], LSTM [scored], NBEATS, NHiTS [cov=none], NHiTS [cov=scored], PatchTST [embedded], PatchTST [fused], PatchTST [scored], TCN [embedded], TCN [fused], TCN [scored], TFT [cov=none], TFT [cov=scored], XGBoost [embedded], XGBoost [fused], XGBoost [scored]
+## Coverage — 23 ran, 21 cached, 2 skipped
 
-Cached (21): Buy&Hold, GRU [embedded], GRU [fused], GRU [scored], LSTM [embedded], LSTM [fused], LSTM [scored], NBEATS, NHiTS [cov=none], NHiTS [cov=scored], PatchTST [embedded], PatchTST [fused], PatchTST [scored], TCN [embedded], TCN [fused], TCN [scored], TFT [cov=none], TFT [cov=scored], XGBoost [embedded], XGBoost [fused], XGBoost [scored]
+**Ran (23):** Buy&Hold, Chronos-tuned, Chronos-zeroshot, GRU [embedded], GRU [fused], GRU [scored], LSTM [embedded], LSTM [fused], LSTM [scored], NBEATS, NHiTS [cov=none], NHiTS [cov=scored], PatchTST [embedded], PatchTST [fused], PatchTST [scored], TCN [embedded], TCN [fused], TCN [scored], TFT [cov=none], TFT [cov=scored], XGBoost [embedded], XGBoost [fused], XGBoost [scored]
 
+**Cached (21):** Buy&Hold, GRU [embedded], GRU [fused], GRU [scored], LSTM [embedded], LSTM [fused], LSTM [scored], NBEATS, NHiTS [cov=none], NHiTS [cov=scored], PatchTST [embedded], PatchTST [fused], PatchTST [scored], TCN [embedded], TCN [fused], TCN [scored], TFT [cov=none], TFT [cov=scored], XGBoost [embedded], XGBoost [fused], XGBoost [scored]
