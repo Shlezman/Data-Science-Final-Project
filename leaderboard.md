@@ -1,6 +1,6 @@
 # SentiSense model leaderboard (out-of-sample)
 
-Here is the updated table with the **Buy&Hold** entries removed, still sorted by **accuracy** in descending order:
+Here is the table sorted by **accuracy** in descending order:
 
 | model [datatype] | roc_auc | f1 | accuracy |
 | --- | --- | --- | --- |
