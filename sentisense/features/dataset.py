@@ -473,6 +473,23 @@ def _finance_base(extra_daily_features: pd.DataFrame | None = None):
     return base, trading_days, price_full
 
 
+def _join_embedding_derived(merged: pd.DataFrame, engine, cutoff,
+                            trading_days: pd.DatetimeIndex) -> pd.DataFrame:
+    """LEFT-join the leak-safe derived PCA/cluster features (``embpca_*``/``embclus_dist_*``).
+
+    Rolled Fri/Sat → Sun like the centroid. No-op if the ``daily_embedding_derived`` table is
+    absent/empty (i.e. ``scripts/build_embedding_derived.py`` hasn't been run yet).
+    """
+    from sentisense.embed.derived import load_embedding_derived
+
+    der = load_embedding_derived(engine, cutoff)
+    if der.empty:
+        return merged
+    der_td = _roll_to_trading_days(der, trading_days, agg="mean")
+    logger.info("Joined {} derived embedding features.", der_td.shape[1])
+    return merged.join(der_td, how="left")
+
+
 def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool = False) -> pd.DataFrame:
     """Daily e5-centroid dataset for the 'embedded data' LSTM (PCA applied at train time).
 
@@ -504,6 +521,7 @@ def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool 
     emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
     merged = base.join(emb_td, how="left").join(extras_td, how="left")
+    merged = _join_embedding_derived(merged, engine, cutoff, trading_days)
     feat = add_cross_asset_features(add_ta125_features(merged, price_full))
     if overnight:
         feat = add_overnight_features(feat)
@@ -572,6 +590,7 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
 
     merged = base.join(ps_td, how="left").join(emb_td, how="left").join(extras_td, how="left")
+    merged = _join_embedding_derived(merged, engine, cutoff, trading_days)
     feat = add_cross_asset_features(add_ta125_features(merged, price_full))
     if overnight:
         feat = add_overnight_features(feat)

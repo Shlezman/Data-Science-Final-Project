@@ -39,6 +39,13 @@ CLUSTER_K: int = _int("SENTISENSE_CLUSTER_K", 8)
 CLUSTER_REFIT_EVERY: int = _int("SENTISENSE_CLUSTER_REFIT_EVERY", 30)
 # Daily-centroid embedding dataset: PCA target dim (train-fit). 0 = no PCA.
 EMBED_PCA_COMPONENTS: int = _int("SENTISENSE_EMBED_PCA", 50)
+# Derived extra-feature block (daily_embedding_derived table): a compact PCA of the daily
+# centroid + per-day distance to each cluster centroid. Basis fit train-only (see below).
+EMBED_DERIVED_PCA: int = _int("SENTISENSE_EMBED_DERIVED_PCA", 16)
+EMBED_DERIVED_CLUSTERS: int = _int("SENTISENSE_EMBED_DERIVED_CLUSTERS", CLUSTER_K)
+# Fraction of the (<= CUTOFF) modeling corpus used to FIT the derived basis. The fit window
+# ends at this quantile date so it precedes both regimes' last-15% OOS windows → leak-safe.
+EMBED_DERIVED_TRAIN_FRAC: float = _float("SENTISENSE_EMBED_DERIVED_TRAIN_FRAC", 0.85)
 
 SEED: int = _int("SENTISENSE_SEED", 42)
 

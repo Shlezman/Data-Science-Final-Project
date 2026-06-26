@@ -104,3 +104,20 @@ a leaderboard. The "Ultimate model" line reports the best out-of-sample ROC-AUC.
   row (a fair-comparison row; an ensemble of chance-level models stays ~chance).
 - **Abstention**: accuracy when acting only on the most-confident fraction (acc@coverage),
   reported per ensemble in the Coverage section — trades coverage for accuracy.
+- **Derived embedding features** (`daily_embedding_derived` table): a compact PCA of the daily
+  e5 centroid (`embpca_*`, 16-d) + the distance from each day's centroid to every KMeans
+  cluster centroid (`embclus_dist_*`, 8-d), joined into the **embedded** and **fused** datasets
+  as extra features. The transform basis (StandardScaler→PCA→KMeans) is fit **train-only** —
+  on dates ≤ the 0.85-quantile date of the ≤ CUTOFF corpus, which precedes both regimes'
+  last-15% OOS windows — so no out-of-sample row influences its own transform. Build it once
+  (after the embed stage) before the leaderboard:
+  ```bash
+  uv run --extra ml python scripts/build_embedding_derived.py        # fit train-only, upsert all dates
+  uv run --extra ml python scripts/build_embedding_derived.py --dry-run
+  ```
+  The builders no-op gracefully if the table is absent, so it's an optional enrichment.
+  Classifiers (XGBoost/LSTM/GRU/TCN/PatchTST) pick the columns up automatically; forecaster
+  covariates stay lean (unchanged).
+- **XGBoost on GPU**: the XGBoost cells now train on CUDA by default (`device="cuda"`), with a
+  cached one-time probe that falls back to CPU on a GPU-less box. Override with
+  `SENTISENSE_XGB_DEVICE=cpu`.
