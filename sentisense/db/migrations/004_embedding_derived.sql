@@ -3,7 +3,7 @@
 -- The transform basis (scaler→PCA→KMeans) is fit ONCE on dates <= fit_cutoff (a train window
 -- preceding every out-of-sample tail) and applied to all dates, so the features for a later
 -- OOS window never see their own basis. fit_cutoff records that leakage boundary in-band.
--- Idempotent (IF NOT EXISTS); keyed by (date, embed_model) so a rebuild upserts in place.
+-- Idempotent (IF NOT EXISTS), keyed by (date, embed_model) so a rebuild upserts in place.
 CREATE TABLE IF NOT EXISTS daily_embedding_derived (
     date        DATE          NOT NULL,
     embed_model VARCHAR(100)  NOT NULL,

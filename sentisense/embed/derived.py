@@ -74,12 +74,23 @@ def fit_transform_derived(centroid_by_date: pd.DataFrame, *, fit_cutoff,
     return pca_df.join(dist_df)
 
 
+def _split_sql(ddl: str) -> list[str]:
+    """Split a migration into statements, ignoring ';' that appear inside ``--`` comments.
+
+    A naive ``ddl.split(';')`` breaks on a semicolon inside a line comment (e.g.
+    ``-- Idempotent (IF NOT EXISTS); ...``), leaking the comment tail out as bare SQL. Strip
+    each line's ``--`` comment first, then split. (Our migrations have no ``--`` inside string
+    literals, so this is safe.)
+    """
+    stripped = "\n".join(line.split("--", 1)[0] for line in ddl.splitlines())
+    return [s.strip() for s in stripped.split(";") if s.strip()]
+
+
 def ensure_derived_table(engine=None) -> None:
     """Apply the derived-features migration (idempotent CREATE TABLE IF NOT EXISTS)."""
     engine = engine or get_engine()
-    ddl = _MIGRATION.read_text(encoding="utf-8")
     with engine.begin() as conn:
-        for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
+        for stmt in _split_sql(_MIGRATION.read_text(encoding="utf-8")):
             conn.execute(text(stmt))
 
 
