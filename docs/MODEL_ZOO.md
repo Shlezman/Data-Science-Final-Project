@@ -121,3 +121,15 @@ a leaderboard. The "Ultimate model" line reports the best out-of-sample ROC-AUC.
 - **XGBoost on GPU**: the XGBoost cells now train on CUDA by default (`device="cuda"`), with a
   cached one-time probe that falls back to CPU on a GPU-less box. Override with
   `SENTISENSE_XGB_DEVICE=cpu`.
+- **Prediction-horizon sweep** (`scripts/horizon_sweep.py`): once next-day direction came back
+  at chance, this finds the *window* where the all-feature signal is strongest. The target is
+  generalised to `close(T+H) > close(T)` (`_finalize(..., horizon=H)`, threaded through every
+  builder; `horizon=1` is the unchanged default). For each H it builds the FUSED dataset (every
+  feature family — scores, per-source, interactions, `embc_` centroid, derived `embpca_`/
+  `embclus_dist_`, finance, cross-asset, overnight) and scores a GPU XGBoost on the last-15%
+  OOS window. Because H>1 targets overlap, the ROC-AUC CI uses a **moving-block bootstrap**
+  (block=H) so the lower bound is an honest chance gauge; the best window = highest `auc_lo`.
+  ```bash
+  uv run --extra finance --extra ml python scripts/horizon_sweep.py --horizons 1,2,3,5,10 --regimes FULL,CUT
+  ```
+  Escalate the winning horizon to the full model zoo via `pipeline_compare.py`.

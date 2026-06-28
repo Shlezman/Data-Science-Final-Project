@@ -318,15 +318,19 @@ def _build_interactions(raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE) -> pd.DataFrame:
-    """Compute target, leak-free VTA-35 handling, NaN/inf cleanup, cutoff slice."""
+def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE, horizon: int = 1) -> pd.DataFrame:
+    """Compute the H-day-ahead direction target, leak-free VTA-35, NaN cleanup, cutoff slice.
+
+    ``Target`` = 1 if ``close(T+horizon) > close(T)``. The trailing ``horizon`` rows have no
+    future price → NA'd and dropped (no fabricated label). ``horizon=1`` is next-day (default).
+    """
     df = df.copy()
-    next_price = df["TA125_Price"].shift(-1)
-    df["Target"] = (next_price > df["TA125_Price"]).astype("Int64")
-    # `NaN > x` yields False (not NA) in pandas, so the trailing row with no next-day
+    future_price = df["TA125_Price"].shift(-horizon)
+    df["Target"] = (future_price > df["TA125_Price"]).astype("Int64")
+    # `NaN > x` yields False (not NA) in pandas, so the trailing rows with no future
     # price would get a definitive WRONG 0 label. Explicitly NA those rows so the
     # notna() filter below drops them — no fabricated label, no leak.
-    df.loc[next_price.isna(), "Target"] = pd.NA
+    df.loc[future_price.isna(), "Target"] = pd.NA
     df = df.drop(columns=["TA125_Price"])
 
     # Leak-free VTA-35: no full-frame MinMax (the notebook's leak). Indicator + 0-fill;
@@ -404,6 +408,7 @@ def build_datasets(
     extra_daily_features: pd.DataFrame | None = None,
     cutoff=CUTOFF_DATE,
     overnight: bool = False,
+    horizon: int = 1,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Assemble the (daily-mean, per-source) modeling frames, cutoff-applied.
 
@@ -437,7 +442,7 @@ def build_datasets(
         feat = add_cross_asset_features(add_ta125_features(base.join(news_td, how="left"), price_full))
         if overnight:                       # open(T+1)-decision overnight global block
             feat = add_overnight_features(feat)
-        return _finalize(feat, cutoff)
+        return _finalize(feat, cutoff, horizon)
 
     mt = _assemble(dm_td)
     ml = _assemble(ps_td)
@@ -490,7 +495,8 @@ def _join_embedding_derived(merged: pd.DataFrame, engine, cutoff,
     return merged.join(der_td, how="left")
 
 
-def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool = False) -> pd.DataFrame:
+def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool = False,
+                            horizon: int = 1) -> pd.DataFrame:
     """Daily e5-centroid dataset for the 'embedded data' LSTM (PCA applied at train time).
 
     Per trading day: the MEAN of that day's headline embeddings (rolled Fri/Sat → Sun
@@ -525,7 +531,7 @@ def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool 
     feat = add_cross_asset_features(add_ta125_features(merged, price_full))
     if overnight:
         feat = add_overnight_features(feat)
-    df = _finalize(feat, cutoff)
+    df = _finalize(feat, cutoff, horizon)
     logger.info("Embedding dataset built (<= {}, overnight={}): {} ({}-d centroid + finance)",
                 pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df
@@ -554,7 +560,7 @@ def postcutoff_directions() -> pd.Series:
 
 
 def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE,
-                        overnight: bool = False) -> pd.DataFrame:
+                        overnight: bool = False, horizon: int = 1) -> pd.DataFrame:
     """Fused dataset: per-source SCORE features ⊕ daily embedding CENTROID, one calendar.
 
     Combines the per-source score pivot (``ml`` shape), the sentiment×relevance
@@ -594,7 +600,7 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     feat = add_cross_asset_features(add_ta125_features(merged, price_full))
     if overnight:
         feat = add_overnight_features(feat)
-    df = _finalize(feat, cutoff)
+    df = _finalize(feat, cutoff, horizon)
     logger.info("Fused dataset built (<= {}, overnight={}): {} (scores + {}-d centroid + finance)",
                 pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df
