@@ -156,10 +156,17 @@ def _load_finance() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
 
     start = "2015-12-17"
     end = pd.Timestamp.today().strftime("%Y-%m-%d")
-    market = yf.download(["^GSPC", "^VIX", "BZ=F"], start=start, end=end, progress=False)["Close"]
-    # yfinance returns multi-ticker Close columns alphabetically (BZ=F, ^GSPC, ^VIX).
-    market.columns = ["Brent_Oil", "SP500", "VIX"]
-    market_clean = market.add_prefix("Market_")
+    # ^IXIC (Nasdaq) added — tech-heavy, strong overnight driver of TA-125. Rename BY TICKER
+    # (not positional) so column order from yfinance can't silently mis-map.
+    _tk = {"^GSPC": "SP500", "^IXIC": "Nasdaq", "^VIX": "VIX", "BZ=F": "Brent_Oil"}
+    market = yf.download(list(_tk), start=start, end=end, progress=False)["Close"].rename(columns=_tk)
+    present = [c for c in _tk.values() if c in market.columns]   # degrade gracefully if a ticker is missing
+    if "SP500" not in present:
+        raise RuntimeError("yfinance returned no S&P 500 (^GSPC) — finance load failed; retry.")
+    if len(present) < len(_tk):
+        logger.warning("yfinance missing {} — proceeding without them.",
+                       sorted(set(_tk.values()) - set(present)))
+    market_clean = market[present].add_prefix("Market_")
 
     resp = requests.get(f"https://api.frankfurter.app/{start}..?from=USD&to=ILS", timeout=30)
     resp.raise_for_status()
@@ -235,11 +242,15 @@ def add_ta125_features(df: pd.DataFrame, price_series: pd.Series) -> pd.DataFram
 # often driven more by global moves than local news, so these usually add real signal.
 _CROSS_ASSETS = {
     "SP500": "Market_SP500",
+    "Nasdaq": "Market_Nasdaq",
     "VIX": "Market_VIX",
     "Brent": "Market_Brent_Oil",
     "USDILS": "FX_USD_ILS",
     "VTA35": "VTA35_Price",
 }
+# Global assets whose close(T) lands AFTER TA-125 close(T) but BEFORE open(T+1) → the
+# genuine "overnight" signal (VTA-35 is local same-day, so it's excluded here).
+_OVERNIGHT_ASSETS = {k: v for k, v in _CROSS_ASSETS.items() if k != "VTA35"}
 
 
 def add_cross_asset_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -259,6 +270,27 @@ def add_cross_asset_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{name}_logret_lag3"] = logret.shift(3)
         df[f"{name}_logret_5d_mean"] = logret.shift(1).rolling(5).mean()
         df[f"{name}_logret_5d_std"] = logret.shift(1).rolling(5).std()
+    return df
+
+
+def add_overnight_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Overnight global-close returns — for the OPEN(T+1) decision contract ONLY.
+
+    add_cross_asset_features shifts ≥1 so it's safe for a CLOSE(T) decision. These use the
+    day-T close-to-close return with NO extra shift: the most recent global close BEFORE
+    TA-125's open(T+1) (US/Nasdaq/VIX/Brent/USD-ILS all settle after TA close(T) but before
+    its next open), which is exactly the gap-driving signal. Known at open(T+1); a LEAK for a
+    close(T) decision — hence the separate ``ovn_`` block + the build_datasets(overnight=)
+    flag. Never derived from TA-125 itself, so it cannot peek at the target.
+    """
+    df = df.copy()
+    for name, col in _OVERNIGHT_ASSETS.items():
+        if col not in df.columns:
+            continue
+        s = df[col].astype(float).replace(0.0, np.nan)
+        logret = np.log(s / s.shift(1))
+        df[f"ovn_{name}_ret"] = logret                      # day-T global move (known at open T+1)
+        df[f"ovn_{name}_2dret"] = logret.rolling(2).sum()   # 2-day momentum into the open
     return df
 
 
@@ -286,15 +318,19 @@ def _build_interactions(raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE) -> pd.DataFrame:
-    """Compute target, leak-free VTA-35 handling, NaN/inf cleanup, cutoff slice."""
+def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE, horizon: int = 1) -> pd.DataFrame:
+    """Compute the H-day-ahead direction target, leak-free VTA-35, NaN cleanup, cutoff slice.
+
+    ``Target`` = 1 if ``close(T+horizon) > close(T)``. The trailing ``horizon`` rows have no
+    future price → NA'd and dropped (no fabricated label). ``horizon=1`` is next-day (default).
+    """
     df = df.copy()
-    next_price = df["TA125_Price"].shift(-1)
-    df["Target"] = (next_price > df["TA125_Price"]).astype("Int64")
-    # `NaN > x` yields False (not NA) in pandas, so the trailing row with no next-day
+    future_price = df["TA125_Price"].shift(-horizon)
+    df["Target"] = (future_price > df["TA125_Price"]).astype("Int64")
+    # `NaN > x` yields False (not NA) in pandas, so the trailing rows with no future
     # price would get a definitive WRONG 0 label. Explicitly NA those rows so the
     # notna() filter below drops them — no fabricated label, no leak.
-    df.loc[next_price.isna(), "Target"] = pd.NA
+    df.loc[future_price.isna(), "Target"] = pd.NA
     df = df.drop(columns=["TA125_Price"])
 
     # Leak-free VTA-35: no full-frame MinMax (the notebook's leak). Indicator + 0-fill;
@@ -371,6 +407,8 @@ def build_datasets(
     top_n: int = TOP_N_SOURCES,
     extra_daily_features: pd.DataFrame | None = None,
     cutoff=CUTOFF_DATE,
+    overnight: bool = False,
+    horizon: int = 1,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Assemble the (daily-mean, per-source) modeling frames, cutoff-applied.
 
@@ -401,13 +439,16 @@ def build_datasets(
     ps_td = _roll_to_trading_days(per_source, trading_days, agg="sum")
 
     def _assemble(news_td):
-        return _finalize(add_cross_asset_features(
-            add_ta125_features(base.join(news_td, how="left"), price_full)), cutoff)
+        feat = add_cross_asset_features(add_ta125_features(base.join(news_td, how="left"), price_full))
+        if overnight:                       # open(T+1)-decision overnight global block
+            feat = add_overnight_features(feat)
+        return _finalize(feat, cutoff, horizon)
 
     mt = _assemble(dm_td)
     ml = _assemble(ps_td)
 
-    logger.info("Datasets built (<= {}): mt={}, ml={}", pd.Timestamp(cutoff).date(), mt.shape, ml.shape)
+    logger.info("Datasets built (<= {}, overnight={}): mt={}, ml={}",
+                pd.Timestamp(cutoff).date(), overnight, mt.shape, ml.shape)
     logger.info("  trading-day rows: mt={:,}, ml={:,}  (LSTM-viability bar ~750)", len(mt), len(ml))
     return mt, ml
 
@@ -437,7 +478,25 @@ def _finance_base(extra_daily_features: pd.DataFrame | None = None):
     return base, trading_days, price_full
 
 
-def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE) -> pd.DataFrame:
+def _join_embedding_derived(merged: pd.DataFrame, engine, cutoff,
+                            trading_days: pd.DatetimeIndex) -> pd.DataFrame:
+    """LEFT-join the leak-safe derived PCA/cluster features (``embpca_*``/``embclus_dist_*``).
+
+    Rolled Fri/Sat → Sun like the centroid. No-op if the ``daily_embedding_derived`` table is
+    absent/empty (i.e. ``scripts/build_embedding_derived.py`` hasn't been run yet).
+    """
+    from sentisense.embed.derived import load_embedding_derived
+
+    der = load_embedding_derived(engine, cutoff)
+    if der.empty:
+        return merged
+    der_td = _roll_to_trading_days(der, trading_days, agg="mean")
+    logger.info("Joined {} derived embedding features.", der_td.shape[1])
+    return merged.join(der_td, how="left")
+
+
+def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE, overnight: bool = False,
+                            horizon: int = 1) -> pd.DataFrame:
     """Daily e5-centroid dataset for the 'embedded data' LSTM (PCA applied at train time).
 
     Per trading day: the MEAN of that day's headline embeddings (rolled Fri/Sat → Sun
@@ -450,34 +509,31 @@ def build_embedding_dataset(engine=None, *, cutoff=CUTOFF_DATE) -> pd.DataFrame:
     an empty frame if no embeddings are cached.
     """
     engine = engine or get_engine()
-    from sentisense.embed import load_embeddings
+    from sentisense.embed import daily_embedding_centroid
 
-    meta, vectors = load_embeddings(engine, cutoff)
-    if len(meta) == 0 or vectors.size == 0:
+    # Streamed per-date centroid: never materialises the full ~3M×768 matrix (OOM-safe on
+    # the full-history corpus). 'embc_*' so PCA (pca_prefix='embc_') reduces ONLY the
+    # centroid block — the scalar dispersion/count + finance/TA-125 features stay raw.
+    cen = daily_embedding_centroid(engine, cutoff)
+    if cen.empty:
         logger.warning("No embeddings cached — run the 'embed' stage first. "
                        "Returning empty embedding dataset.")
         return pd.DataFrame()
-
-    dim = vectors.shape[1]
-    # Centroid columns are 'embc_*' so PCA (pca_prefix='embc_') reduces ONLY the
-    # centroid block — the scalar dispersion/count + finance/TA-125 features stay raw.
-    centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
-                            columns=[f"embc_{i:03d}" for i in range(dim)])
-    grp = centroid.groupby(level=0)
-    centroid_by_date = grp.mean()
-    # Intra-day dispersion (mean per-dim std) + headline count — signal the centroid drops.
-    extras = pd.DataFrame({
-        "emb_dispersion": grp.std().mean(axis=1).fillna(0.0),
-        "emb_count": grp.size(),
-    })
+    centroid_by_date = cen[[c for c in cen.columns if c.startswith("embc_")]]
+    extras = cen[["emb_dispersion", "emb_count"]]
+    dim = centroid_by_date.shape[1]
 
     base, trading_days, price_full = _finance_base()
     emb_td = _roll_to_trading_days(centroid_by_date, trading_days, agg="mean")
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
     merged = base.join(emb_td, how="left").join(extras_td, how="left")
-    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)), cutoff)
-    logger.info("Embedding dataset built (<= {}): {} ({}-d centroid + dispersion/count + finance)",
-                pd.Timestamp(cutoff).date(), df.shape, dim)
+    merged = _join_embedding_derived(merged, engine, cutoff, trading_days)
+    feat = add_cross_asset_features(add_ta125_features(merged, price_full))
+    if overnight:
+        feat = add_overnight_features(feat)
+    df = _finalize(feat, cutoff, horizon)
+    logger.info("Embedding dataset built (<= {}, overnight={}): {} ({}-d centroid + finance)",
+                pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df
 
 
@@ -503,7 +559,8 @@ def postcutoff_directions() -> pd.Series:
     return post.rename("Target")
 
 
-def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE) -> pd.DataFrame:
+def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE,
+                        overnight: bool = False, horizon: int = 1) -> pd.DataFrame:
     """Fused dataset: per-source SCORE features ⊕ daily embedding CENTROID, one calendar.
 
     Combines the per-source score pivot (``ml`` shape), the sentiment×relevance
@@ -515,10 +572,11 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     un-reduced. Returns an empty frame if no embeddings are cached (fused needs both).
     """
     engine = engine or get_engine()
-    from sentisense.embed import load_embeddings
+    from sentisense.embed import daily_embedding_centroid
 
-    meta, vectors = load_embeddings(engine, cutoff)
-    if len(meta) == 0 or vectors.size == 0:
+    # Streamed per-date centroid (OOM-safe on the full-history corpus — see build_embedding_dataset).
+    cen = daily_embedding_centroid(engine, cutoff)
+    if cen.empty:
         logger.warning("No embeddings cached — fused dataset needs both scores AND "
                        "embeddings. Returning empty frame (run the 'embed' stage).")
         return pd.DataFrame()
@@ -527,15 +585,9 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     per_source = _build_per_source_wide(raw, top_n)
     interactions = _build_interactions(raw)
 
-    dim = vectors.shape[1]
-    centroid = pd.DataFrame(vectors, index=pd.to_datetime(meta["date"].values),
-                            columns=[f"embc_{i:03d}" for i in range(dim)])
-    grp = centroid.groupby(level=0)
-    centroid_by_date = grp.mean()
-    extras = pd.DataFrame({
-        "emb_dispersion": grp.std().mean(axis=1).fillna(0.0),
-        "emb_count": grp.size(),
-    })
+    centroid_by_date = cen[[c for c in cen.columns if c.startswith("embc_")]]
+    extras = cen[["emb_dispersion", "emb_count"]]
+    dim = centroid_by_date.shape[1]
 
     base, trading_days, price_full = _finance_base()
     base = base.join(_roll_to_trading_days(interactions, trading_days, agg="mean"), how="left")
@@ -544,7 +596,11 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     extras_td = _roll_to_trading_days(extras, trading_days, agg="mean")
 
     merged = base.join(ps_td, how="left").join(emb_td, how="left").join(extras_td, how="left")
-    df = _finalize(add_cross_asset_features(add_ta125_features(merged, price_full)), cutoff)
-    logger.info("Fused dataset built (<= {}): {} (per-source scores + {}-d centroid + finance)",
-                pd.Timestamp(cutoff).date(), df.shape, dim)
+    merged = _join_embedding_derived(merged, engine, cutoff, trading_days)
+    feat = add_cross_asset_features(add_ta125_features(merged, price_full))
+    if overnight:
+        feat = add_overnight_features(feat)
+    df = _finalize(feat, cutoff, horizon)
+    logger.info("Fused dataset built (<= {}, overnight={}): {} (scores + {}-d centroid + finance)",
+                pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df

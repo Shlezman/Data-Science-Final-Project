@@ -150,6 +150,10 @@ def evaluate_on_test(model: nn.Module, dl_te: DataLoader) -> dict[str, float]:
             labels.extend(y.cpu().numpy())
     probs = np.asarray(probs)
     labels = np.asarray(labels)
+    # A diverged config (high lr / deep net) emits NaN/inf logits → NaN probs. Treat it as a
+    # failed-but-scored trial (0.5) so Optuna avoids it, instead of throwing in roc_auc_score.
+    if probs.size == 0 or not np.all(np.isfinite(probs)):
+        return {"accuracy": 0.5, "balanced_accuracy": 0.5, "f1": 0.0, "roc_auc": 0.5, "mcc": 0.0}
     preds = (probs > 0.5).astype(int)
     return {
         "accuracy": float(accuracy_score(labels, preds)),

@@ -43,15 +43,24 @@ import pandas as pd
 from loguru import logger
 
 from sentisense.constants import CUTOFF_DATE, TA125_CSV
-from sentisense.models.backtest import (
-    direction_metrics,
-    next_day_returns,
-    strategy_stats,
-)
+
+try:
+    from sentisense.models.backtest import (
+        direction_metrics,
+        next_day_returns,
+        strategy_stats,
+    )
+except ModuleNotFoundError as exc:  # e.g. sklearn missing → wrong/slim env (the LLM 'processing-engine' venv)
+    raise SystemExit(
+        f"Missing modeling dependency ({exc.name}). This script runs in the ROOT 'sentisense' "
+        "project, NOT --project processing_engine. From the repo root:\n"
+        "    uv run --extra finance --extra ml --extra tft --extra chronos \\\n"
+        "        python scripts/pipeline_compare.py [args]"
+    ) from exc
 
 _FAR_FUTURE = dt.date(2100, 1, 1)
 _REGIMES = {"CUT": CUTOFF_DATE, "FULL": _FAR_FUTURE}
-_COLS = ["roc_auc", "f1", "mcc", "accuracy", "cum_return", "sharpe", "max_drawdown", "n"]
+_COLS = ["roc_auc", "auc_lo", "auc_hi", "f1", "mcc", "accuracy", "cum_return", "sharpe", "max_drawdown", "n"]
 SEED = 42
 
 
@@ -77,12 +86,34 @@ def _youden(labels: np.ndarray, scores: np.ndarray) -> float:
     return float(thr[int(np.argmax(tpr - fpr))])
 
 
+def _auc_ci(scores: np.ndarray, labels: np.ndarray, n_boot: int = 500) -> tuple[float, float]:
+    """95% bootstrap CI for ROC-AUC. If the CI straddles 0.5, the cell is not distinguishable
+    from chance — the honest read on a near-EMH task. Fixed seed → reproducible."""
+    from sklearn.metrics import roc_auc_score
+    if len(np.unique(labels)) < 2:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(SEED)
+    n = len(labels)
+    aucs = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(labels[idx])) > 1:
+            aucs.append(roc_auc_score(labels[idx], scores[idx]))
+    if not aucs:
+        return (float("nan"), float("nan"))
+    return (float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5)))
+
+
 def _row(scores: pd.Series, labels: pd.Series, price: pd.Series, threshold: float = 0.5) -> dict:
-    """Uniform scorecard for a model's (scores, labels) at ``threshold`` — reuses metrics_at + backtest."""
-    m = direction_metrics(scores.to_numpy(), labels.to_numpy(), threshold)
+    """Uniform scorecard for a model's (scores, labels) at ``threshold`` — reuses metrics_at +
+    backtest, plus a bootstrap ROC-AUC CI (auc_lo/auc_hi) so the board shows whether the cell
+    is distinguishable from chance."""
+    s, y = scores.to_numpy(), labels.to_numpy()
+    m = direction_metrics(s, y, threshold)
     nxt = next_day_returns(price, scores.index)
-    st = strategy_stats((scores.to_numpy() > threshold).astype(float), nxt)
-    return {**m, **st, "n": int(len(scores))}
+    st = strategy_stats((s > threshold).astype(float), nxt)
+    lo, hi = _auc_ci(s, y)
+    return {**m, **st, "n": int(len(scores)), "auc_lo": lo, "auc_hi": hi}
 
 
 # ── per-model adapters → (scores, labels) on an out-of-sample window ──────────────
@@ -126,8 +157,9 @@ def _seq(ml: pd.DataFrame, arch: str, *, tune_trials: int = 0, study_name: str |
     return seq_holdout_eval(ml, arch, study.best_params)
 
 
-def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
-    """{form: (scores, labels, threshold)} for Chronos — zero-shot + context-len-tuned.
+def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None, tag: str = "") -> dict:
+    """{form [tag]: (scores, labels, threshold)} for Chronos — zero-shot + context-len-tuned.
+    ``tag`` namespaces rows by regime/track so they don't collide in the board/cache.
 
     Same forecast→direction bridge as TimesFM (univariate foundation model). HPO sweeps the
     context length and tunes the decision threshold on the VALIDATION slice only (no leak)."""
@@ -140,9 +172,10 @@ def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
     val_index, test_index = returns.index[v0:v1], returns.index[v1:]
     fn = make_chronos_forecast_fn(load_chronos())
     out: dict = {}
+    _lbl = lambda name: f"{name} [{tag}]" if tag else name
     s, lab = walk_forward_directions(returns, test_index, fn, context_len=max(ctx_grid))
     if len(s):
-        out["Chronos-zeroshot"] = (s, lab, 0.5)
+        out[_lbl("Chronos-zeroshot")] = (s, lab, 0.5)
     best = None
     for cl in ctx_grid:
         sv, lv = walk_forward_directions(returns, val_index, fn, context_len=cl)
@@ -157,7 +190,7 @@ def _chronos_forms(price: pd.Series, cutoff, ctx_grid=None) -> dict:
                     best["cl"], best["thr"], best["auc"])
         s, lab = walk_forward_directions(returns, test_index, fn, context_len=best["cl"])
         if len(s):
-            out["Chronos-tuned"] = (s, lab, best["thr"])
+            out[_lbl("Chronos-tuned")] = (s, lab, best["thr"])
     return out
 
 
@@ -173,8 +206,11 @@ def _pf(arch: str, price: pd.Series, cutoff, *, cov: pd.DataFrame | None = None,
 
 
 def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
-                   ctx_grid=None) -> dict:
-    """Return {form_name: (scores, labels, threshold)} for the TimesFM forms in this regime.
+                   ctx_grid=None, tag: str = "") -> dict:
+    """Return {form_name [tag]: (scores, labels, threshold)} for the TimesFM forms.
+
+    ``tag`` namespaces the row labels by regime/track (e.g. 'FULL', 'FULL+ovn') so the
+    multiple forms don't collide across regimes/the overnight track in the board/cache.
 
     Includes ``TimesFM-tuned`` — the best (context_len, decision-threshold) chosen on a
     VALIDATION slice [70%,85%) by val ROC-AUC, then evaluated on the held-out test
@@ -201,7 +237,7 @@ def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
         s, lab = walk_forward_directions(returns, test_index, fn,
                                          context_len=context_len, covariate_frame=covariate_frame)
         if len(s):
-            out[name] = (s, lab, threshold)
+            out[f"{name} [{tag}]" if tag else name] = (s, lab, threshold)
 
     run("TimesFM-zeroshot")
 
@@ -225,7 +261,7 @@ def _timesfm_forms(mt: pd.DataFrame, ml: pd.DataFrame, price: pd.Series, cutoff,
     run("TimesFM-finetuned")
 
     # Covariate ablation: sentiment news features (daily-mean) as XReg.
-    news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_"))]
+    news_cols = [c for c in mt.columns if c.startswith(("mean_", "ix_", "ovn_"))]  # ovn_ on the overnight track
     cov = mt[news_cols] if news_cols else None
     run("TimesFM-cov", covariate_frame=cov)
     run("TimesFM-nocov")
@@ -275,11 +311,33 @@ def _classifier_labels(dtype: str, regime: str, use_seq: bool) -> list[str]:
     return labs
 
 
+def _track_of(label: str) -> str | None:
+    """The regime/track tag inside a cell label, e.g. 'GRU [scored/FULL+ovn]' → 'FULL+ovn'."""
+    if "[" not in label:
+        return None
+    return label.rsplit("[", 1)[1].rstrip("]").rsplit("/", 1)[-1]
+
+
+def _abstention(scores: pd.Series, labels: pd.Series,
+                coverages=(1.0, 0.75, 0.5, 0.25)) -> dict:
+    """Accuracy when acting only on the most-confident fraction (|p-0.5| highest). Selective
+    prediction: trade coverage for accuracy. Returns {coverage: accuracy}."""
+    conf = (scores - 0.5).abs().sort_values(ascending=False)
+    out = {}
+    for cov in coverages:
+        sel = conf.index[: max(int(len(conf) * cov), 1)]
+        dec = (scores.reindex(sel) > 0.5).astype(int).to_numpy()
+        y = labels.reindex(sel).to_numpy()
+        out[cov] = float((dec == y).mean()) if len(y) else float("nan")
+    return out
+
+
 def _cov_cols(df: pd.DataFrame, dtype: str) -> pd.DataFrame | None:
     """Forecaster covariate frame for ``dtype`` (low-dim signal cols only — never the 768-d
     embedding centroid, which would blow up a TFT). Returns None if no usable cols."""
     if dtype == "scored":
-        cols = [c for c in df.columns if c.startswith(("mean_", "ix_"))]
+        # news daily-mean + interactions, plus the overnight global block when present (ovn_)
+        cols = [c for c in df.columns if c.startswith(("mean_", "ix_", "ovn_"))]
     else:                       # embedded/fused → the cheap embedding summaries, not embc_*
         cols = [c for c in df.columns if c in ("emb_dispersion", "emb_count")]
     return df[cols] if cols else None
@@ -289,6 +347,7 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
                       use_seq: bool = True, use_chronos: bool = True, use_tft: bool = True,
                       use_nhits: bool = True, use_nbeats: bool = True, seq_trials: int = 20,
                       pf_trials: int = 8, pf_epochs: int = 30, xgb_trials: int = 40,
+                      overnight: bool = False,
                       cache_path: str = "leaderboard_cache.json", fresh: bool = False):
     """Grid: model × data-type (scored/embedded/fused) × regime (CUT/FULL).
 
@@ -301,15 +360,22 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
     price = _load_price()
     rows: dict[str, dict] = {}
     status: dict[str, str] = {}
+    preds: dict[str, tuple] = {}     # row_label → (scores, labels) for the soft-vote ensemble
     cache = _load_cache(cache_path, fresh)
 
+    def _restore_preds(rl, row):
+        if "_proba" in row and "_dates" in row and "_labels" in row:
+            idx = pd.to_datetime(row["_dates"])
+            preds[rl] = (pd.Series(row["_proba"], index=idx), pd.Series(row["_labels"], index=idx))
+
     def restore(label) -> bool:
-        """Load a cell's cached rows into the board. True if it was cached."""
+        """Load a cell's cached rows (+ proba for the ensemble) into the board. True if cached."""
         if fresh or label not in cache:
             return False
         for rl, row in cache[label].items():
             rows[rl] = row
             status[rl] = "cached"
+            _restore_preds(rl, row)
         return True
 
     def attempt(label, thunk):
@@ -321,9 +387,13 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
 
         def emit(rl, s, lab, thr=0.5):
             row = _row(s, lab, price, thr)
+            row["_proba"] = [float(x) for x in s.to_numpy()]       # retained for the ensemble +
+            row["_dates"] = [str(d) for d in s.index]              # cached so a resume can ensemble too
+            row["_labels"] = [int(x) for x in lab.to_numpy()]
             rows[rl] = row
             produced[rl] = row
             status[rl] = "ran"
+            preds[rl] = (s, lab)
 
         try:
             res = thunk()
@@ -350,35 +420,36 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
 
     for regime in regimes:
         cutoff = _REGIMES[regime]
-        logger.info("══ regime {} (cutoff {}) ══", regime, pd.Timestamp(cutoff).date())
+        rtag = f"{regime}+ovn" if overnight else regime   # label/cache/study tag (overnight track)
+        logger.info("══ regime {} (cutoff {}, overnight={}) ══", regime, pd.Timestamp(cutoff).date(), overnight)
 
         # Build each data-type's frames for this regime: dtype → (tabular_df, sequence_df).
         # Skip the (heavy, esp. embedded/fused 3M-vector) build when all its cells are cached.
         frames: dict[str, tuple] = {}
         if "scored" in data_types:
-            mt, ml = build_datasets(cutoff=cutoff)
+            mt, ml = build_datasets(cutoff=cutoff, overnight=overnight)
             frames["scored"] = (mt, ml)
         for dt_name, builder in (("embedded", build_embedding_dataset), ("fused", build_fused_dataset)):
             if dt_name not in data_types:
                 continue
-            if _all_cached(_classifier_labels(dt_name, regime, use_seq)):
-                logger.info("{}/{}: all cells cached — skipping dataset build", dt_name, regime)
-                for lab in _classifier_labels(dt_name, regime, use_seq):
+            if _all_cached(_classifier_labels(dt_name, rtag, use_seq)):
+                logger.info("{}/{}: all cells cached — skipping dataset build", dt_name, rtag)
+                for lab in _classifier_labels(dt_name, rtag, use_seq):
                     restore(lab)
                 continue
-            df = builder(cutoff=cutoff)
+            df = builder(cutoff=cutoff, overnight=overnight)
             if df.empty:
-                status[f"[{dt_name}/{regime}]"] = "skip: no embeddings cached (run embed stage)"
+                status[f"[{dt_name}/{rtag}]"] = "skip: no embeddings cached (run embed stage)"
             else:
                 frames[dt_name] = (df, df)
 
         # ── Classifiers: every model × every available data type ──────────────────
         for dtype, (tab, seq) in frames.items():
-            sfx = f"{dtype}/{regime}"
+            sfx = f"{dtype}/{rtag}"
             attempt(f"XGBoost [{sfx}]", lambda tab=tab: _xgb(tab, n_trials=xgb_trials))
             if use_seq:
                 for arch in _SEQ_ARCHS:
-                    study = f"sentisense_{arch.lower()}_{dtype}_{regime.lower()}"
+                    study = f"sentisense_{arch.lower()}_{dtype}_{regime.lower()}{'_ovn' if overnight else ''}"
                     attempt(f"{arch} [{sfx}]",
                             lambda seq=seq, arch=arch, study=study:
                                 _seq(seq, arch, tune_trials=seq_trials, study_name=study))
@@ -386,31 +457,60 @@ def build_leaderboard(regimes: list[str], use_timesfm: bool, *, data_types=_DATA
         # Buy&Hold benchmark (data-type-independent) on the last-15% window.
         if "scored" in frames:
             mt = frames["scored"][0]
-            attempt(f"Buy&Hold [{regime}]",
+            attempt(f"Buy&Hold [{rtag}]",
                     lambda mt=mt: _buy_and_hold(price, mt.index[int(len(mt) * 0.85):]))
 
-        # ── Forecasters (price→direction); scored covariates + univariate, per regime ──
+        # ── Forecasters (price→direction); scored (+overnight) covariates + univariate ──
         scored = frames.get("scored")
         if use_timesfm and scored is not None:
-            attempt(f"TimesFM [{regime}]",
-                    lambda: _timesfm_forms(scored[0], scored[1], price, cutoff))
+            attempt(f"TimesFM [{rtag}]",
+                    lambda: _timesfm_forms(scored[0], scored[1], price, cutoff, tag=rtag))
         if use_chronos:
-            attempt(f"Chronos [{regime}]", lambda: _chronos_forms(price, cutoff))
-        cov = _cov_cols(scored[0], "scored") if scored is not None else None
+            attempt(f"Chronos [{rtag}]", lambda: _chronos_forms(price, cutoff, tag=rtag))
+        cov = _cov_cols(scored[0], "scored") if scored is not None else None   # incl. ovn_ when overnight
         for arch, on in [("TFT", use_tft), ("NHiTS", use_nhits)]:
             if not on:
                 continue
-            attempt(f"{arch} [cov=scored/{regime}]",
+            attempt(f"{arch} [cov=scored/{rtag}]",
                     lambda arch=arch: _pf(arch, price, cutoff, cov=cov, n_trials=pf_trials, max_epochs=pf_epochs))
-            attempt(f"{arch} [cov=none/{regime}]",
-                    lambda arch=arch: _pf(arch, price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
+            if not overnight:   # cov=none is univariate → identical to baseline; skip on the +ovn track
+                attempt(f"{arch} [cov=none/{rtag}]",
+                        lambda arch=arch: _pf(arch, price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
         if use_nbeats:
-            attempt(f"NBEATS [{regime}]",
+            attempt(f"NBEATS [{rtag}]",
                     lambda: _pf("NBEATS", price, cutoff, cov=None, n_trials=pf_trials, max_epochs=pf_epochs))
+
+    # ── Soft-vote ensemble per track + abstention curves ──────────────────────────
+    # Rank-normalise each member's scores (keeps each model's ROC-AUC, makes scales
+    # comparable across heterogeneous models) then average. An ensemble of chance-level
+    # members stays ~chance — this is a fair-comparison row, not a magic lift.
+    from collections import defaultdict
+    by_track: dict[str, list] = defaultdict(list)
+    for lbl, (s, lab) in preds.items():
+        if lbl.startswith(("Ensemble", "Buy&Hold")):
+            continue
+        t = _track_of(lbl)
+        if t:
+            by_track[t].append((s, lab))
+    notes: list[str] = []
+    for track, members in sorted(by_track.items()):
+        if len(members) < 3:
+            continue
+        common = sorted(set.intersection(*[set(s.index) for s, _ in members]))
+        if len(common) < 30:
+            logger.warning("Ensemble [{}] skipped: only {} common dates across members", track, len(common))
+            continue
+        ens = pd.concat([s.reindex(common).rank(pct=True) for s, _ in members], axis=1).mean(axis=1)
+        lab0 = members[0][1].reindex(common)
+        rows[f"Ensemble [{track}]"] = _row(ens, lab0, price, 0.5)
+        status[f"Ensemble [{track}]"] = "ran"
+        ab = _abstention(ens, lab0)
+        notes.append(f"- `Ensemble [{track}]` ({len(members)} models, {len(common)} days) "
+                     "acc@coverage: " + ", ".join(f"{int(c * 100)}%={a:.3f}" for c, a in ab.items()))
 
     board = pd.DataFrame({label: {c: r.get(c) for c in _COLS} for label, r in rows.items()}).T
     board = board[_COLS] if not board.empty else board
-    return board, status
+    return board, status, notes
 
 
 def _to_markdown(board: pd.DataFrame) -> str:
@@ -444,6 +544,8 @@ def main() -> None:
     parser.add_argument("--pf-epochs", type=int, default=30,
                         help="Max epochs per pytorch-forecasting fit (lower = faster smoke checks).")
     parser.add_argument("--xgb-trials", type=int, default=40, help="Optuna trials for XGBoost.")
+    parser.add_argument("--overnight", action="store_true",
+                        help="Add the open(T+1) overnight global-feature track (cells tagged +ovn).")
     parser.add_argument("--cache", default="leaderboard_cache.json",
                         help="Per-cell result cache (resumes finished cells across runs).")
     parser.add_argument("--fresh", action="store_true", help="Ignore the cache; recompute every cell.")
@@ -452,12 +554,12 @@ def main() -> None:
     regimes = [r.strip() for r in args.regimes.split(",") if r.strip() in _REGIMES]
     data_types = tuple(d.strip() for d in args.data_types.split(",") if d.strip() in _DATA_TYPES)
 
-    board, status = build_leaderboard(
+    board, status, notes = build_leaderboard(
         regimes, use_timesfm=not args.no_timesfm, data_types=data_types, use_seq=not args.no_seq,
         use_chronos=not args.no_chronos, use_tft=not args.no_tft,
         use_nhits=not args.no_nhits, use_nbeats=not args.no_nbeats,
         seq_trials=args.seq_trials, pf_trials=args.pf_trials, pf_epochs=args.pf_epochs,
-        xgb_trials=args.xgb_trials, cache_path=args.cache, fresh=args.fresh)
+        xgb_trials=args.xgb_trials, overnight=args.overnight, cache_path=args.cache, fresh=args.fresh)
     md = _to_markdown(board) if not board.empty else "_(no cells produced output)_"
 
     best_line = ""
@@ -478,6 +580,8 @@ def main() -> None:
     if skipped:
         cov_lines.append("**Skipped (why):**")
         cov_lines += [f"- `{k}` — {v.removeprefix('skip: ')}" for k, v in skipped]
+    if notes:
+        cov_lines += ["", "## Ensemble abstention (accuracy when acting on the most-confident fraction)", *notes]
     coverage = "\n".join(cov_lines)
 
     logger.info("\n=== LEADERBOARD (out-of-sample) ===\n{}\n\n{}\n\n{}", md, best_line, coverage)

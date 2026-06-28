@@ -92,3 +92,44 @@ deeper search (`--seq-trials`, `--pf-trials`, `--xgb-trials`).
 The new classifier studies persist to the project DB (resumable). Each model is guarded —
 a missing extra or a runtime failure skips just that row, so a partial stack still produces
 a leaderboard. The "Ultimate model" line reports the best out-of-sample ROC-AUC.
+
+## Accuracy-boost additions (feat/accuracy-boost)
+- **Overnight track** (`--overnight`): open(T+1) decision contract — adds the day-T global
+  close returns (S&P/Nasdaq/VIX/Brent/USD-ILS, `ovn_` block) that drive TA-125's next open;
+  leak-safe (one shift ahead of the close(T) baseline), cells tagged `+ovn`. Run baseline +
+  `--overnight` and compare to isolate the overnight signal. Nasdaq added to the base assets.
+- **Bootstrap ROC-AUC CI** (`auc_lo`/`auc_hi` columns): 95% CI per cell — if it straddles 0.5
+  the cell is indistinguishable from chance (the honest read).
+- **Soft-vote ensemble**: per track, rank-normalised mean of all member cells → `Ensemble [track]`
+  row (a fair-comparison row; an ensemble of chance-level models stays ~chance).
+- **Abstention**: accuracy when acting only on the most-confident fraction (acc@coverage),
+  reported per ensemble in the Coverage section — trades coverage for accuracy.
+- **Derived embedding features** (`daily_embedding_derived` table): a compact PCA of the daily
+  e5 centroid (`embpca_*`, 16-d) + the distance from each day's centroid to every KMeans
+  cluster centroid (`embclus_dist_*`, 8-d), joined into the **embedded** and **fused** datasets
+  as extra features. The transform basis (StandardScaler→PCA→KMeans) is fit **train-only** —
+  on dates ≤ the 0.85-quantile date of the ≤ CUTOFF corpus, which precedes both regimes'
+  last-15% OOS windows — so no out-of-sample row influences its own transform. Build it once
+  (after the embed stage) before the leaderboard:
+  ```bash
+  uv run --extra ml python scripts/build_embedding_derived.py        # fit train-only, upsert all dates
+  uv run --extra ml python scripts/build_embedding_derived.py --dry-run
+  ```
+  The builders no-op gracefully if the table is absent, so it's an optional enrichment.
+  Classifiers (XGBoost/LSTM/GRU/TCN/PatchTST) pick the columns up automatically; forecaster
+  covariates stay lean (unchanged).
+- **XGBoost on GPU**: the XGBoost cells now train on CUDA by default (`device="cuda"`), with a
+  cached one-time probe that falls back to CPU on a GPU-less box. Override with
+  `SENTISENSE_XGB_DEVICE=cpu`.
+- **Prediction-horizon sweep** (`scripts/horizon_sweep.py`): once next-day direction came back
+  at chance, this finds the *window* where the all-feature signal is strongest. The target is
+  generalised to `close(T+H) > close(T)` (`_finalize(..., horizon=H)`, threaded through every
+  builder; `horizon=1` is the unchanged default). For each H it builds the FUSED dataset (every
+  feature family — scores, per-source, interactions, `embc_` centroid, derived `embpca_`/
+  `embclus_dist_`, finance, cross-asset, overnight) and scores a GPU XGBoost on the last-15%
+  OOS window. Because H>1 targets overlap, the ROC-AUC CI uses a **moving-block bootstrap**
+  (block=H) so the lower bound is an honest chance gauge; the best window = highest `auc_lo`.
+  ```bash
+  uv run --extra finance --extra ml python scripts/horizon_sweep.py --horizons 1,2,3,5,10 --regimes FULL,CUT
+  ```
+  Escalate the winning horizon to the full model zoo via `pipeline_compare.py`.

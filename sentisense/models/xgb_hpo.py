@@ -7,11 +7,37 @@ the best params + held-out ``(scores, labels)`` for the shared metrics/backtest 
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 from loguru import logger
 
 SEED = 42
+_DEVICE: str | None = None
+
+
+def _xgb_device() -> str:
+    """'cuda' if XGBoost can actually train on GPU here, else 'cpu' (detected once, cached).
+
+    Honors ``SENTISENSE_XGB_DEVICE`` (default 'cuda'). A GPU-less box (or a CPU-only XGBoost
+    build) falls back to 'cpu' instead of crashing every cell.
+    """
+    global _DEVICE
+    if _DEVICE is not None:
+        return _DEVICE
+    want = os.environ.get("SENTISENSE_XGB_DEVICE", "cuda").lower()
+    if want == "cuda":
+        try:
+            import xgboost as xgb
+            xgb.XGBClassifier(n_estimators=1, tree_method="hist", device="cuda").fit(
+                np.zeros((4, 2)), np.array([0, 1, 0, 1]))
+        except Exception as exc:  # noqa: BLE001 — any GPU/build failure → CPU
+            logger.warning("XGBoost GPU unavailable ({}…) — using CPU.", str(exc)[:60])
+            want = "cpu"
+    _DEVICE = want
+    logger.info("XGBoost device: {}", _DEVICE)
+    return _DEVICE
 
 
 def _fit_predict(params: dict, Xtr, ytr, Xpred):
@@ -19,7 +45,8 @@ def _fit_predict(params: dict, Xtr, ytr, Xpred):
     pos = max(int(ytr.sum()), 1)
     neg = max(len(ytr) - int(ytr.sum()), 1)
     clf = xgb.XGBClassifier(eval_metric="logloss", random_state=SEED, verbosity=0,
-                            scale_pos_weight=neg / pos, tree_method="hist", **params)
+                            scale_pos_weight=neg / pos, tree_method="hist",
+                            device=_xgb_device(), **params)
     clf.fit(Xtr, ytr)
     return clf.predict_proba(Xpred)[:, 1]
 
