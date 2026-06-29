@@ -1,11 +1,23 @@
 /*
- * Thin fetch wrapper. ALL URLs are relative so the app works identically
- * under the Vite dev proxy and when served same-origin by FastAPI in prod.
- * No hosts are hardcoded anywhere.
+ * Thin fetch wrapper. URLs resolve RELATIVE to where the SPA is served
+ * (document.baseURI), so the app works at the site root (FastAPI on :3000)
+ * AND under a mounted subpath like a Jupyter proxy (/proxy/3000/). No hosts
+ * are hardcoded anywhere.
  */
 
 /**
- * Performs a GET against a relative API path and parses JSON.
+ * Resolves an API path against the document base so it works at root or under
+ * a proxy subpath. ``/api/x`` → ``<baseURI>api/x``.
+ *
+ * @param {string} path Path beginning with '/api'.
+ * @returns {string} An absolute URL rooted at the SPA's served location.
+ */
+function resolve(path) {
+  return new URL(path.replace(/^\//, ''), document.baseURI).toString();
+}
+
+/**
+ * Performs a GET against an API path and parses JSON.
  *
  * @param {string} path Relative path beginning with '/api'.
  * @param {object} [options] Optional config.
@@ -16,7 +28,7 @@
  */
 export async function getJson(path, options = {}) {
   const { allow404 = false } = options;
-  const res = await fetch(path, { headers: { Accept: 'application/json' } });
+  const res = await fetch(resolve(path), { headers: { Accept: 'application/json' } });
   if (res.status === 404 && allow404) {
     return null;
   }
@@ -43,11 +55,13 @@ async function safeErrorDetail(res) {
 }
 
 /**
- * Builds the same-origin WebSocket URL for the simulation runner.
+ * Builds the WebSocket URL for the simulation runner, relative to where the
+ * SPA is served (so it works at root and under a proxy subpath).
  *
- * @returns {string} A ws:// or wss:// URL bound to the current host.
+ * @returns {string} A ws:// or wss:// URL on the current host + mount path.
  */
 export function simRunSocketUrl() {
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${location.host}/ws/sim/run`;
+  const u = new URL('ws/sim/run', document.baseURI);
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+  return u.toString();
 }
