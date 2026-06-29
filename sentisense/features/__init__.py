@@ -11,6 +11,8 @@ from sentisense.features.dataset import (
     build_datasets,
     build_embedding_dataset,
     build_fused_dataset,
+    build_sim_features,
 )
 
-__all__ = ["build_datasets", "build_embedding_dataset", "build_fused_dataset"]
+__all__ = ["build_datasets", "build_embedding_dataset", "build_fused_dataset",
+           "build_sim_features"]
