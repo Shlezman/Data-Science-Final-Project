@@ -70,6 +70,12 @@ chronos = [
 miro = [
     "requests>=2.31",
 ]
+# Live UI (WS3) — FastAPI REST + websocket, serves the built Vite/React SPA on :3000.
+# Install: uv sync --extra ui --extra finance --extra ml   (DB + champion metrics from ml).
+ui = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
 # TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
 # PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
 # it into the project venv on the server with one of:
