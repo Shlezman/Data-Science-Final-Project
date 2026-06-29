@@ -64,6 +64,12 @@ chronos = [
     "chronos-forecasting>=1.2",
     "transformers>=4.40,<4.49",
 ]
+# MiroFish narrative-sim client (talks to the separate MiroFish service over HTTP).
+# MiroFish itself (external/MiroFish, AGPL) is run separately — not a Python dep here.
+# Install: uv sync --extra miro
+miro = [
+    "requests>=2.31",
+]
 # TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
 # PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install
 # it into the project venv on the server with one of:
