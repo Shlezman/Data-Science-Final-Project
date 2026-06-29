@@ -5,6 +5,16 @@
 # daily schedule is safe — no need to encode the trading calendar in cron.
 #
 # Adjust the absolute uv path if needed: `which uv` (often /usr/local/bin/uv or ~/.local/bin/uv).
+#
+# cron uses a minimal PATH and will NOT find `uv` otherwise. Set it explicitly (edit to match
+# `dirname $(which uv)` on this box) so the jobs resolve uv + python:
+PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+#
+# cron does NOT inherit your shell env. Add the required vars HERE (do not commit real
+# secrets to git — edit this line on the server only): SENTISENSE_DATABASE_URL and the
+# scoring backend vars (SENTISENSE_OPENAI_* + SENTISENSE_FORCE_COMPLETIONS_API, or
+# SENTISENSE_LLM_BACKEND). Example to fill in on the box:
+#   SENTISENSE_DATABASE_URL=postgresql://USER:PASS@localhost:5432/sentisense
 
 # 1) Daily pipeline: scrape -> score -> embed -> derived -> champion predict.
 30 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance --extra ml python scripts/daily_live.py >> logs/cron_daily.log 2>&1
