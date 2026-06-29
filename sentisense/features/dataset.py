@@ -318,11 +318,17 @@ def _build_interactions(raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE, horizon: int = 1) -> pd.DataFrame:
+def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE, horizon: int = 1,
+              keep_unlabeled: bool = False) -> pd.DataFrame:
     """Compute the H-day-ahead direction target, leak-free VTA-35, NaN cleanup, cutoff slice.
 
     ``Target`` = 1 if ``close(T+horizon) > close(T)``. The trailing ``horizon`` rows have no
     future price → NA'd and dropped (no fabricated label). ``horizon=1`` is next-day (default).
+
+    ``keep_unlabeled`` (serve path): instead of dropping those trailing rows, keep them with
+    ``Target = -1`` sentinel so a live caller can predict them. Labeled rows stay 0/1, so the
+    caller trains on ``Target in {0,1}`` and predicts ``Target == -1`` — no fabricated label
+    ever enters training.
     """
     df = df.copy()
     future_price = df["TA125_Price"].shift(-horizon)
@@ -339,11 +345,18 @@ def _finalize(df: pd.DataFrame, cutoff=CUTOFF_DATE, horizon: int = 1) -> pd.Data
         df["VTA35_missing"] = df["VTA35_Price"].isna().astype(int)
         df["VTA35_Price"] = df["VTA35_Price"].fillna(0.0)
 
-    # Drop the final row (no next-day target) BEFORE the frame-level fillna —
-    # otherwise the Int64 NA target is filled to a bogus 0 (a wrong label / leak).
-    df = df[df["Target"].notna()].copy()
-    df = df.fillna(0.0).replace([np.inf, -np.inf], 0.0)
-    df["Target"] = df["Target"].astype(int)
+    if keep_unlabeled:
+        # Serve path: KEEP trailing rows whose future price is unknown so the champion can
+        # predict them. Fill FEATURES only; their Target becomes the -1 sentinel.
+        feat_cols = df.columns.drop("Target")
+        df[feat_cols] = df[feat_cols].fillna(0.0).replace([np.inf, -np.inf], 0.0)
+        df["Target"] = df["Target"].fillna(-1).astype(int)
+    else:
+        # Drop the final row (no next-day target) BEFORE the frame-level fillna —
+        # otherwise the Int64 NA target is filled to a bogus 0 (a wrong label / leak).
+        df = df[df["Target"].notna()].copy()
+        df = df.fillna(0.0).replace([np.inf, -np.inf], 0.0)
+        df["Target"] = df["Target"].astype(int)
 
     # Hard cutoff (defense in depth — SQL already bounds news, but trading_days come
     # from the CSV which extends past the cutoff). Parameterised so the full-history
@@ -560,7 +573,8 @@ def postcutoff_directions() -> pd.Series:
 
 
 def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOFF_DATE,
-                        overnight: bool = False, horizon: int = 1) -> pd.DataFrame:
+                        overnight: bool = False, horizon: int = 1,
+                        keep_unlabeled: bool = False) -> pd.DataFrame:
     """Fused dataset: per-source SCORE features ⊕ daily embedding CENTROID, one calendar.
 
     Combines the per-source score pivot (``ml`` shape), the sentiment×relevance
@@ -600,7 +614,7 @@ def build_fused_dataset(engine=None, *, top_n: int = TOP_N_SOURCES, cutoff=CUTOF
     feat = add_cross_asset_features(add_ta125_features(merged, price_full))
     if overnight:
         feat = add_overnight_features(feat)
-    df = _finalize(feat, cutoff, horizon)
+    df = _finalize(feat, cutoff, horizon, keep_unlabeled=keep_unlabeled)
     logger.info("Fused dataset built (<= {}, overnight={}): {} (scores + {}-d centroid + finance)",
                 pd.Timestamp(cutoff).date(), overnight, df.shape, dim)
     return df
