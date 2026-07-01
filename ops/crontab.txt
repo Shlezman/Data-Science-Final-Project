@@ -1,0 +1,27 @@
+# SentiSense — daily live cron (install INSIDE the /tf container: `crontab ops/crontab.txt`).
+#
+# Container clock is UTC; TASE closes ~17:25 Asia/Jerusalem (UTC+2/+3). These fire ~18:30 IL.
+# The orchestrator self-skips Fri/Sat (and any config/tase_holidays.txt dates), so a plain
+# daily schedule is safe — no need to encode the trading calendar in cron.
+#
+# Adjust the absolute uv path if needed: `which uv` (often /usr/local/bin/uv or ~/.local/bin/uv).
+#
+# cron uses a minimal PATH and will NOT find `uv` otherwise. Set it explicitly (edit to match
+# `dirname $(which uv)` on this box) so the jobs resolve uv + python:
+PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+#
+# cron does NOT inherit your shell env. Add the required vars HERE (do not commit real
+# secrets to git — edit this line on the server only): SENTISENSE_DATABASE_URL and the
+# scoring backend vars (SENTISENSE_OPENAI_* + SENTISENSE_FORCE_COMPLETIONS_API, or
+# SENTISENSE_LLM_BACKEND). Example to fill in on the box:
+#   SENTISENSE_DATABASE_URL=postgresql://USER:PASS@localhost:5432/sentisense
+
+# 1) Daily pipeline: scrape -> score -> embed -> derived -> champion predict.
+30 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance --extra ml python scripts/daily_live.py >> logs/cron_daily.log 2>&1
+
+# 2) Settle: backfill model_predictions.actual once the next-day close is known (15 min later).
+45 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance python scripts/settle_predictions.py >> logs/cron_settle.log 2>&1
+
+# 3) OPTIONAL gated challenger (champion serving NEVER depends on this). Off by default —
+#    uncomment to evaluate a challenger weekly (Thu night); it promotes only past the OOS gate.
+# 0 16 * * 4 cd /tf/Data-Science-Final-Project && uv run --extra finance --extra ml python scripts/challenger_hpo.py --xgb-trials 80 >> logs/cron_challenger.log 2>&1
