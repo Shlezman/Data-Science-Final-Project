@@ -123,6 +123,46 @@ def _train_predict(labeled: pd.DataFrame, to_predict: pd.DataFrame, cfg: dict) -
     return pd.DataFrame({"date": to_predict.index, "proba": np.clip(proba, 0.0, 1.0)})
 
 
+def _predict_from_registry(engine, active: dict, to_predict: pd.DataFrame) -> pd.DataFrame:
+    """Predict with the PRE-TRAINED active registry model — joblib single, or soft-vote ensemble.
+
+    Registered models carry their own ``feature_cols``; we align the serving frame to them
+    (missing → 0) so a model trained on a slightly different column set still serves. Ensemble
+    members are rank-normalised before averaging (scale-free, matches the leaderboard ensemble).
+    """
+    import io
+
+    import joblib
+
+    from sentisense.serve import registry
+
+    def _proba(row: dict) -> np.ndarray | None:
+        if not row or row.get("artifact") is None:
+            return None
+        cols = row.get("feature_cols") or [c for c in to_predict.columns if c != "Target"]
+        X = to_predict.reindex(columns=cols, fill_value=0.0).to_numpy(np.float32)
+        # SECURITY: joblib.load is pickle-based (RCE if the bytes were attacker-controlled). Safe
+        # here — artifacts are self-produced by scripts/train_registry.py and stored in our own
+        # access-controlled model_registry table; never loaded from external/user input.
+        return joblib.load(io.BytesIO(row["artifact"])).predict_proba(X)[:, 1]
+
+    fmt = active.get("artifact_format")
+    if fmt == "ensemble":
+        parts = [pd.Series(p).rank(pct=True).to_numpy()
+                 for mv in (active.get("members") or [])
+                 if (p := _proba(registry.get_by_version(engine, mv))) is not None]
+        if not parts:
+            raise RuntimeError(f"ensemble {active['version']} has no usable members")
+        proba = np.mean(parts, axis=0)
+    elif fmt == "joblib":
+        proba = _proba(active)
+        if proba is None:
+            raise RuntimeError(f"active model {active['version']} has no artifact")
+    else:
+        raise NotImplementedError(f"serve for artifact_format={fmt!r} not implemented yet")
+    return pd.DataFrame({"date": to_predict.index, "proba": np.clip(proba, 0.0, 1.0)})
+
+
 def ensure_predictions_table(engine=None) -> None:
     """Create ``model_predictions`` if absent (idempotent)."""
     engine = engine or get_engine()
@@ -149,23 +189,36 @@ def train_and_predict(engine=None, *, dry_run: bool = False) -> dict:
         logger.info("No unlabeled day to predict — predictions already current.")
         return {"version": cfg["version"], "n_train": int(len(labeled)), "predicted": {}}
 
-    preds = _train_predict(labeled, to_predict, cfg)
+    # Prefer the ACTIVE registry model (pre-trained, versioned, UI-swappable). Fall back to the
+    # pinned champion retrained on all history when the registry is empty/absent (backward compat).
+    active = None
+    try:
+        from sentisense.serve import registry
+        active = registry.get_active(engine)
+    except Exception as exc:  # noqa: BLE001 — registry table may not exist yet
+        logger.info("Registry unavailable ({}) — using pinned champion.", str(exc)[:60])
+    if active and active.get("artifact_format") in ("joblib", "ensemble"):
+        preds = _predict_from_registry(engine, active, to_predict)
+        version, source = active["version"], f"registry:{active['model_type']}"
+    else:
+        preds = _train_predict(labeled, to_predict, cfg)
+        version, source = cfg["version"], "pinned"
+
     out = {str(pd.Timestamp(r.date).date()): (bool(r.proba > 0.5), round(float(r.proba), 4))
            for r in preds.itertuples()}
-    logger.info("Champion {} trained on {} days → predicted {} day(s): {}",
-                cfg["version"], len(labeled), len(out), out)
+    logger.info("Served model {} ({}) → predicted {} day(s): {}", version, source, len(out), out)
 
     if dry_run:
-        return {"version": cfg["version"], "n_train": int(len(labeled)), "predicted": out,
-                "dry_run": True}
+        return {"version": version, "source": source, "n_train": int(len(labeled)),
+                "predicted": out, "dry_run": True}
 
     ensure_predictions_table(engine)
-    rows = [{"date": pd.Timestamp(r.date).date(), "version": cfg["version"],
+    rows = [{"date": pd.Timestamp(r.date).date(), "version": version,
              "prediction": bool(r.proba > 0.5), "confidence": float(r.proba)}
             for r in preds.itertuples()]
     with engine.begin() as conn:
         conn.execute(_UPSERT, rows)
-    return {"version": cfg["version"], "n_train": int(len(labeled)), "predicted": out}
+    return {"version": version, "source": source, "n_train": int(len(labeled)), "predicted": out}
 
 
 def predict_today(engine=None) -> dict:
