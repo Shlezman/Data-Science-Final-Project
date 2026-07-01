@@ -17,6 +17,8 @@ Returns two frames, both indexed by trading day with a `Target` column:
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -173,6 +175,36 @@ def _load_finance() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
     fx = pd.DataFrame.from_dict(resp.json()["rates"], orient="index")
     fx.index = pd.to_datetime(fx.index)
     fx.columns = ["FX_USD_ILS"]
+    # Extend TA-125 with LIVE close prices so the pipeline reaches the current trading day
+    # (the static CSV lags). Yahoo ticker for the TA-125 index, env-overridable. Only dates
+    # AFTER the CSV's last day are appended — historical CSV values stay authoritative (no
+    # train-distribution shift). Empty/failed fetch → CSV-only (no crash), just a stale calendar.
+    try:
+        ta_ticker = os.environ.get("SENTISENSE_TA125_TICKER", "^TA125.TA")
+        last_csv = ta125_clean.index.max()
+        live = yf.download(ta_ticker, start=(last_csv - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
+                           end=end, progress=False)
+        if not live.empty:
+            close, vol = live["Close"], live.get("Volume")
+            if isinstance(close, pd.DataFrame):        # single-ticker multi-index → first column
+                close = close.iloc[:, 0]
+                vol = vol.iloc[:, 0] if vol is not None else None
+            add = pd.DataFrame({
+                "TA125_Price": close.astype(float),
+                "TA125_Volume": (vol.astype(float) if vol is not None else 0.0),
+            }).dropna(subset=["TA125_Price"])
+            add = add[add.index > last_csv]            # CSV authoritative for history; append only new
+            if not add.empty:
+                ta125_clean = pd.concat([ta125_clean, add]).sort_index()
+                ta125_clean = ta125_clean[~ta125_clean.index.duplicated(keep="first")]
+                logger.info("TA-125 extended with {} live day(s) via {} → last {}",
+                            len(add), ta_ticker, ta125_clean.index.max().date())
+        else:
+            logger.warning("Live TA-125 ({}) returned no rows — CSV only (last {}).",
+                           ta_ticker, last_csv.date())
+    except Exception as exc:  # noqa: BLE001 — a live-fetch hiccup must not break the build
+        logger.warning("Live TA-125 fetch failed ({}) — CSV only.", str(exc)[:100])
+
     fx_clean = fx.sort_index()
     return ta125_clean, vta35_clean, market_clean, fx_clean
 
