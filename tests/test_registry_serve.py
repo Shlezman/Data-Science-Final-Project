@@ -52,3 +52,53 @@ def test_missing_artifact_raises():
     bad = {"artifact_format": "joblib", "artifact": None, "version": "x", "model_type": "xgboost"}
     with pytest.raises(RuntimeError):
         champion._predict_from_registry(None, bad, _row(["a", "b", "c"]))
+
+
+def _torch_bundle(cols, window):
+    """A weights_only-safe seq bundle for a freshly-built GRU (untrained — we test I/O, not skill)."""
+    import io
+
+    import torch
+    from sklearn.preprocessing import StandardScaler
+
+    from sentisense.hpo.optuna_seq import _build
+
+    params = {"dropout": 0.1, "dense_act": "relu", "d_dense": 16, "units": 8, "n_layers": 1,
+              "recurrent_dropout": 0.0, "pooling": "last", "bidirectional": False}
+    model = _build("GRU", len(cols), params)
+    rng = np.random.default_rng(0)
+    scaler = StandardScaler().fit(rng.random((50, len(cols))))
+    bundle = {"arch": "GRU", "params": params, "window": window, "feature_cols": list(cols),
+              "scaler_mean": scaler.mean_.astype(np.float32).tolist(),
+              "scaler_scale": scaler.scale_.astype(np.float32).tolist(),
+              "state_dict": {k: v.cpu() for k, v in model.state_dict().items()}}
+    buf = io.BytesIO(); torch.save(bundle, buf)
+    return {"artifact_format": "torch", "artifact": buf.getvalue(), "version": "gru1",
+            "model_type": "gru", "feature_cols": list(cols)}
+
+
+def test_torch_serve_roundtrip_shape_and_range():
+    pytest.importorskip("torch")
+    from sentisense.serve import champion
+
+    cols, window = ["a", "b", "c"], 3
+    dates = pd.to_datetime(["2026-06-25", "2026-06-28", "2026-06-29", "2026-06-30", "2026-07-01"])
+    full = pd.DataFrame({c: np.linspace(0, 1, len(dates)) for c in cols}, index=dates)
+    full["Target"] = [0, 1, 0, 1, -1]
+    to_predict = full[full["Target"] == -1]
+    out = champion._predict_from_registry(None, _torch_bundle(cols, window), to_predict, full=full)
+    assert list(out.columns) == ["date", "proba"]
+    assert out.shape[0] == 1 and 0.0 <= float(out["proba"].iloc[0]) <= 1.0
+
+
+def test_torch_serve_abstains_without_enough_history():
+    pytest.importorskip("torch")
+    from sentisense.serve import champion
+
+    cols, window = ["a", "b", "c"], 10          # window longer than the frame → abstain at 0.5
+    dates = pd.to_datetime(["2026-06-30", "2026-07-01"])
+    full = pd.DataFrame({c: [0.3, 0.6] for c in cols}, index=dates)
+    full["Target"] = [1, -1]
+    to_predict = full[full["Target"] == -1]
+    out = champion._predict_from_registry(None, _torch_bundle(cols, window), to_predict, full=full)
+    assert float(out["proba"].iloc[0]) == 0.5

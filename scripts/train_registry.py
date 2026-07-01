@@ -1,16 +1,16 @@
-"""Multi-model HPO → model registry. Trains the servable tree zoo (XGBoost / LightGBM /
-CatBoost) on the fused features, evaluates each on the SAME chronological last-15% OOS tail,
-refits the winner on ALL labeled history, serializes it (joblib) into ``model_registry`` with
-its OOS metrics, builds a top-K rank-normalized soft-vote ensemble, and auto-activates the best
-(sticky manual override). Serving (sentisense.serve.champion) then loads whatever is active.
-
-Scope: the joblib-servable tree zoo + ensemble (what the serve path handles today). Torch seq
-models (LSTM/GRU/TCN/PatchTST) are a follow-on — they need a state_dict serialize + windowed
-forward-predict serve path.
+"""Multi-model HPO → model registry. Trains the full servable zoo — tree models (XGBoost /
+LightGBM / CatBoost) AND torch sequence models (LSTM / GRU / TCN / PatchTST) — on the fused
+features, evaluates each on a chronological OOS tail, refits the winner on ALL labeled history,
+serializes it (joblib for trees, a weights_only-safe state_dict bundle for torch) into
+``model_registry`` with its OOS metrics, builds a top-K rank-normalized soft-vote ensemble over
+the TREE models (their test tails are index-aligned; the windowed torch tails are not, so torch
+competes individually), and auto-activates the best (sticky manual override). Serving
+(sentisense.serve.champion) then loads whatever is active.
 
 Run (server-side, GPU box; periodic — champion serving is decoupled so this isn't daily-critical):
     uv run --extra finance --extra ml python scripts/train_registry.py
     uv run --extra finance --extra ml python scripts/train_registry.py --models xgboost,lgbm,catboost --top-k 3
+    uv run --extra finance --extra ml python scripts/train_registry.py --seq-models lstm,gru,tcn,patchtst --seq-trials 15
     uv run --extra finance --extra ml python scripts/train_registry.py --no-activate     # register only
     uv run --extra finance --extra ml python scripts/train_registry.py --dry-run
 """
@@ -120,12 +120,67 @@ def _metrics(proba, labels) -> dict:
             "mcc": m.get("mcc"), "accuracy": m.get("accuracy"), "n": int(len(labels))}
 
 
+_ARCH_MAP = {"lstm": "LSTM", "gru": "GRU", "tcn": "TCN", "patchtst": "PatchTST"}
+
+
+def _seq_hpo_eval(arch: str, df: pd.DataFrame, n_trials: int, n_seeds: int):
+    """Tune a torch arch (resumable Optuna study in the DB), score its OOS test tail.
+
+    Returns ``(best_params, test_proba, test_labels)`` — mirrors ``_tune`` for the tree models.
+    """
+    from sentisense.hpo.optuna_seq import run_seq_hpo, seq_holdout_eval
+
+    study = run_seq_hpo(df, arch, n_trials=n_trials)
+    best = dict(study.best_params)
+    proba_s, label_s = seq_holdout_eval(df, arch, best, n_seeds=n_seeds)
+    return best, proba_s.to_numpy(), label_s.to_numpy()
+
+
+def _train_seq_all(arch: str, df: pd.DataFrame, params: dict, feat_cols: list) -> bytes:
+    """Refit a seq model on ALL labeled rows, serialize a weights_only-safe torch bundle.
+
+    A chronological 90/10 tail is held out only to drive early-stopping (never trained on).
+    The bundle carries arch/params/window, the fit-region scaler stats (as plain lists so
+    ``torch.load(weights_only=True)`` accepts it), the feature order, and the state_dict.
+    """
+    import io
+
+    import torch
+    from sklearn.preprocessing import StandardScaler
+
+    from sentisense.hpo.optuna_seq import _build
+    from sentisense.models.sequence import windowed_loader
+    from sentisense.models.train import train_model
+
+    window, bs = int(params["window"]), int(params["batch_size"])
+    y = df["Target"].to_numpy(np.float32)
+    X = df[feat_cols].to_numpy(np.float32)
+    scaler = StandardScaler().fit(X)
+    Xs = scaler.transform(X).astype(np.float32)
+    cut = min(int(len(Xs) * 0.9), len(Xs) - window - 1)          # tail keeps ≥1 monitor window
+    dl_fit = windowed_loader(Xs[:cut], y[:cut], window, batch_size=bs, shuffle=False, drop_last=True)
+    dl_mon = windowed_loader(Xs[cut:], y[cut:], window, batch_size=bs, shuffle=False)
+    model = _build(arch, len(feat_cols), params)
+    train_model(model, dl_fit, dl_mon, lr=params["lr"], weight_decay=params["weight_decay"],
+                max_grad_norm=params.get("grad_clip", 1.0), model_name=f"{arch}_registry")
+    bundle = {"arch": arch, "params": dict(params), "window": window, "feature_cols": list(feat_cols),
+              "scaler_mean": scaler.mean_.astype(np.float32).tolist(),
+              "scaler_scale": scaler.scale_.astype(np.float32).tolist(),
+              "state_dict": {k: v.cpu() for k, v in model.state_dict().items()}}
+    buf = io.BytesIO(); torch.save(bundle, buf)
+    return buf.getvalue()
+
+
 def main() -> int:
     """Train the tree zoo, register each + a top-K ensemble, auto-activate the best."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--models", default="xgboost,lgbm,catboost", help="Comma list of tree models.")
-    ap.add_argument("--trials", type=int, default=40, help="Optuna trials per model.")
-    ap.add_argument("--top-k", type=int, default=3, help="Members in the soft-vote ensemble.")
+    ap.add_argument("--trials", type=int, default=40, help="Optuna trials per tree model.")
+    ap.add_argument("--seq-models", default="", help="Comma list of torch seq models "
+                    "(lstm,gru,tcn,patchtst). Empty → skip the torch zoo.")
+    ap.add_argument("--seq-trials", type=int, default=15, help="Optuna trials per torch seq model.")
+    ap.add_argument("--seq-seeds", type=int, default=2, help="Seeds averaged in the seq OOS eval.")
+    ap.add_argument("--top-k", type=int, default=3, help="Members in the tree soft-vote ensemble.")
     ap.add_argument("--no-activate", action="store_true", help="Register only; don't change active.")
     ap.add_argument("--dry-run", action="store_true", help="Train + score; register nothing.")
     args = ap.parse_args()
@@ -165,8 +220,32 @@ def main() -> int:
                                 params=best, metrics=m, artifact=buf.getvalue(),
                                 artifact_format="joblib", feature_cols=feat_cols, trained_rows=len(df))
 
-    # Top-K soft-vote ensemble (rank-normalized) — its own activatable registry entry.
-    top = sorted(scored, key=lambda t: (t[2] if t[2] == t[2] else -1), reverse=True)[:args.top_k]
+    # Torch sequence zoo — HPO (resumable), OOS eval on the windowed test tail, refit on all
+    # labeled, serialize a weights_only-safe state_dict bundle. These do NOT join the tree
+    # ensemble (their windowed test tails aren't index-aligned with the trees'); they compete
+    # individually via auto_select_best on OOS ROC-AUC.
+    for raw in [m.strip().lower() for m in args.seq_models.split(",") if m.strip()]:
+        arch = _ARCH_MAP.get(raw)
+        if arch is None:
+            logger.warning("Unknown seq model {!r} — skipping (valid: {}).", raw, list(_ARCH_MAP))
+            continue
+        logger.info("── tuning {} ({} trials, {} seeds) ──", arch, args.seq_trials, args.seq_seeds)
+        best, te, yte = _seq_hpo_eval(arch, df, args.seq_trials, args.seq_seeds)
+        m = _metrics(te, yte)
+        version = f"{raw}-{stamp}"
+        logger.info("{}: OOS roc_auc={:.4f} CI[{:.4f},{:.4f}] mcc={:.4f} acc={:.4f}",
+                    version, m["roc_auc"], m["auc_lo"], m["auc_hi"], m["mcc"], m["accuracy"])
+        scored.append((version, arch, m["roc_auc"]))
+        if args.dry_run:
+            continue
+        artifact = _train_seq_all(arch, df, best, feat_cols)                # refit on ALL labeled
+        registry.register_model(engine, version=version, name=arch, model_type=arch.lower(),
+                                params=best, metrics=m, artifact=artifact,
+                                artifact_format="torch", feature_cols=feat_cols, trained_rows=len(df))
+
+    # Top-K soft-vote ensemble (rank-normalized) over the TREE models — its own activatable entry.
+    tree_scored = [s for s in scored if s[0] in te_probas]                  # torch tails aren't aligned
+    top = sorted(tree_scored, key=lambda t: (t[2] if t[2] == t[2] else -1), reverse=True)[:args.top_k]
     if len(top) >= 2 and te_labels is not None and not args.dry_run:
         ens_te = np.mean([pd.Series(te_probas[v]).rank(pct=True).to_numpy() for v, _, _ in top], axis=0)
         ens_metrics = _metrics(ens_te, te_labels)
