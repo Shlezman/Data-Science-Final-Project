@@ -40,7 +40,7 @@ _PREDICTIONS = text(
     """
     SELECT date, model_version, prediction, confidence, actual
     FROM model_predictions
-    WHERE (:version IS NULL OR model_version = :version)
+    WHERE (CAST(:version AS text) IS NULL OR model_version = :version)
     ORDER BY date DESC
     LIMIT :limit
     """
