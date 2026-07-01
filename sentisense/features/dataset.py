@@ -182,8 +182,11 @@ def _load_finance() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
     try:
         ta_ticker = os.environ.get("SENTISENSE_TA125_TICKER", "^TA125.TA")
         last_csv = ta125_clean.index.max()
+        # end is EXCLUSIVE in yfinance → use today+1 so TODAY's close is captured (the daily
+        # cron runs after TASE close, so it's final). Lets the champion predict today→tomorrow.
+        ta_end = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         live = yf.download(ta_ticker, start=(last_csv - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
-                           end=end, progress=False)
+                           end=ta_end, progress=False)
         if not live.empty:
             close, vol = live["Close"], live.get("Volume")
             if isinstance(close, pd.DataFrame):        # single-ticker multi-index → first column
