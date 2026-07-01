@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
@@ -30,6 +31,8 @@ from ui import queries
 _STATUS_PATH = REPO_ROOT / "logs" / "daily_live_status.json"
 _DIST = REPO_ROOT / "ui" / "frontend" / "dist"
 _MIRO_BASE = os.environ.get("SENTISENSE_MIRO_BASE_URL", "http://localhost:5001")
+_SIM_HEALTH_TTL = 30.0
+_sim_health: dict = {"t": -1e9, "val": None}
 
 app = FastAPI(title="SentiSense live", version="1.0")
 
@@ -109,6 +112,35 @@ def sim_dates() -> dict:
         rows = conn.execute(text(
             "SELECT DISTINCT sim_date FROM narrative_sim ORDER BY sim_date DESC LIMIT 400")).all()
     return {"dates": [str(r[0]) for r in rows]}
+
+
+def _probe_miro(timeout: float = 2.0) -> dict:
+    """Fast reachability probe of the MiroFish base URL, to gate LIVE sim runs.
+
+    A raw short-timeout GET — deliberately NOT via ``MiroClient``, whose ``assert_local`` guard
+    would refuse a remote base before any network call. Any HTTP response (even 404) = reachable.
+    """
+    try:
+        import requests
+        r = requests.get(_MIRO_BASE, timeout=timeout)
+        return {"reachable": True, "base": _MIRO_BASE, "reason": f"http {r.status_code}"}
+    except Exception as exc:  # noqa: BLE001 — unreachable/timeout/missing dep → live runs off
+        return {"reachable": False, "base": _MIRO_BASE, "reason": str(exc)[:140]}
+
+
+@app.get("/api/sim/health")
+def sim_health() -> dict:
+    """Whether MiroFish is reachable for LIVE runs (cached ~30s). Cached graphs render regardless.
+
+    The Simulator tab uses this to disable the "Run new simulation" control and show a
+    historical-only banner when MiroFish is down — rather than surfacing a raw connection error.
+    """
+    now = time.monotonic()
+    if _sim_health["val"] is not None and now - _sim_health["t"] < _SIM_HEALTH_TTL:
+        return _sim_health["val"]
+    val = _probe_miro()
+    _sim_health.update(t=now, val=val)
+    return val
 
 
 @app.get("/api/sim/graph")

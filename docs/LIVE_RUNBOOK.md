@@ -72,8 +72,43 @@ without pm2 you can `nohup uv run --extra ui --extra finance --extra ml python -
 ## 6. Simulator (mirofish)
 The UI renders **cached** sims (`narrative_sim*`) with no extra service. To run *new* sims
 (the "Run new simulation" button / `scripts/miro_daily.py`), the MiroFish HTTP service must be
-up at `SENTISENSE_MIRO_BASE_URL`. If it's down, the UI shows an error event and still serves
-cached graphs.
+up at `SENTISENSE_MIRO_BASE_URL`. If it's down, the UI probes `/api/sim/health` on the
+Simulator tab, disables the run control, and shows a "historical (cached) simulations only"
+banner — cached graphs still render.
+
+### 6a. MiroFish is NOT deployed on the live container — this is intended
+The live container (`container_startup.sh` = postgres + cron + pm2-UI) never starts MiroFish,
+and the deploy branch has no `external/MiroFish` source. So `GET <container>:5001` from the DB
+machine **times out** (port closed) — expected, not a defect. MiroFish is a heavy agent-sim
+sub-stack: it needs `zep-cloud` (Zep — local Zep requires Docker; the box has none) or Zep
+Cloud (external SaaS), plus `camel-oasis`/`camel-ai` and an OpenAI-format LLM endpoint.
+
+**Do NOT stand MiroFish up on the prod container.** Zep Cloud egress would send data to a
+third-party service (org data-handling policy — needs explicit approval), and there's no Docker
+for local Zep anyway.
+
+### 6b. Generating *new* sims (batch, off-prod)
+Run MiroFish where it belongs — a box with **Docker + Zep + an LLM** (the phase-23 setup or a
+dev host), and write results into the **same Postgres** the live UI reads. The UI then serves
+them as cached graphs automatically; the prod container never runs MiroFish.
+
+```bash
+# on a Docker+Zep host (NOT the prod container):
+cd external/MiroFish && docker compose up -d          # brings up MiroFish on :5001 (loopback)
+export SENTISENSE_DATABASE_URL=postgresql://<user>:<pw>@10.10.248.109:5432/sentisense  # shared DB
+export SENTISENSE_MIRO_URL=http://localhost:5001      # loopback → assert_local passes, no egress opened
+uv run python scripts/miro_daily.py --date <YYYY-MM-DD>   # upserts narrative_sim* into the shared DB
+```
+
+If you genuinely need the live "Run new simulation" button (cross-machine, discouraged): keep
+the port closed and use an SSH tunnel from the DB machine
+(`ssh -L 5001:localhost:5001 <mirofish-host>`), then set `SENTISENSE_MIRO_BASE_URL=http://localhost:5001`
+on the UI — tunnel stays encrypted and `assert_local` passes with no `SENTISENSE_MIRO_ALLOW_REMOTE`.
+Opening `5001` directly is plaintext HTTP across a public↔private hop; avoid it.
+
+> Env-var note: the UI reads **`SENTISENSE_MIRO_BASE_URL`** (`ui/app.py`); the pipeline client
+> reads **`SENTISENSE_MIRO_URL`** (`sentisense/sim/config.py`). Different names — set the one
+> that matches the process you're configuring.
 
 ## 7. Honest note
 The champion is the **best-available** cell, not a skillful one — daily TA-125 direction is

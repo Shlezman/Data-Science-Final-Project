@@ -88,6 +88,7 @@ export default function Simulator() {
   const [runDate, setRunDate] = useState('');
   const [events, setEvents] = useState([]);
   const [running, setRunning] = useState(false);
+  const [simLive, setSimLive] = useState(null);
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -110,7 +111,14 @@ export default function Simulator() {
         }
       })
       .catch((err) => setLoadError(err.message));
+
+    // Gate live runs on MiroFish reachability; cached graphs render regardless.
+    getJson('/api/sim/health')
+      .then((res) => setSimLive(res))
+      .catch(() => setSimLive({ reachable: false, reason: 'health check failed' }));
   }, []);
+
+  const liveDisabled = simLive != null && !simLive.reachable;
 
   const loadGraphAndReport = useCallback(async (d, m) => {
     if (!d || !m) {
@@ -148,7 +156,7 @@ export default function Simulator() {
 
   const runSimulation = useCallback(() => {
     const targetDate = runDate || date;
-    if (!targetDate || !mode || running) {
+    if (!targetDate || !mode || running || liveDisabled) {
       return;
     }
     setEvents([]);
@@ -194,7 +202,7 @@ export default function Simulator() {
     ws.onclose = () => {
       setRunning(false);
     };
-  }, [runDate, date, mode, running, loadGraphAndReport]);
+  }, [runDate, date, mode, running, liveDisabled, loadGraphAndReport]);
 
   return (
     <div>
@@ -253,6 +261,12 @@ export default function Simulator() {
 
       <div className="ss-card">
         <h3>Run new simulation</h3>
+        {liveDisabled ? (
+          <p className="ss-muted">
+            Live runs unavailable — showing historical (cached) simulations only.
+            {simLive?.reason ? ` (${simLive.reason})` : null}
+          </p>
+        ) : null}
         <div className="ss-controls">
           <label className="ss-field">
             Date
@@ -260,12 +274,13 @@ export default function Simulator() {
               type="date"
               value={runDate}
               onChange={(e) => setRunDate(e.target.value)}
+              disabled={liveDisabled}
             />
           </label>
           <button
             className="ss-btn"
             onClick={runSimulation}
-            disabled={running || (!runDate && !date) || !mode}
+            disabled={running || liveDisabled || (!runDate && !date) || !mode}
           >
             {running ? 'Running…' : 'Run new simulation'}
           </button>
