@@ -3,11 +3,13 @@ import { getJson } from './lib/api.js';
 import Dashboard from './components/Dashboard.jsx';
 import Archive from './components/Archive.jsx';
 import Simulator from './components/Simulator.jsx';
+import Models from './components/Models.jsx';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'archive', label: 'Archive' },
   { id: 'simulator', label: 'Simulator' },
+  { id: 'models', label: 'Models' },
 ];
 
 /**
@@ -51,6 +53,7 @@ export default function App() {
         {tab === 'dashboard' ? <Dashboard /> : null}
         {tab === 'archive' ? <Archive /> : null}
         {tab === 'simulator' ? <Simulator /> : null}
+        {tab === 'models' ? <Models /> : null}
       </main>
     </div>
   );
