@@ -17,9 +17,15 @@ import {
  *   tapped node's data (id/label/type/attrs), or null when background tapped.
  * @param {(maps: object) => void} [props.onLegend] Receives node color map
  *   for legend rendering whenever the graph changes.
+ * @param {string} [props.emptyMessage] Copy shown when there is no graph.
  * @returns {JSX.Element} The graph container.
  */
-export default function CytoscapeGraph({ graph, onNodeTap, onLegend }) {
+export default function CytoscapeGraph({
+  graph,
+  onNodeTap,
+  onLegend,
+  emptyMessage = 'No simulation for this date / mode.',
+}) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
 
@@ -62,11 +68,7 @@ export default function CytoscapeGraph({ graph, onNodeTap, onLegend }) {
 
   return (
     <div className="ss-graph" ref={containerRef}>
-      {isEmpty ? (
-        <div className="ss-graph-empty">
-          No simulation for this date / mode.
-        </div>
-      ) : null}
+      {isEmpty ? <div className="ss-graph-empty">{emptyMessage}</div> : null}
     </div>
   );
 }

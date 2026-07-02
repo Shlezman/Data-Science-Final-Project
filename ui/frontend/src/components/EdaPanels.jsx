@@ -57,7 +57,12 @@ export default function EdaPanels() {
         <span className="ss-tag">{open ? 'hide' : 'show'}</span>
       </h2>
       {!open ? null : !hasData ? (
-        <p className="ss-muted">{ready ? 'No EDA data available.' : 'Loading EDA…'}</p>
+        <>
+          <p className="ss-muted">{ready ? 'No EDA data available.' : 'Loading EDA…'}</p>
+          {ready && eda?.error ? (
+            <p className="ss-error-text">EDA unavailable: {eda.error}</p>
+          ) : null}
+        </>
       ) : (
         <div className="ss-eda-grid">
           <Panel title="Headline volume / day"

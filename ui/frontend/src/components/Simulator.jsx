@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getJson, simRunSocketUrl } from '../lib/api.js';
 import CytoscapeGraph from './CytoscapeGraph.jsx';
+import PersonaPanel from './PersonaPanel.jsx';
 
 /**
  * Renders the side panel showing a tapped node's attributes.
@@ -208,9 +209,14 @@ export default function Simulator() {
     <div>
       <div className="ss-card">
         <h2>Simulator</h2>
+        <p className="ss-muted">
+          Daily narrative simulation — agent personas discuss the day&apos;s
+          news; the graph shows who influenced whom, and the report is the
+          narrative summary.
+        </p>
         <div className="ss-controls">
           <label className="ss-field">
-            Mode
+            Simulation mode
             <select value={mode} onChange={(e) => setMode(e.target.value)}>
               {modes.length === 0 ? <option value="">—</option> : null}
               {modes.map((m) => (
@@ -221,7 +227,7 @@ export default function Simulator() {
             </select>
           </label>
           <label className="ss-field">
-            Cached date
+            Day
             <select value={date} onChange={(e) => setDate(e.target.value)}>
               {simDates.length === 0 ? (
                 <option value="">No cached sims</option>
@@ -236,13 +242,19 @@ export default function Simulator() {
         </div>
 
         {loadError ? <p className="ss-error-text">Error: {loadError}</p> : null}
+      </div>
 
+      <PersonaPanel date={date} />
+
+      <div className="ss-card">
+        <h3>Influence graph</h3>
         <div className="ss-graph-wrap">
           <div style={{ flex: '1 1 480px' }}>
             <CytoscapeGraph
               graph={graph}
               onNodeTap={setSelectedNode}
               onLegend={setLegendColors}
+              emptyMessage="No cached simulation for this day — pick another date or run a new one below."
             />
             <Legend colors={legendColors} />
           </div>
@@ -261,6 +273,10 @@ export default function Simulator() {
 
       <div className="ss-card">
         <h3>Run new simulation</h3>
+        <p className="ss-muted">
+          Runs the multi-agent simulation for the chosen day on the MiroFish
+          service — takes several minutes.
+        </p>
         {liveDisabled ? (
           <p className="ss-muted">
             Live runs unavailable — showing historical (cached) simulations only.
