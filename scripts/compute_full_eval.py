@@ -40,7 +40,9 @@ _UPSERT = text(
 
 def _ensure_table(engine) -> None:
     """Apply migration 006 (idempotent) so the table exists before upsert."""
-    ddl = _MIGRATION.read_text(encoding="utf-8")
+    import re
+
+    ddl = re.sub(r"--[^\n]*", "", _MIGRATION.read_text(encoding="utf-8"))  # strip comments ('; ' inside)
     with engine.begin() as conn:
         for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
             conn.execute(text(stmt))
