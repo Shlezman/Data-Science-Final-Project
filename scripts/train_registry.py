@@ -1,18 +1,30 @@
-"""Multi-model HPO → model registry. Trains the full servable zoo — tree models (XGBoost /
-LightGBM / CatBoost) AND torch sequence models (LSTM / GRU / TCN / PatchTST) — on the fused
-features, evaluates each on a chronological OOS tail, refits the winner on ALL labeled history,
-serializes it (joblib for trees, a weights_only-safe state_dict bundle for torch) into
-``model_registry`` with its OOS metrics, builds a top-K rank-normalized soft-vote ensemble over
-the TREE models (their test tails are index-aligned; the windowed torch tails are not, so torch
-competes individually), and auto-activates the best (sticky manual override). Serving
-(sentisense.serve.champion) then loads whatever is active.
+"""Multi-model HPO → model registry. Evaluates a VAST zoo out-of-sample (same leak-safe
+chronological 70/15/15, tune-on-val, score-the-sacred-test-tail contract as the leaderboard),
+registers each model's OOS metrics into ``model_registry``, and auto-selects the most accurate.
 
-Run (server-side, GPU box; periodic — champion serving is decoupled so this isn't daily-critical):
-    uv run --extra finance --extra ml python scripts/train_registry.py
-    uv run --extra finance --extra ml python scripts/train_registry.py --models xgboost,lgbm,catboost --top-k 3
-    uv run --extra finance --extra ml python scripts/train_registry.py --seq-models lstm,gru,tcn,patchtst --seq-trials 15
-    uv run --extra finance --extra ml python scripts/train_registry.py --no-activate     # register only
-    uv run --extra finance --extra ml python scripts/train_registry.py --dry-run
+Zoo:
+  * Trees  — XGBoost / LightGBM / CatBoost           → refit-on-all → joblib artifact (servable).
+  * Seq NN — LSTM / GRU / TCN / PatchTST              → refit-on-all → torch state_dict (servable).
+  * Foundation / zero-shot forecasters — Chronos, TimesFM, TFT, NHiTS, NBEATS → reuse the
+    leaderboard adapters (pipeline_compare). No stored artifact: registered as
+    ``artifact_format='reforecast'`` with a val-tuned threshold; serving a reforecast winner is a
+    live re-forecast (a phase-2 champion addition — until then the champion falls back to pinned).
+
+Selection: ``registry.auto_select_best(metric=--select-metric)`` (oos_roc_auc | oos_accuracy),
+sticky vs a manual UI override. Top-K rank-normalized soft-vote ensemble over the TREE models
+only (forecaster/seq tails aren't index-aligned with the tabular tail).
+
+Run (server-side, GPU box; extras: finance+ml always, tft+chronos for forecasters, TimesFM manual):
+    # smoke — validate every adapter cheaply (register nothing)
+    uv run --extra finance --extra ml --extra tft --extra chronos python scripts/train_registry.py \
+        --trials 5 --seq-models lstm,gru,tcn,patchtst --seq-trials 2 --seq-seeds 1 \
+        --forecasters chronos,tft --ctx-grid 64,128 --pf-trials 2 --pf-epochs 5 \
+        --select-metric oos_accuracy --dry-run
+    # thorough — the real 'find the most accurate model across the vast zoo' run
+    uv run --extra finance --extra ml --extra tft --extra chronos python scripts/train_registry.py \
+        --trials 100 --seq-models lstm,gru,tcn,patchtst --seq-trials 40 --seq-seeds 3 \
+        --forecasters chronos,timesfm,tft,nhits,nbeats --pf-trials 8 --pf-epochs 30 \
+        --select-metric oos_accuracy
 """
 
 from __future__ import annotations
@@ -112,9 +124,12 @@ def _tune(model_type: str, df: pd.DataFrame, n_trials: int):
     return study.best_params, est.predict_proba(Xte)[:, 1], yte
 
 
-def _metrics(proba, labels) -> dict:
+def _metrics(proba, labels, *, threshold: float = 0.5) -> dict:
+    """OOS metrics at ``threshold``. Trees/seq select threshold-free on roc_auc → 0.5 is fine;
+    forecaster/pf families carry a val-tuned threshold that MUST be passed so ``accuracy`` (and
+    thus ``--select-metric oos_accuracy``) is honest. roc_auc is threshold-independent."""
     from sentisense.models.backtest import direction_metrics
-    m = direction_metrics(np.asarray(proba), np.asarray(labels), 0.5)
+    m = direction_metrics(np.asarray(proba), np.asarray(labels), threshold)
     lo, hi = _auc_ci(proba, labels)
     return {"roc_auc": m["roc_auc"], "auc_lo": lo, "auc_hi": hi,
             "mcc": m.get("mcc"), "accuracy": m.get("accuracy"), "n": int(len(labels))}
@@ -182,6 +197,81 @@ def _train_seq_all(arch: str, df: pd.DataFrame, params: dict, feat_cols: list) -
     return buf.getvalue()
 
 
+_PF_ARCHS = {"tft": "TFT", "nhits": "NHiTS", "nbeats": "NBEATS"}
+
+
+def _register_forecasters(engine, families: list, stamp: str, scored: list, *,
+                          ctx_grid, pf_trials: int, pf_epochs: int, dry_run: bool) -> None:
+    """Evaluate + register the zero-shot / foundation forecasters over the SAME sacred test tail.
+
+    Reuses pipeline_compare's leak-safe adapters (Chronos / TimesFM / TFT / NHiTS / NBEATS). Each
+    family is guarded so a missing extra (chronos/tft/timesfm) skips just that family. These have
+    no persistable artifact — they register with ``artifact=None`` + ``artifact_format='reforecast'``
+    and a val-tuned ``threshold`` (threaded into ``_metrics`` so their ``oos_accuracy`` is honest).
+    Serving a reforecast winner is a live re-forecast — a phase-2 serve-path addition; until then
+    the champion safely falls back to the pinned model. Buy&Hold is intentionally NOT registered
+    (chance-level, would top accuracy in a rising regime without skill).
+    """
+    from sentisense.serve import registry
+    try:
+        from pipeline_compare import (_FAR_FUTURE as _FF, _chronos_forms, _cov_cols, _load_price,
+                                       _pf, _timesfm_forms)
+    except Exception as exc:  # noqa: BLE001 — leaderboard adapters unavailable
+        logger.warning("Cannot import leaderboard adapters ({}) — skipping forecasters.", str(exc)[:150])
+        return
+
+    price = _load_price()
+
+    def _emit(family: str, name: str, s, lab, thr: float, params: dict) -> None:
+        m = _metrics(s.to_numpy(), lab.to_numpy(), threshold=thr)
+        version = f"{name}-{stamp}"
+        logger.info("{}: OOS roc_auc={:.4f} acc={:.4f} thr={:.3f} n={}",
+                    version, m["roc_auc"], m["accuracy"], thr, m["n"])
+        scored.append((version, family, m["roc_auc"]))
+        if not dry_run:
+            registry.register_model(engine, version=version, name=name, model_type=family,
+                                    params={"family": family, "threshold": float(thr), **params},
+                                    metrics=m, artifact=None, artifact_format="reforecast",
+                                    feature_cols=params.get("cov_cols"), trained_rows=int(m["n"]))
+
+    if "chronos" in families:
+        try:
+            for name, (s, lab, thr) in _chronos_forms(price, _FF, ctx_grid=ctx_grid).items():
+                _emit("chronos", name, s, lab, thr, {"form": name})
+        except Exception as exc:  # noqa: BLE001 — extra missing or forecast failure
+            logger.warning("Chronos skipped: {}", str(exc)[:200])
+
+    if "timesfm" in families:
+        try:
+            from sentisense.features import build_datasets
+            mt, ml = build_datasets(cutoff=_FF, overnight=True)
+            for name, (s, lab, thr) in _timesfm_forms(mt, ml, price, _FF, ctx_grid=ctx_grid).items():
+                _emit("timesfm", name, s, lab, thr, {"form": name})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("TimesFM skipped: {}", str(exc)[:200])
+
+    pf_want = [f for f in families if f in _PF_ARCHS]
+    if pf_want:
+        try:
+            from sentisense.features import build_datasets
+            mt, _ml = build_datasets(cutoff=_FF, overnight=True)
+            cov = _cov_cols(mt, "scored")
+            cov_cols = list(cov.columns) if cov is not None else None
+            for fam in pf_want:
+                arch = _PF_ARCHS[fam]
+                use_cov = None if arch == "NBEATS" else cov
+                res = _pf(arch, price, _FF, cov=use_cov, n_trials=pf_trials, max_epochs=pf_epochs)
+                if res is None:
+                    logger.warning("{} produced no result (pytorch-forecasting absent / no test rows).", arch)
+                    continue
+                s, lab, thr = res
+                _emit("pf", arch, s, lab, thr,
+                      {"arch": arch, "cov_cols": (cov_cols if use_cov is not None else None),
+                       "n_trials": pf_trials, "max_epochs": pf_epochs})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pytorch-forecasting family skipped: {}", str(exc)[:200])
+
+
 def main() -> int:
     """Train the tree zoo, register each + a top-K ensemble, auto-activate the best."""
     ap = argparse.ArgumentParser(description=__doc__)
@@ -191,6 +281,13 @@ def main() -> int:
                     "(lstm,gru,tcn,patchtst). Empty → skip the torch zoo.")
     ap.add_argument("--seq-trials", type=int, default=15, help="Optuna trials per torch seq model.")
     ap.add_argument("--seq-seeds", type=int, default=2, help="Seeds averaged in the seq OOS eval.")
+    ap.add_argument("--forecasters", default="", help="Comma list of foundation forecasters: "
+                    "chronos,timesfm,tft,nhits,nbeats. Empty → skip. (needs tft/chronos extras; "
+                    "timesfm is a manual install.)")
+    ap.add_argument("--ctx-grid", default="", help="Comma ints overriding the Chronos/TimesFM "
+                    "context-length sweep (default 64,128,256,384,512,768,1024).")
+    ap.add_argument("--pf-trials", type=int, default=8, help="Optuna trials per pytorch-forecasting model.")
+    ap.add_argument("--pf-epochs", type=int, default=30, help="Max epochs per pytorch-forecasting fit.")
     ap.add_argument("--top-k", type=int, default=3, help="Members in the tree soft-vote ensemble.")
     ap.add_argument("--no-activate", action="store_true", help="Register only; don't change active.")
     ap.add_argument("--select-metric", choices=["oos_roc_auc", "oos_accuracy"],
@@ -255,6 +352,15 @@ def main() -> int:
         registry.register_model(engine, version=version, name=arch, model_type=arch.lower(),
                                 params=best, metrics=m, artifact=artifact,
                                 artifact_format="torch", feature_cols=feat_cols, trained_rows=len(df))
+
+    # Foundation / zero-shot forecasters (Chronos / TimesFM / TFT / NHiTS / NBEATS) — reuse the
+    # leaderboard adapters, register as 'reforecast' (no artifact; served by live re-forecast, phase 2).
+    families = [f.strip().lower() for f in args.forecasters.split(",") if f.strip()]
+    if families:
+        ctx_grid = [int(x) for x in args.ctx_grid.split(",") if x.strip()] or None
+        logger.info("── forecasters: {} ──", families)
+        _register_forecasters(engine, families, stamp, scored, ctx_grid=ctx_grid,
+                              pf_trials=args.pf_trials, pf_epochs=args.pf_epochs, dry_run=args.dry_run)
 
     # Top-K soft-vote ensemble (rank-normalized) over the TREE models — its own activatable entry.
     tree_scored = [s for s in scored if s[0] in te_probas]                  # torch tails aren't aligned

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS model_registry (
     id              BIGSERIAL     PRIMARY KEY,
     version         VARCHAR(120)  NOT NULL UNIQUE,     -- e.g. xgboost-20260701-0927
     name            VARCHAR(80)   NOT NULL,            -- display name
-    model_type      VARCHAR(40)   NOT NULL,            -- xgboost|lgbm|catboost|lstm|gru|tcn|patchtst|ensemble
+    model_type      VARCHAR(40)   NOT NULL,            -- xgboost|lgbm|catboost|lstm|gru|tcn|patchtst|ensemble|chronos|timesfm|pf
     datatype        VARCHAR(20)   NOT NULL DEFAULT 'fused',
     regime          VARCHAR(10)   NOT NULL DEFAULT 'FULL',
     overnight       BOOLEAN       NOT NULL DEFAULT TRUE,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS model_registry (
     oos_accuracy    REAL,
     oos_n           INTEGER,
     artifact        BYTEA,                             -- serialized model bytes; NULL for ensemble
-    artifact_format VARCHAR(20)   NOT NULL DEFAULT 'joblib',   -- joblib|torch|ensemble
+    artifact_format VARCHAR(20)   NOT NULL DEFAULT 'joblib',   -- joblib|torch|ensemble|reforecast (zero-shot: no artifact, live re-forecast)
     members         JSONB,                             -- ensemble: [member version strings]
     feature_cols    JSONB,                             -- exact feature column order the model expects
     trained_rows    INTEGER,
