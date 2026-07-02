@@ -11,6 +11,60 @@ import { Plot, darkLayout, PLOT_CONFIG, UP, DOWN, NEUTRAL, ACCENT } from '../lib
  * @param {string} color Marker color.
  * @returns {object|null} A Plotly trace, or null if empty.
  */
+const CLUSTER_COLORS = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24',
+                        '#a78bfa', '#f87171', '#2dd4bf', '#fb923c'];
+
+/**
+ * Builds cluster-colored traces for the all-days view: one trace per KMeans
+ * cluster (days grouped by their argmin embclus_dist_*), plus the projected
+ * cluster centers as large open diamonds.
+ *
+ * @param {Array} pts Day points [{x,y,z,date,n_headlines,cluster}].
+ * @param {Array} centers Projected centers [{id, v: [n_pca]}].
+ * @returns {Array} Plotly traces.
+ */
+function clusterTraces(pts, centers) {
+  const ids = [...new Set(pts.map((p) => p.cluster).filter((c) => c != null))].sort((a, b) => a - b);
+  const traces = ids.map((cid) => {
+    const sel = pts.filter((p) => p.cluster === cid);
+    return {
+      type: 'scatter3d', mode: 'markers', name: `Cluster ${cid}`,
+      x: sel.map((p) => p.x), y: sel.map((p) => p.y), z: sel.map((p) => p.z),
+      text: sel.map((p) => `${p.date} · cluster ${cid} · ${p.n_headlines} headlines`),
+      customdata: sel.map((p) => p.date),
+      hovertemplate: '%{text}<extra></extra>',
+      marker: { size: 4, color: CLUSTER_COLORS[cid % CLUSTER_COLORS.length], opacity: 0.85 },
+    };
+  });
+  const unassigned = pts.filter((p) => p.cluster == null);
+  if (unassigned.length) {
+    traces.push({
+      type: 'scatter3d', mode: 'markers', name: 'No cluster',
+      x: unassigned.map((p) => p.x), y: unassigned.map((p) => p.y), z: unassigned.map((p) => p.z),
+      text: unassigned.map((p) => `${p.date} · ${p.n_headlines} headlines`),
+      customdata: unassigned.map((p) => p.date),
+      hovertemplate: '%{text}<extra></extra>',
+      marker: { size: 4, color: NEUTRAL, opacity: 0.5 },
+    });
+  }
+  if (centers.length) {
+    traces.push({
+      type: 'scatter3d', mode: 'markers+text', name: 'Cluster centers',
+      x: centers.map((c) => c.v[0]), y: centers.map((c) => c.v[1]), z: centers.map((c) => c.v[2]),
+      text: centers.map((c) => `K${c.id}`),
+      textposition: 'top center',
+      textfont: { size: 11, color: '#e6edf3' },
+      hovertemplate: 'KMeans center %{text}<extra></extra>',
+      marker: {
+        size: 12, symbol: 'diamond-open', opacity: 1,
+        color: centers.map((c) => CLUSTER_COLORS[c.id % CLUSTER_COLORS.length]),
+        line: { width: 3 },
+      },
+    });
+  }
+  return traces;
+}
+
 function dayTrace(pts, actual, name, color) {
   const sel = pts.filter((p) => p.actual === actual);
   if (!sel.length) return null;
@@ -83,12 +137,15 @@ export default function Centroids3D() {
   const [day, setDay] = useState(null);
   const [dayLoading, setDayLoading] = useState(false);
   const [axes, setAxes] = useState([0, 1, 2]);
+  const [colorBy, setColorBy] = useState('outcome');
+  const [clusters, setClusters] = useState([]);
 
   useEffect(() => {
     getJson('/api/centroids')
       .then((d) => {
         const pts = d?.points || [];
         setPoints(pts);
+        setClusters(d?.clusters || []);
         setUpto(pts.length ? pts.length - 1 : 0);
         if (pts.length && !dayDate) setDayDate(pts[pts.length - 1].date);
       })
@@ -107,12 +164,14 @@ export default function Centroids3D() {
 
   const shown = useMemo(() => points.slice(0, upto + 1), [points, upto]);
   const allTraces = useMemo(
-    () => [
-      dayTrace(shown, true, 'Up', UP),
-      dayTrace(shown, false, 'Down', DOWN),
-      dayTrace(shown, null, 'Unsettled', NEUTRAL),
-    ].filter(Boolean),
-    [shown],
+    () => (colorBy === 'cluster'
+      ? clusterTraces(shown, clusters)
+      : [
+        dayTrace(shown, true, 'Up', UP),
+        dayTrace(shown, false, 'Down', DOWN),
+        dayTrace(shown, null, 'Unsettled', NEUTRAL),
+      ].filter(Boolean)),
+    [shown, colorBy, clusters],
   );
 
   const nPca = day?.n_pca || 16;
@@ -153,9 +212,22 @@ export default function Centroids3D() {
           ) : (
             <div className="ss-drawer__body">
               <p className="ss-muted" style={{ margin: '4px 2px 8px' }}>
-                Each point is one trading day&apos;s news centroid; green/red = the index actually
-                went up/down. Click a day to open its headline cloud.
+                {colorBy === 'cluster'
+                  ? 'Each point is one trading day’s news centroid, colored by the KMeans '
+                    + 'cluster it belongs to (the same clustering behind the embclus_dist features). '
+                    + 'Open diamonds = the cluster centers. Click a day to open its headline cloud.'
+                  : 'Each point is one trading day’s news centroid; green/red = the index '
+                    + 'actually went up/down. Click a day to open its headline cloud.'}
               </p>
+              <div className="ss-controls" style={{ marginBottom: 8 }}>
+                <label className="ss-field">
+                  Color by
+                  <select value={colorBy} onChange={(e) => setColorBy(e.target.value)}>
+                    <option value="outcome">Market outcome (up/down)</option>
+                    <option value="cluster">News cluster (KMeans)</option>
+                  </select>
+                </label>
+              </div>
               <Plot data={allTraces} layout={layout} config={PLOT_CONFIG}
                     style={{ width: '100%', height: '64vh' }} useResizeHandler
                     onClick={(ev) => {
@@ -177,6 +249,13 @@ export default function Centroids3D() {
               Every headline of the chosen day, projected into the same 16-dim PCA space as the
               model&apos;s <code>embpca</code> features. The blue diamond is the day centroid —
               exactly what the model consumes for that day.
+              {(() => {
+                const c = points.find((p) => p.date === dayDate)?.cluster;
+                return c != null ? (
+                  <span> This day belongs to <b style={{ color: CLUSTER_COLORS[c % CLUSTER_COLORS.length] }}>
+                    cluster {c}</b>.</span>
+                ) : null;
+              })()}
             </p>
             <div className="ss-controls" style={{ marginBottom: 8 }}>
               <label className="ss-field">

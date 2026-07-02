@@ -74,13 +74,25 @@ def health() -> dict:
     return {"ok": True, "champion": load_champion().get("version"), "last_run": status}
 
 
-@app.get("/api/dashboard")
-def dashboard() -> dict:
-    """Champion accuracy + confusion matrix (settled predictions) + live last-day headlines."""
+def _active_served() -> tuple[str, str]:
+    """(version, model_type) currently serving — active registry model, else pinned champion."""
     from sentisense.serve.champion import load_champion
 
-    champ = load_champion()
-    rows = queries.prediction_rows(version=champ.get("version"))
+    try:
+        from sentisense.serve import registry
+        active = registry.get_active()
+        if active:
+            return active["version"], active["model_type"]
+    except Exception:  # noqa: BLE001 — registry table may not exist yet
+        pass
+    return load_champion().get("version"), "pinned"
+
+
+@app.get("/api/dashboard")
+def dashboard() -> dict:
+    """Served-model accuracy + confusion matrix (its predictions) + live last-day headlines."""
+    version, model_type = _active_served()
+    rows = queries.prediction_rows(version=version)
     cm = queries.confusion_matrix(rows)
     day = queries.latest_date()
     latest = queries.headlines_for_date(day=day, page=0, page_size=100) if day else {"headlines": []}
@@ -88,7 +100,7 @@ def dashboard() -> dict:
                "confidence": round(float(r["confidence"]), 4),
                "actual": (None if r["actual"] is None else bool(r["actual"]))}
               for r in rows[:60]]
-    return {"champion": champ.get("version"), "confusion": cm, "recent": recent,
+    return {"champion": version, "model_type": model_type, "confusion": cm, "recent": recent,
             "latest_headlines": latest}
 
 
@@ -153,6 +165,28 @@ def personas(date: str) -> dict:
         logger.warning("/api/personas failed: {}", str(exc)[:300])
         return {"date": date, "personas": [], "general": None, "model": None,
                 "actual": None, "error": str(exc)[:200]}
+
+
+@app.get("/api/models")
+def models() -> dict:
+    """All registered models (metrics + which is active) for the Models tab."""
+    try:
+        from sentisense.serve import registry
+        rows = registry.list_models()
+        for r in rows:
+            r.pop("feature_cols", None)          # drop the ~970-col list from the payload
+        return {"models": rows}
+    except Exception as exc:  # noqa: BLE001 — registry table absent → empty list, not a 500
+        return {"models": [], "error": str(exc)[:200]}
+
+
+@app.post("/api/models/{version}/activate")
+def activate_model(version: str) -> JSONResponse:
+    """Manually set the active (served) model. Manual picks are sticky vs auto-selection."""
+    from sentisense.serve import registry
+    if not registry.set_active(version=version, by="manual"):
+        return JSONResponse({"error": f"model '{version}' not found"}, status_code=404)
+    return JSONResponse({"ok": True, "active": version})
 
 
 @app.get("/api/headlines/latest")

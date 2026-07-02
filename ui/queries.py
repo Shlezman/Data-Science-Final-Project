@@ -150,6 +150,7 @@ _CENTROIDS = text(
            (d.features->>'embpca_000')::float AS x,
            (d.features->>'embpca_001')::float AS y,
            (d.features->>'embpca_002')::float AS z,
+           d.features AS features,
            e.actual AS actual,
            COALESCE(v.n, 0) AS n_headlines
     FROM daily_embedding_derived d
@@ -162,6 +163,20 @@ _CENTROIDS = text(
     ORDER BY d.date
     """
 )
+
+
+def _cluster_of(features: dict) -> int | None:
+    """The KMeans cluster a day belongs to = argmin over its ``embclus_dist_*`` features."""
+    dists = {}
+    for key, val in (features or {}).items():
+        if key.startswith("embclus_dist_") and val is not None:
+            try:
+                dists[int(key.rsplit("_", 1)[1])] = float(val)
+            except (TypeError, ValueError):
+                continue
+    if not dists:
+        return None
+    return min(dists, key=dists.get)
 
 
 def full_eval_rows(engine=None, *, version=None) -> list[dict]:
@@ -212,15 +227,56 @@ def eda_aggregates(engine=None) -> dict:
                            "rate": round(passed / total, 4) if total else 0.0}}
 
 
+def _cluster_centers(engine) -> list[dict]:
+    """KMeans cluster centers projected into the embpca space → ``[{id, v: [n_pca]}]``.
+
+    Centers are stored in SCALED 768-d space (the KMeans fit space), so the projection skips
+    the scaler: ``(center - pca_mean) @ components.T`` — identical to how the day centroids got
+    their ``embpca_*`` coordinates. Empty list when the basis lacks centers (pre-upgrade row).
+    """
+    import json as _json
+
+    import numpy as np
+
+    with engine.connect() as conn:
+        b = conn.execute(_BASIS).mappings().first()
+    b = dict(b) if b else {}
+    if not b.get("kmeans_centers") or not b.get("n_clusters"):
+        return []
+    nf, k = int(b["n_features"]), int(b["n_clusters"])
+    centers = np.frombuffer(b["kmeans_centers"], dtype=np.float32).reshape(k, nf)
+    pmean = np.frombuffer(b["pca_mean"], dtype=np.float32)
+    comps = np.frombuffer(b["pca_components"], dtype=np.float32).reshape(int(b["n_pca"]), nf)
+    proj = (centers - pmean) @ comps.T
+    return [{"id": i, "v": [round(float(x), 4) for x in proj[i]]} for i in range(k)]
+
+
 def centroid_points(engine=None) -> dict:
-    """Per-day 3D news centroids (leak-safe embpca_000..002) + actual up/down + headline count."""
+    """Per-day 3D news centroids + actual up/down + headline count + KMeans cluster.
+
+    ``cluster`` = argmin over the day's stored ``embclus_dist_*`` (the grouping the pipeline
+    actually fit); ``clusters`` = the KMeans centers projected into the same embpca space so
+    the UI can draw them. Both degrade to None/[] when the derived/basis data is absent.
+    """
     engine = engine or get_engine()
     with engine.connect() as conn:
         rows = conn.execute(_CENTROIDS).mappings().all()
-    points = [{"date": str(r["date"]), "x": float(r["x"]), "y": float(r["y"]), "z": float(r["z"]),
-               "actual": (None if r["actual"] is None else bool(r["actual"])),
-               "n_headlines": int(r["n_headlines"])} for r in rows]
-    return {"points": points}
+    points = []
+    for r in rows:
+        feats = r["features"]
+        if isinstance(feats, str):
+            import json as _json
+            feats = _json.loads(feats)
+        points.append({"date": str(r["date"]), "x": float(r["x"]), "y": float(r["y"]),
+                       "z": float(r["z"]),
+                       "actual": (None if r["actual"] is None else bool(r["actual"])),
+                       "n_headlines": int(r["n_headlines"]),
+                       "cluster": _cluster_of(feats)})
+    try:
+        clusters = _cluster_centers(engine)
+    except Exception:  # noqa: BLE001 — basis table absent → clusters just don't render
+        clusters = []
+    return {"points": points, "clusters": clusters}
 
 
 _BASIS = text("SELECT * FROM embedding_pca_basis ORDER BY created_at DESC LIMIT 1")

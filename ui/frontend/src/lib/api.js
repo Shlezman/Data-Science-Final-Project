@@ -40,6 +40,29 @@ export async function getJson(path, options = {}) {
 }
 
 /**
+ * Performs a POST against an API path (JSON body optional) and parses JSON.
+ * Resolves the URL exactly like getJson, so it works at the site root and
+ * under a proxy subpath.
+ *
+ * @param {string} path Relative path beginning with '/api'.
+ * @param {object} [body] Optional JSON-serializable request body.
+ * @returns {Promise<object>} Parsed JSON body.
+ * @throws {Error} If the response status is not ok.
+ */
+export async function postJson(path, body) {
+  const res = await fetch(resolve(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const detail = await safeErrorDetail(res);
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
  * Extracts a human-readable error message from a failed response.
  *
  * @param {Response} res The failed fetch response.
