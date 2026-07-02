@@ -123,14 +123,25 @@ def _metrics(proba, labels) -> dict:
 _ARCH_MAP = {"lstm": "LSTM", "gru": "GRU", "tcn": "TCN", "patchtst": "PatchTST"}
 
 
-def _seq_hpo_eval(arch: str, df: pd.DataFrame, n_trials: int, n_seeds: int):
-    """Tune a torch arch (resumable Optuna study in the DB), score its OOS test tail.
+def _seq_hpo_eval(arch: str, df: pd.DataFrame, n_trials: int, n_seeds: int, stamp: str):
+    """Tune a torch arch in a REGISTRY-namespaced Optuna study, score its OOS test tail.
 
-    Returns ``(best_params, test_proba, test_labels)`` — mirrors ``_tune`` for the tree models.
+    Uses ``registry_<arch>`` (not the leaderboard's ``sentisense_<arch>_scores``) so the registry
+    never collides with the tuning studies' search space. If a pre-existing registry study has an
+    incompatible categorical space (e.g. ``window`` choices changed), fall back to a fresh stamped
+    study rather than crashing. Returns ``(best_params, test_proba, test_labels)``.
     """
     from sentisense.hpo.optuna_seq import run_seq_hpo, seq_holdout_eval
 
-    study = run_seq_hpo(df, arch, n_trials=n_trials)
+    name = f"registry_{arch.lower()}"
+    try:
+        study = run_seq_hpo(df, arch, n_trials=n_trials, study_name=name)
+    except ValueError as exc:  # incompatible existing study → don't crash the whole zoo
+        if "dynamic value space" not in str(exc):
+            raise
+        logger.warning("Seq study {} has an incompatible space ({}); using a fresh study.",
+                       name, str(exc)[:80])
+        study = run_seq_hpo(df, arch, n_trials=n_trials, study_name=f"{name}_{stamp}")
     best = dict(study.best_params)
     proba_s, label_s = seq_holdout_eval(df, arch, best, n_seeds=n_seeds)
     return best, proba_s.to_numpy(), label_s.to_numpy()
@@ -232,7 +243,7 @@ def main() -> int:
             logger.warning("Unknown seq model {!r} — skipping (valid: {}).", raw, list(_ARCH_MAP))
             continue
         logger.info("── tuning {} ({} trials, {} seeds) ──", arch, args.seq_trials, args.seq_seeds)
-        best, te, yte = _seq_hpo_eval(arch, df, args.seq_trials, args.seq_seeds)
+        best, te, yte = _seq_hpo_eval(arch, df, args.seq_trials, args.seq_seeds, stamp)
         m = _metrics(te, yte)
         version = f"{raw}-{stamp}"
         logger.info("{}: OOS roc_auc={:.4f} CI[{:.4f},{:.4f}] mcc={:.4f} acc={:.4f}",
