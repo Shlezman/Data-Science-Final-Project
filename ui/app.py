@@ -118,6 +118,7 @@ def eda() -> dict:
     try:
         return _cached("eda", queries.eda_aggregates)
     except Exception as exc:  # noqa: BLE001 — degrade to empty rather than 500
+        logger.warning("/api/eda failed: {}", str(exc)[:300])
         return {"error": str(exc)[:200], "volume": [], "sentiment_ts": [], "sentiment_hist": [],
                 "relevance_hist": [], "category_corr": {"labels": [], "matrix": []},
                 "validation": {"passed": 0, "failed": 0, "rate": 0.0}}
@@ -129,7 +130,29 @@ def centroids() -> dict:
     try:
         return _cached("centroids", queries.centroid_points)
     except Exception as exc:  # noqa: BLE001 — daily_embedding_derived/champion_full_eval may be absent
+        logger.warning("/api/centroids failed: {}", str(exc)[:300])
         return {"points": [], "error": str(exc)[:200]}
+
+
+@app.get("/api/centroids/day")
+def centroids_day(date: str) -> dict:
+    """One day's headline cloud projected into the 16-d embpca space + that day's centroid."""
+    try:
+        return _cached(f"cday:{date}", lambda: queries.day_centroid_points(day=date))
+    except Exception as exc:  # noqa: BLE001 — basis/embeddings may be absent on this DB
+        logger.warning("/api/centroids/day failed: {}", str(exc)[:300])
+        return {"date": date, "points": [], "centroid": None, "error": str(exc)[:200]}
+
+
+@app.get("/api/personas")
+def personas(date: str) -> dict:
+    """Per-source persona votes (up/down/neutral by mean sentiment) + model prediction + actual."""
+    try:
+        return _cached(f"personas:{date}", lambda: queries.persona_votes(day=date))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("/api/personas failed: {}", str(exc)[:300])
+        return {"date": date, "personas": [], "general": None, "model": None,
+                "actual": None, "error": str(exc)[:200]}
 
 
 @app.get("/api/headlines/latest")

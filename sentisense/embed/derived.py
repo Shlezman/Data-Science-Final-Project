@@ -25,11 +25,13 @@ from sentisense.db import get_engine
 
 DERIVED_TABLE = "daily_embedding_derived"
 _MIGRATION = REPO_ROOT / "sentisense" / "db" / "migrations" / "004_embedding_derived.sql"
+_BASIS_MIGRATION = REPO_ROOT / "sentisense" / "db" / "migrations" / "007_embedding_basis.sql"
 _FAR_FUTURE = dt.date(2100, 1, 1)
 
 
 def fit_transform_derived(centroid_by_date: pd.DataFrame, *, fit_cutoff,
-                          n_pca: int, n_clusters: int, seed: int = SEED) -> pd.DataFrame:
+                          n_pca: int, n_clusters: int, seed: int = SEED,
+                          return_basis: bool = False):
     """Fit scaler→PCA→KMeans on dates ≤ ``fit_cutoff``; transform ALL dates (leak-safe).
 
     Args:
@@ -38,10 +40,13 @@ def fit_transform_derived(centroid_by_date: pd.DataFrame, *, fit_cutoff,
         n_pca: PCA components (capped to ≤ n_features and ≤ n_train_samples).
         n_clusters: KMeans clusters → that many centroid-distance features.
         seed: RNG seed for PCA/KMeans determinism.
+        return_basis: also return the fitted scaler/PCA arrays (for ``persist_basis`` so
+            the UI can project per-headline embeddings into the same embpca space).
 
     Returns:
         Date-indexed DataFrame (aligned to the input index) with columns
-        ``embpca_000..`` and ``embclus_dist_0..``.
+        ``embpca_000..`` and ``embclus_dist_0..`` — or ``(frame, basis_dict)`` when
+        ``return_basis=True``.
 
     Raises:
         ValueError: if the train window has too few days for the requested dims.
@@ -71,7 +76,18 @@ def fit_transform_derived(centroid_by_date: pd.DataFrame, *, fit_cutoff,
                            columns=[f"embclus_dist_{i}" for i in range(n_clusters)])
     logger.info("Derived basis fit on {} train days (≤ {}); {} PCA + {} cluster-dist over {} days",
                 n_fit, pd.Timestamp(fit_cutoff).date(), p, n_clusters, len(idx))
-    return pca_df.join(dist_df)
+    out = pca_df.join(dist_df)
+    if not return_basis:
+        return out
+    basis = {
+        "n_features": int(X.shape[1]), "n_pca": int(p),
+        "fit_cutoff": pd.Timestamp(fit_cutoff).date(),
+        "scaler_mean": scaler.mean_.astype(np.float32),
+        "scaler_scale": scaler.scale_.astype(np.float32),
+        "pca_mean": pca.mean_.astype(np.float32),
+        "pca_components": pca.components_.astype(np.float32),   # (n_pca, n_features)
+    }
+    return out, basis
 
 
 def _split_sql(ddl: str) -> list[str]:
@@ -124,6 +140,44 @@ def persist_derived(derived: pd.DataFrame, *, fit_cutoff, n_pca: int, n_clusters
     logger.info("Persisted {} derived rows (model={}, fit_cutoff={})",
                 len(rows), model, pd.Timestamp(fit_cutoff).date())
     return len(rows)
+
+
+_BASIS_UPSERT = text(
+    """
+    INSERT INTO embedding_pca_basis
+        (embed_model, n_features, n_pca, fit_cutoff, scaler_mean, scaler_scale, pca_mean, pca_components)
+    VALUES (:model, :n_features, :n_pca, :fit_cutoff, :scaler_mean, :scaler_scale, :pca_mean, :pca_components)
+    ON CONFLICT (embed_model) DO UPDATE
+        SET n_features = EXCLUDED.n_features, n_pca = EXCLUDED.n_pca,
+            fit_cutoff = EXCLUDED.fit_cutoff, scaler_mean = EXCLUDED.scaler_mean,
+            scaler_scale = EXCLUDED.scaler_scale, pca_mean = EXCLUDED.pca_mean,
+            pca_components = EXCLUDED.pca_components, created_at = NOW()
+    """
+)
+
+
+def persist_basis(basis: dict, *, engine=None, model: str = EMBED_MODEL) -> None:
+    """Upsert the fitted scaler→PCA basis (float32 BYTEA) so the UI can project headlines.
+
+    Args:
+        basis: the dict returned by ``fit_transform_derived(..., return_basis=True)``.
+        engine: SQLAlchemy engine; created from env if None.
+        model: embedding model name the basis belongs to.
+    """
+    engine = engine or get_engine()
+    with engine.begin() as conn:
+        for stmt in _split_sql(_BASIS_MIGRATION.read_text(encoding="utf-8")):
+            conn.execute(text(stmt))
+        conn.execute(_BASIS_UPSERT, {
+            "model": model, "n_features": basis["n_features"], "n_pca": basis["n_pca"],
+            "fit_cutoff": basis["fit_cutoff"],
+            "scaler_mean": basis["scaler_mean"].tobytes(),
+            "scaler_scale": basis["scaler_scale"].tobytes(),
+            "pca_mean": basis["pca_mean"].tobytes(),
+            "pca_components": basis["pca_components"].tobytes(),
+        })
+    logger.info("Persisted PCA basis (model={}, {}→{} dims, fit_cutoff={})",
+                model, basis["n_features"], basis["n_pca"], basis["fit_cutoff"])
 
 
 _LOAD_SQL = text(

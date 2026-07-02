@@ -110,7 +110,23 @@ Opening `5001` directly is plaintext HTTP across a public↔private hop; avoid i
 > reads **`SENTISENSE_MIRO_URL`** (`sentisense/sim/config.py`). Different names — set the one
 > that matches the process you're configuring.
 
-## 7. Honest note
+## 7. Dashboard v2 data prerequisites (per panel)
+Each panel degrades to an explicit "no data" state until its producer has run **on the
+container** (the UI box only reads):
+
+| Panel | Table | Producer (container) |
+|---|---|---|
+| Hero + recent predictions | `model_predictions` | `daily_live.py` (cron) |
+| "All days" confusion matrix | `champion_full_eval` | `scripts/compute_full_eval.py` |
+| EDA panels | `raw_headlines` + `nlp_vectors` | scrape + score (cron) |
+| 3D centroids — all days | `daily_embedding_derived` | `scripts/build_embedding_derived.py` |
+| 3D centroids — single day | `embedding_pca_basis` + `headline_embeddings` | **rerun** `scripts/build_embedding_derived.py` (now also persists the PCA basis) |
+| Personas (Simulator) | `nlp_vectors` per source | scrape + score (cron) |
+
+After pulling a new dashboard build on the UI box: `cd ui/frontend && npm run build && pm2
+restart sentisense-ui`, then hard-refresh the browser.
+
+## 8. Honest note
 The champion is the **best-available** cell, not a skillful one — daily TA-125 direction is
 ≈ chance (leaderboard ROC-AUC CIs span 0.5). The system is production-grade; the edge is not
 claimed. The dashboard's accuracy/confusion matrix reflect that reality.
