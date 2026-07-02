@@ -182,6 +182,8 @@ def main() -> int:
     ap.add_argument("--seq-seeds", type=int, default=2, help="Seeds averaged in the seq OOS eval.")
     ap.add_argument("--top-k", type=int, default=3, help="Members in the tree soft-vote ensemble.")
     ap.add_argument("--no-activate", action="store_true", help="Register only; don't change active.")
+    ap.add_argument("--select-metric", choices=["oos_roc_auc", "oos_accuracy"],
+                    default="oos_roc_auc", help="Metric auto_select_best ranks the active model by.")
     ap.add_argument("--dry-run", action="store_true", help="Train + score; register nothing.")
     args = ap.parse_args()
 
@@ -261,8 +263,8 @@ def main() -> int:
         logger.info("[dry-run] scored {} models; registered/activated nothing.", len(scored))
         return 0
     if not args.no_activate:
-        active = registry.auto_select_best(engine)
-        logger.info("Active model → {}", active)
+        active = registry.auto_select_best(engine, metric=args.select_metric)
+        logger.info("Active model → {} (by {})", active, args.select_metric)
     return 0
 
 

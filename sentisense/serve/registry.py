@@ -28,8 +28,10 @@ _META_COLS = ("id", "version", "name", "model_type", "datatype", "regime", "over
 
 def ensure_registry_table(engine=None) -> None:
     """Apply the registry migration (idempotent)."""
+    import re
+
     engine = engine or get_engine()
-    ddl = _MIGRATION.read_text(encoding="utf-8")
+    ddl = re.sub(r"--[^\n]*", "", _MIGRATION.read_text(encoding="utf-8"))  # strip comments ('; ' inside)
     with engine.begin() as conn:
         for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
             conn.execute(text(stmt))
