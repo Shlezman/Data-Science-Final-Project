@@ -82,6 +82,144 @@ def prediction_rows(engine=None, *, version=None, limit: int = 365) -> list[dict
     return [dict(r) for r in rows]
 
 
+_FULL_EVAL = text(
+    """
+    SELECT date, model_version, prediction, actual
+    FROM champion_full_eval
+    WHERE (CAST(:version AS text) IS NULL OR model_version = :version)
+    ORDER BY date
+    """
+)
+_TODAY_PRED = text(
+    """
+    SELECT date, model_version, prediction, confidence
+    FROM model_predictions
+    ORDER BY date DESC, created_at DESC
+    LIMIT 1
+    """
+)
+_EDA_VOLUME = text("SELECT date, COUNT(*) AS n FROM raw_headlines GROUP BY date ORDER BY date")
+_EDA_SENT_TS = text(
+    """
+    SELECT rh.date AS date, AVG(nv.global_sentiment)::float AS mean_sentiment
+    FROM raw_headlines rh
+    JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
+    WHERE nv.validation_passed
+    GROUP BY rh.date ORDER BY rh.date
+    """
+)
+_EDA_SENT_HIST = text(
+    """
+    SELECT global_sentiment AS bin, COUNT(*) AS n
+    FROM nlp_vectors WHERE model_name = :model AND validation_passed
+    GROUP BY global_sentiment ORDER BY global_sentiment
+    """
+)
+_EDA_REL_HIST = text(
+    """
+    SELECT GREATEST(relevance_politics, relevance_economy, relevance_security,
+                    relevance_health, relevance_science, relevance_technology) AS bin,
+           COUNT(*) AS n
+    FROM nlp_vectors WHERE model_name = :model AND validation_passed
+    GROUP BY bin ORDER BY bin
+    """
+)
+_EDA_VALIDATION = text(
+    """
+    SELECT COUNT(*) FILTER (WHERE validation_passed) AS passed,
+           COUNT(*) FILTER (WHERE NOT validation_passed) AS failed
+    FROM nlp_vectors WHERE model_name = :model
+    """
+)
+# 15 pairwise Pearson correlations among the 6 relevance categories (one table pass).
+_CORR_COLS = ["relevance_politics", "relevance_economy", "relevance_security",
+              "relevance_health", "relevance_science", "relevance_technology"]
+_CORR_LABELS = ["politics", "economy", "security", "health", "science", "technology"]
+_EDA_CORR = text(
+    "SELECT " + ", ".join(
+        f"corr({_CORR_COLS[i]}, {_CORR_COLS[j]}) AS c{i}{j}"
+        for i in range(6) for j in range(i + 1, 6)
+    ) + " FROM nlp_vectors WHERE model_name = :model AND validation_passed"
+)
+_CENTROIDS = text(
+    """
+    SELECT d.date AS date,
+           (d.features->>'embpca_000')::float AS x,
+           (d.features->>'embpca_001')::float AS y,
+           (d.features->>'embpca_002')::float AS z,
+           e.actual AS actual,
+           COALESCE(v.n, 0) AS n_headlines
+    FROM daily_embedding_derived d
+    LEFT JOIN champion_full_eval e ON e.date = d.date
+    LEFT JOIN (SELECT date, COUNT(*) AS n FROM raw_headlines GROUP BY date) v ON v.date = d.date
+    WHERE d.embed_model = (
+        SELECT embed_model FROM daily_embedding_derived
+        GROUP BY embed_model ORDER BY COUNT(*) DESC LIMIT 1)
+      AND d.features ? 'embpca_000' AND d.features ? 'embpca_001' AND d.features ? 'embpca_002'
+    ORDER BY d.date
+    """
+)
+
+
+def full_eval_rows(engine=None, *, version=None) -> list[dict]:
+    """All ``champion_full_eval`` rows (in-sample, all labeled days), optionally one version."""
+    engine = engine or get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(_FULL_EVAL, {"version": version}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def today_prediction(engine=None) -> dict | None:
+    """The most recent ``model_predictions`` row → ``{date, up, confidence, model_version}``."""
+    engine = engine or get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(_TODAY_PRED).mappings().first()
+    if not row:
+        return None
+    return {"date": str(row["date"]), "up": bool(row["prediction"]),
+            "confidence": round(float(row["confidence"]), 4), "model_version": row["model_version"]}
+
+
+def eda_aggregates(engine=None) -> dict:
+    """Server-side EDA aggregates for the dashboard panels (efficient SQL, not full-table pandas)."""
+    engine = engine or get_engine()
+    m = {"model": ACTIVE_MODEL}
+    with engine.connect() as conn:
+        volume = [{"date": str(r["date"]), "count": int(r["n"])}
+                  for r in conn.execute(_EDA_VOLUME).mappings()]
+        sent_ts = [{"date": str(r["date"]), "mean_sentiment": round(float(r["mean_sentiment"]), 3)}
+                   for r in conn.execute(_EDA_SENT_TS, m).mappings()]
+        sent_hist = [{"bin": int(r["bin"]), "count": int(r["n"])}
+                     for r in conn.execute(_EDA_SENT_HIST, m).mappings()]
+        rel_hist = [{"bin": int(r["bin"]), "count": int(r["n"])}
+                    for r in conn.execute(_EDA_REL_HIST, m).mappings()]
+        val = conn.execute(_EDA_VALIDATION, m).mappings().first() or {"passed": 0, "failed": 0}
+        corr = conn.execute(_EDA_CORR, m).mappings().first()
+    matrix = [[1.0 if i == j else None for j in range(6)] for i in range(6)]
+    for i in range(6):
+        for j in range(i + 1, 6):
+            v = corr[f"c{i}{j}"] if corr else None
+            v = round(float(v), 3) if v is not None else None
+            matrix[i][j] = matrix[j][i] = v
+    passed, failed = int(val["passed"] or 0), int(val["failed"] or 0)
+    total = passed + failed
+    return {"volume": volume, "sentiment_ts": sent_ts, "sentiment_hist": sent_hist,
+            "relevance_hist": rel_hist, "category_corr": {"labels": _CORR_LABELS, "matrix": matrix},
+            "validation": {"passed": passed, "failed": failed,
+                           "rate": round(passed / total, 4) if total else 0.0}}
+
+
+def centroid_points(engine=None) -> dict:
+    """Per-day 3D news centroids (leak-safe embpca_000..002) + actual up/down + headline count."""
+    engine = engine or get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(_CENTROIDS).mappings().all()
+    points = [{"date": str(r["date"]), "x": float(r["x"]), "y": float(r["y"]), "z": float(r["z"]),
+               "actual": (None if r["actual"] is None else bool(r["actual"])),
+               "n_headlines": int(r["n_headlines"])} for r in rows]
+    return {"points": points}
+
+
 def confusion_matrix(rows: list[dict]) -> dict:
     """Confusion matrix + accuracy/precision/recall/F1/MCC over SETTLED predictions.
 
