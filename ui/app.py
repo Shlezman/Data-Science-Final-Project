@@ -36,6 +36,20 @@ _sim_health: dict = {"t": -1e9, "val": None}
 
 app = FastAPI(title="SentiSense live", version="1.0")
 
+_CACHE: dict = {}
+_CACHE_TTL = 60.0
+
+
+def _cached(key: str, fn):
+    """Memoise a read-only endpoint result for ``_CACHE_TTL`` seconds (per key)."""
+    now = time.monotonic()
+    hit = _CACHE.get(key)
+    if hit is not None and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+    val = fn()
+    _CACHE[key] = (now, val)
+    return val
+
 
 def _sim_modes() -> list[str]:
     """Available simulation modes (mirofish config; safe default if import fails)."""
@@ -76,6 +90,69 @@ def dashboard() -> dict:
               for r in rows[:60]]
     return {"champion": champ.get("version"), "confusion": cm, "recent": recent,
             "latest_headlines": latest}
+
+
+@app.get("/api/prediction/today")
+def prediction_today() -> dict:
+    """Current-day served prediction (up/down + confidence) for the dashboard hero."""
+    return _cached("today", lambda: queries.today_prediction() or {})
+
+
+@app.get("/api/confusion/full")
+def confusion_full() -> dict:
+    """In-sample confusion matrix over ALL labeled days (scope='all'), from champion_full_eval."""
+    def build() -> dict:
+        rows = queries.full_eval_rows()
+        cm = queries.confusion_matrix(rows)
+        version = rows[0]["model_version"] if rows else None
+        return {"scope": "all", "model_version": version, **cm}
+    try:
+        return _cached("confusion_full", build)
+    except Exception as exc:  # noqa: BLE001 — table absent until compute_full_eval runs
+        return {"scope": "all", "model_version": None, "n": 0, "error": str(exc)[:200]}
+
+
+@app.get("/api/eda")
+def eda() -> dict:
+    """EDA aggregates: volume, sentiment time-series/histogram, relevance, category corr, validation."""
+    try:
+        return _cached("eda", queries.eda_aggregates)
+    except Exception as exc:  # noqa: BLE001 — degrade to empty rather than 500
+        logger.warning("/api/eda failed: {}", str(exc)[:300])
+        return {"error": str(exc)[:200], "volume": [], "sentiment_ts": [], "sentiment_hist": [],
+                "relevance_hist": [], "category_corr": {"labels": [], "matrix": []},
+                "validation": {"passed": 0, "failed": 0, "rate": 0.0}}
+
+
+@app.get("/api/centroids")
+def centroids() -> dict:
+    """Per-day 3D news centroids (embpca_000..002) coloured by actual up/down."""
+    try:
+        return _cached("centroids", queries.centroid_points)
+    except Exception as exc:  # noqa: BLE001 — daily_embedding_derived/champion_full_eval may be absent
+        logger.warning("/api/centroids failed: {}", str(exc)[:300])
+        return {"points": [], "error": str(exc)[:200]}
+
+
+@app.get("/api/centroids/day")
+def centroids_day(date: str) -> dict:
+    """One day's headline cloud projected into the 16-d embpca space + that day's centroid."""
+    try:
+        return _cached(f"cday:{date}", lambda: queries.day_centroid_points(day=date))
+    except Exception as exc:  # noqa: BLE001 — basis/embeddings may be absent on this DB
+        logger.warning("/api/centroids/day failed: {}", str(exc)[:300])
+        return {"date": date, "points": [], "centroid": None, "error": str(exc)[:200]}
+
+
+@app.get("/api/personas")
+def personas(date: str) -> dict:
+    """Per-source persona votes (up/down/neutral by mean sentiment) + model prediction + actual."""
+    try:
+        return _cached(f"personas:{date}", lambda: queries.persona_votes(day=date))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("/api/personas failed: {}", str(exc)[:300])
+        return {"date": date, "personas": [], "general": None, "model": None,
+                "actual": None, "error": str(exc)[:200]}
 
 
 @app.get("/api/headlines/latest")

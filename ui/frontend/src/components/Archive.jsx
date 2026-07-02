@@ -7,6 +7,7 @@ const PAGE_SIZE = 50;
 /**
  * Archive view: pick a date from /api/dates, then page through that date's
  * headlines via /api/headlines using total/page_size for prev/next paging.
+ * Includes a client-side substring filter over the currently loaded page.
  *
  * @returns {JSX.Element} The archive browser.
  */
@@ -17,6 +18,7 @@ export default function Archive() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState('');
 
   useEffect(() => {
     getJson('/api/dates')
@@ -64,6 +66,18 @@ export default function Archive() {
   const pageSize = data?.page_size ?? PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  // Client-side substring filter over the currently loaded page only
+  // (case-insensitive; plain includes works for Hebrew text too).
+  const pageHeadlines = data?.headlines || [];
+  const needle = filter.trim().toLowerCase();
+  const visibleHeadlines = needle
+    ? pageHeadlines.filter(
+        (h) =>
+          (h.headline || '').toLowerCase().includes(needle) ||
+          (h.source || '').toLowerCase().includes(needle),
+      )
+    : pageHeadlines;
+
   return (
     <div className="ss-card">
       <h2>Archive</h2>
@@ -79,14 +93,42 @@ export default function Archive() {
             ))}
           </select>
         </label>
+        <label className="ss-field ss-archive-filter">
+          Filter this page
+          <input
+            type="text"
+            value={filter}
+            placeholder="Headline or source…"
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </label>
+        {filter ? (
+          <button className="ss-btn ss-btn--ghost" onClick={() => setFilter('')}>
+            Clear
+          </button>
+        ) : null}
       </div>
+
+      <p className="ss-muted ss-archive-legend">
+        Sentiment badges: <span className="ss-badge pos">+3</span> positive ·{' '}
+        <span className="ss-badge neg">−2</span> negative ·{' '}
+        <span className="ss-badge neutral">n/a</span> gray = unscored
+      </p>
 
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
       {loading ? <p className="ss-muted">Loading…</p> : null}
 
       {data ? (
         <>
-          <HeadlineList headlines={data.headlines} />
+          <p className="ss-muted ss-archive-count">
+            Showing {visibleHeadlines.length} of {pageHeadlines.length} on this
+            page
+          </p>
+          {needle && visibleHeadlines.length === 0 ? (
+            <p className="ss-muted">No headlines match the filter on this page.</p>
+          ) : (
+            <HeadlineList headlines={visibleHeadlines} />
+          )}
           <div className="ss-pager">
             <button
               className="ss-btn secondary"

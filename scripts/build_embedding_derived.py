@@ -32,7 +32,7 @@ from sentisense.config import (
 from sentisense.constants import CUTOFF_DATE
 from sentisense.db import get_engine
 from sentisense.embed import daily_embedding_centroid
-from sentisense.embed.derived import fit_transform_derived, persist_derived
+from sentisense.embed.derived import fit_transform_derived, persist_basis, persist_derived
 
 _FAR_FUTURE = dt.date(2100, 1, 1)
 
@@ -71,8 +71,9 @@ def main() -> None:
     logger.info("Centroid days={} | fit window ≤ {} | n_pca={} n_clusters={}",
                 len(centroid), pd.Timestamp(fit_cutoff).date(), args.n_pca, args.n_clusters)
 
-    derived = fit_transform_derived(centroid, fit_cutoff=fit_cutoff,
-                                    n_pca=args.n_pca, n_clusters=args.n_clusters)
+    derived, basis = fit_transform_derived(centroid, fit_cutoff=fit_cutoff,
+                                           n_pca=args.n_pca, n_clusters=args.n_clusters,
+                                           return_basis=True)
 
     if args.dry_run:
         logger.info("[dry-run] would upsert {} rows × {} cols: {}",
@@ -81,6 +82,7 @@ def main() -> None:
 
     n = persist_derived(derived, fit_cutoff=fit_cutoff,
                         n_pca=args.n_pca, n_clusters=args.n_clusters, engine=engine)
+    persist_basis(basis, engine=engine)   # UI day-view projects headlines through this basis
     logger.info("Done — {} derived rows in daily_embedding_derived.", n)
 
 
