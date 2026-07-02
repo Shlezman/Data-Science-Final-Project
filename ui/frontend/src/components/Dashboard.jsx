@@ -2,6 +2,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
 import { pct, direction, outcome } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
+import Hero from './Hero.jsx';
+import FullConfusion from './FullConfusion.jsx';
+import EdaPanels from './EdaPanels.jsx';
+import Centroids3D from './Centroids3D.jsx';
 
 const REFRESH_MS = 60_000;
 
@@ -154,6 +158,7 @@ export default function Dashboard() {
 
   return (
     <div>
+      <Hero />
       <LastRunBanner lastRun={health?.last_run} />
 
       <div className="ss-card">
@@ -161,7 +166,7 @@ export default function Dashboard() {
         <p className="ss-muted">Champion: {dashboard.champion || '—'}</p>
         <div className="ss-graph-wrap">
           <div style={{ flex: '0 0 auto' }}>
-            <p className="ss-section-title">Confusion matrix</p>
+            <p className="ss-section-title">Confusion matrix <span className="ss-tag">Live / settled</span></p>
             <ConfusionMatrix c={c} />
           </div>
           <div style={{ flex: '1 1 360px' }}>
@@ -177,7 +182,12 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+        <hr className="ss-divider" />
+        <FullConfusion />
       </div>
+
+      <EdaPanels />
+      <Centroids3D />
 
       <div className="ss-card">
         <h2>Recent predictions</h2>
