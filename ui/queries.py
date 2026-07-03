@@ -17,6 +17,32 @@ from sentisense.db import get_engine
 
 ACTIVE_MODEL = os.environ.get("SENTISENSE_ACTIVE_MODEL", "mistral-small-4")
 
+_resolved_model_cache: str | None = None
+
+
+def resolved_model(engine=None) -> str:
+    """The nlp_vectors model name to filter on — self-healing.
+
+    Prefers ``SENTISENSE_ACTIVE_MODEL`` when it actually has validated rows on THIS database;
+    otherwise falls back to the model with the most validated rows. Cached per process so the
+    fallback scan runs once. Prevents every model-filtered panel (EDA, personas, sentiment
+    badges) from silently rendering empty when the env var and the data disagree.
+    """
+    global _resolved_model_cache
+    if _resolved_model_cache:
+        return _resolved_model_cache
+    engine = engine or get_engine()
+    probe = text("SELECT 1 FROM nlp_vectors WHERE model_name = :m AND validation_passed LIMIT 1")
+    top = text("SELECT model_name FROM nlp_vectors WHERE validation_passed "
+               "GROUP BY model_name ORDER BY COUNT(*) DESC LIMIT 1")
+    with engine.connect() as conn:
+        if conn.execute(probe, {"m": ACTIVE_MODEL}).first():
+            _resolved_model_cache = ACTIVE_MODEL
+        else:
+            row = conn.execute(top).first()
+            _resolved_model_cache = row[0] if row else ACTIVE_MODEL
+    return _resolved_model_cache
+
 _LATEST_DATE = text("SELECT MAX(date) AS d FROM raw_headlines")
 
 _HEADLINES_FOR_DATE = text(
@@ -60,7 +86,7 @@ def headlines_for_date(engine=None, *, day, page: int = 0, page_size: int = 50) 
     with engine.connect() as conn:
         total = conn.execute(_COUNT_FOR_DATE, {"d": day}).scalar() or 0
         rows = conn.execute(_HEADLINES_FOR_DATE, {
-            "model": ACTIVE_MODEL, "d": day, "offset": page * page_size, "limit": page_size,
+            "model": resolved_model(engine), "d": day, "offset": page * page_size, "limit": page_size,
         }).mappings().all()
     return {"date": str(day), "page": page, "page_size": page_size, "total": int(total),
             "headlines": [dict(r) for r in rows]}
@@ -201,7 +227,7 @@ def today_prediction(engine=None) -> dict | None:
 def eda_aggregates(engine=None) -> dict:
     """Server-side EDA aggregates for the dashboard panels (efficient SQL, not full-table pandas)."""
     engine = engine or get_engine()
-    m = {"model": ACTIVE_MODEL}
+    m = {"model": resolved_model(engine)}
     with engine.connect() as conn:
         volume = [{"date": str(r["date"]), "count": int(r["n"])}
                   for r in conn.execute(_EDA_VOLUME).mappings()]
@@ -224,7 +250,10 @@ def eda_aggregates(engine=None) -> dict:
     return {"volume": volume, "sentiment_ts": sent_ts, "sentiment_hist": sent_hist,
             "relevance_hist": rel_hist, "category_corr": {"labels": _CORR_LABELS, "matrix": matrix},
             "validation": {"passed": passed, "failed": failed,
-                           "rate": round(passed / total, 4) if total else 0.0}}
+                           "rate": round(passed / total, 4) if total else 0.0},
+            "meta": {"model_used": m["model"], "env_model": ACTIVE_MODEL,
+                     "n_volume": len(volume), "n_sentiment_ts": len(sent_ts),
+                     "n_sentiment_hist": len(sent_hist)}}
 
 
 def _cluster_centers(engine) -> list[dict]:
@@ -317,7 +346,7 @@ def day_centroid_points(engine=None, *, day) -> dict:
             return {"date": str(day), "points": [], "centroid": None,
                     "error": "no PCA basis — rerun scripts/build_embedding_derived.py"}
         rows = conn.execute(_DAY_EMBED, {"d": day, "em": b["embed_model"],
-                                         "model": ACTIVE_MODEL, "cap": _DAY_POINT_CAP}).mappings().all()
+                                         "model": resolved_model(engine), "cap": _DAY_POINT_CAP}).mappings().all()
     if not rows:
         return {"date": str(day), "points": [], "centroid": None,
                 "error": "no embeddings stored for that date"}
@@ -389,7 +418,7 @@ def persona_votes(engine=None, *, day, top: int = 12, min_n: int = 3) -> dict:
     engine = engine or get_engine()
     with engine.connect() as conn:
         rows = conn.execute(_PERSONA_SOURCES,
-                            {"d": day, "model": ACTIVE_MODEL, "min_n": min_n, "top": top}
+                            {"d": day, "model": resolved_model(engine), "min_n": min_n, "top": top}
                             ).mappings().all()
         pred = conn.execute(_PERSONA_PRED, {"d": day}).mappings().first()
     personas = [{"source": r["source"], "n": int(r["n"]),

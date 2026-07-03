@@ -31,19 +31,35 @@ function detectWebGL() {
 }
 
 /**
- * Converts scatter3d traces to plain SVG scatter (drops the z axis, bumps
- * marker size). Used as the no-WebGL fallback — same data, 2D projection.
+ * Software-3D fallback: orthographically projects scatter3d traces onto the
+ * screen for a given azimuth/elevation, as plain SVG scatter — an interactive
+ * 3D view (rotate via sliders) that needs NO WebGL.
  *
  * @param {Array} traces Plotly scatter3d traces.
- * @returns {Array} Equivalent 2D scatter traces.
+ * @param {number} azDeg Azimuth rotation (degrees, about the vertical axis).
+ * @param {number} elDeg Elevation/tilt (degrees; 0 = side view, 90 = top view).
+ * @returns {Array} Equivalent 2D scatter traces of the rotated projection.
  */
-function to2D(traces) {
-  return traces.map((t) => ({
-    ...t,
-    type: 'scatter',
-    z: undefined,
-    marker: { ...t.marker, size: Math.max((t.marker?.size ?? 4) * 2, 7) },
-  }));
+function project3(traces, azDeg, elDeg) {
+  const az = (azDeg * Math.PI) / 180;
+  const el = (elDeg * Math.PI) / 180;
+  const ca = Math.cos(az); const sa = Math.sin(az);
+  const ce = Math.cos(el); const se = Math.sin(el);
+  return traces.map((t) => {
+    const xs = []; const ys = [];
+    for (let i = 0; i < t.x.length; i += 1) {
+      const x1 = ca * t.x[i] + sa * t.y[i];          // rotate about the z (vertical) axis
+      const d = -sa * t.x[i] + ca * t.y[i];          // depth after azimuth spin
+      xs.push(x1);
+      ys.push(ce * t.z[i] + se * d);                 // tilt: blend height with depth
+    }
+    return {
+      ...t,
+      type: 'scatter',
+      x: xs, y: ys, z: undefined,
+      marker: { ...t.marker, size: Math.max((t.marker?.size ?? 4) * 1.8, 6) },
+    };
+  });
 }
 
 /**
@@ -118,7 +134,7 @@ function dayTrace(pts, actual, name, color) {
  * @param {number[]} axes The [x,y,z] component indices.
  * @returns {Array} Plotly traces.
  */
-function headlineTraces(day, axes) {
+function headlineTraces(day, axes, centers = []) {
   const [ax, ay, az] = axes;
   const groups = [
     { name: 'Positive', color: UP, test: (s) => typeof s === 'number' && s > 0 },
@@ -146,6 +162,21 @@ function headlineTraces(day, axes) {
       marker: { size: 10, color: ACCENT, symbol: 'diamond', opacity: 1 },
     });
   }
+  if (centers.length) {
+    traces.push({
+      type: 'scatter3d', mode: 'markers+text', name: 'Cluster centers',
+      x: centers.map((c) => c.v[ax]), y: centers.map((c) => c.v[ay]), z: centers.map((c) => c.v[az]),
+      text: centers.map((c) => `K${c.id}`),
+      textposition: 'top center',
+      textfont: { size: 11, color: '#e6edf3' },
+      hovertemplate: 'KMeans center %{text}<extra></extra>',
+      marker: {
+        size: 11, symbol: 'diamond-open', opacity: 1,
+        color: centers.map((c) => CLUSTER_COLORS[c.id % CLUSTER_COLORS.length]),
+        line: { width: 3 },
+      },
+    });
+  }
   return traces;
 }
 
@@ -171,6 +202,7 @@ export default function Centroids3D() {
   const [axes, setAxes] = useState([0, 1, 2]);
   const [colorBy, setColorBy] = useState('outcome');
   const [clusters, setClusters] = useState([]);
+  const [rot, setRot] = useState([35, 55]);        // [azimuth°, elevation°] for software 3D
   const webgl = useMemo(detectWebGL, []);
 
   useEffect(() => {
@@ -223,11 +255,28 @@ export default function Centroids3D() {
     : {
       showlegend: true,
       legend: { orientation: 'h', y: -0.12 },
-      xaxis: { title: axisTitles[0], gridcolor: 'rgba(255,255,255,0.08)' },
-      yaxis: { title: axisTitles[1], gridcolor: 'rgba(255,255,255,0.08)' },
-      margin: { l: 48, r: 12, t: 10, b: 44 },
+      xaxis: { title: '', gridcolor: 'rgba(255,255,255,0.08)', zeroline: false },
+      yaxis: { title: '', gridcolor: 'rgba(255,255,255,0.08)', zeroline: false,
+               scaleanchor: 'x' },
+      margin: { l: 36, r: 12, t: 10, b: 30 },
     });
-  const asPlot = (traces) => (webgl ? traces : to2D(traces));
+  const asPlot = (traces) => (webgl ? traces : project3(traces, rot[0], rot[1]));
+
+  const rotationControls = webgl ? null : (
+    <div className="ss-controls" style={{ marginBottom: 6, alignItems: 'center' }}>
+      <label className="ss-field" style={{ minWidth: 180 }}>
+        Rotate ({rot[0]}°)
+        <input type="range" min={0} max={360} value={rot[0]}
+               onChange={(e) => setRot([Number(e.target.value), rot[1]])} />
+      </label>
+      <label className="ss-field" style={{ minWidth: 180 }}>
+        Tilt ({rot[1]}°)
+        <input type="range" min={0} max={90} value={rot[1]}
+               onChange={(e) => setRot([rot[0], Number(e.target.value)])} />
+      </label>
+      <span className="ss-muted">software 3D (WebGL off) — drag sliders to rotate</span>
+    </div>
+  );
 
   const openDay = (date) => { setDayDate(date); setView('day'); };
 
@@ -272,12 +321,7 @@ export default function Centroids3D() {
                   </select>
                 </label>
               </div>
-              {!webgl ? (
-                <p className="ss-muted" style={{ margin: '0 2px 6px' }}>
-                  WebGL is disabled in this browser — showing a 2D projection
-                  ({axisTitles[0]} vs {axisTitles[1]}). Enable graphics acceleration for 3D.
-                </p>
-              ) : null}
+              {rotationControls}
               <Plot data={asPlot(allTraces)} layout={layout} config={PLOT_CONFIG}
                     style={{ width: '100%', height: '64vh' }} useResizeHandler
                     onClick={(ev) => {
@@ -312,7 +356,7 @@ export default function Centroids3D() {
                 Date
                 <input type="date" value={dayDate} onChange={(e) => setDayDate(e.target.value)} />
               </label>
-              {(webgl ? ['X', 'Y', 'Z'] : ['X', 'Y']).map((lbl, i) => (
+              {['X', 'Y', 'Z'].map((lbl, i) => (
                 <label className="ss-field" key={lbl}>
                   {lbl} axis
                   <select value={axes[i]}
@@ -336,7 +380,8 @@ export default function Centroids3D() {
               </p>
             ) : (
               <>
-                <Plot data={asPlot(headlineTraces(day, axes))} layout={layout} config={PLOT_CONFIG}
+                {rotationControls}
+                <Plot data={asPlot(headlineTraces(day, axes, clusters))} layout={layout} config={PLOT_CONFIG}
                       style={{ width: '100%', height: '62vh' }} useResizeHandler />
                 <p className="ss-muted" style={{ margin: '6px 2px 0' }}>
                   {day.points.length} headlines · hover a point for its text and source.

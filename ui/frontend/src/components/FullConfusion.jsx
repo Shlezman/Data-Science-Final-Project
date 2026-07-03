@@ -42,33 +42,18 @@ export default function FullConfusion() {
 
   const c = data;
   return (
-    <div className="ss-graph-wrap">
-      <div style={{ flex: '0 0 auto' }}>
-        <p className="ss-section-title">
-          Confusion matrix <span className="ss-tag">All days</span>
-        </p>
-        <div className="ss-confusion">
-          <span className="corner" />
-          <span className="axis">Actual up</span>
-          <span className="axis">Actual down</span>
-          <span className="axis">Pred up</span>
-          <div className="ss-cell tp"><div className="cell-label">TP</div><div className="cell-value">{c.tp ?? 0}</div></div>
-          <div className="ss-cell fp"><div className="cell-label">FP</div><div className="cell-value">{c.fp ?? 0}</div></div>
-          <span className="axis">Pred down</span>
-          <div className="ss-cell fn"><div className="cell-label">FN</div><div className="cell-value">{c.fn ?? 0}</div></div>
-          <div className="ss-cell tn"><div className="cell-label">TN</div><div className="cell-value">{c.tn ?? 0}</div></div>
-        </div>
-      </div>
-      <div style={{ flex: '1 1 320px' }}>
-        <p className="ss-section-title">Metrics</p>
-        <div className="ss-stat-grid">
-          <div className="ss-stat"><div className="label">Accuracy</div><div className="value">{metric(c.accuracy)}</div></div>
-          <div className="ss-stat"><div className="label">Precision</div><div className="value">{metric(c.precision)}</div></div>
-          <div className="ss-stat"><div className="label">Recall</div><div className="value">{metric(c.recall)}</div></div>
-          <div className="ss-stat"><div className="label">F1</div><div className="value">{metric(c.f1)}</div></div>
-          <div className="ss-stat"><div className="label">MCC</div><div className="value">{metric(c.mcc)}</div></div>
-          <div className="ss-stat"><div className="label">N (days)</div><div className="value">{c.n ?? 0}</div></div>
-        </div>
+    <div>
+      <p className="ss-section-title">
+        Metrics <span className="ss-tag">All days</span>
+        {c.model_version ? <span className="ss-tag">{c.model_version}</span> : null}
+      </p>
+      <div className="ss-stat-grid">
+        <div className="ss-stat"><div className="label">Accuracy</div><div className="value">{metric(c.accuracy)}</div></div>
+        <div className="ss-stat"><div className="label">Precision</div><div className="value">{metric(c.precision)}</div></div>
+        <div className="ss-stat"><div className="label">Recall</div><div className="value">{metric(c.recall)}</div></div>
+        <div className="ss-stat"><div className="label">F1</div><div className="value">{metric(c.f1)}</div></div>
+        <div className="ss-stat"><div className="label">MCC</div><div className="value">{metric(c.mcc)}</div></div>
+        <div className="ss-stat"><div className="label">N (days)</div><div className="value">{c.n ?? 0}</div></div>
       </div>
     </div>
   );

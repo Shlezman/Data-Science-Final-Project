@@ -77,44 +77,7 @@ function metric(value) {
 }
 
 /**
- * Renders the 2x2 confusion matrix from the dashboard `confusion` object.
- *
- * @param {object} props Component props.
- * @param {object} props.c The confusion counts (tp/tn/fp/fn).
- * @returns {JSX.Element} The matrix grid.
- */
-function ConfusionMatrix({ c }) {
-  return (
-    <div className="ss-confusion">
-      <span className="corner" />
-      <span className="axis">Actual up</span>
-      <span className="axis">Actual down</span>
-
-      <span className="axis">Pred up</span>
-      <div className="ss-cell tp">
-        <div className="cell-label">TP</div>
-        <div className="cell-value">{c.tp ?? 0}</div>
-      </div>
-      <div className="ss-cell fp">
-        <div className="cell-label">FP</div>
-        <div className="cell-value">{c.fp ?? 0}</div>
-      </div>
-
-      <span className="axis">Pred down</span>
-      <div className="ss-cell fn">
-        <div className="cell-label">FN</div>
-        <div className="cell-value">{c.fn ?? 0}</div>
-      </div>
-      <div className="ss-cell tn">
-        <div className="cell-label">TN</div>
-        <div className="cell-value">{c.tn ?? 0}</div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Dashboard view: champion + last-run banner, confusion matrix, stat cards,
+ * Dashboard view: served-model hero + last-run banner, metric stat cards,
  * recent predictions table, and the last-day live headlines list. Polls
  * /api/dashboard and /api/health every 60 seconds.
  *
@@ -162,25 +125,20 @@ export default function Dashboard() {
       <LastRunBanner lastRun={health?.last_run} />
 
       <div className="ss-card">
-        <h2>Model performance</h2>
-        <p className="ss-muted">Champion: {dashboard.champion || '—'}</p>
-        <div className="ss-graph-wrap">
-          <div style={{ flex: '0 0 auto' }}>
-            <p className="ss-section-title">Confusion matrix <span className="ss-tag">Live / settled</span></p>
-            <ConfusionMatrix c={c} />
-          </div>
-          <div style={{ flex: '1 1 360px' }}>
-            <p className="ss-section-title">Metrics</p>
-            <div className="ss-stat-grid">
-              <Stat label="Accuracy" value={metric(c.accuracy)} />
-              <Stat label="Precision" value={metric(c.precision)} />
-              <Stat label="Recall" value={metric(c.recall)} />
-              <Stat label="F1" value={metric(c.f1)} />
-              <Stat label="MCC" value={metric(c.mcc)} />
-              <Stat label="N" value={c.n ?? 0} />
-              <Stat label="Pending" value={c.pending ?? 0} />
-            </div>
-          </div>
+        <h2>
+          Model performance
+          {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
+        </h2>
+        <p className="ss-muted">Serving: {dashboard.champion || '—'}</p>
+        <p className="ss-section-title">Metrics <span className="ss-tag">Live / settled</span></p>
+        <div className="ss-stat-grid">
+          <Stat label="Accuracy" value={metric(c.accuracy)} />
+          <Stat label="Precision" value={metric(c.precision)} />
+          <Stat label="Recall" value={metric(c.recall)} />
+          <Stat label="F1" value={metric(c.f1)} />
+          <Stat label="MCC" value={metric(c.mcc)} />
+          <Stat label="N" value={c.n ?? 0} />
+          <Stat label="Pending" value={c.pending ?? 0} />
         </div>
         <hr className="ss-divider" />
         <FullConfusion />

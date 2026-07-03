@@ -62,16 +62,15 @@ def _sim_modes() -> list[str]:
 
 @app.get("/api/health")
 def health() -> dict:
-    """Last orchestrator run status + the served champion version."""
-    from sentisense.serve.champion import load_champion
-
+    """Last orchestrator run status + the ACTIVE served model (registry winner, else pinned)."""
     status = {}
     if _STATUS_PATH.exists():
         try:
             status = json.loads(_STATUS_PATH.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             status = {"error": "unreadable status file"}
-    return {"ok": True, "champion": load_champion().get("version"), "last_run": status}
+    version, model_type = _active_served()
+    return {"ok": True, "champion": version, "model_type": model_type, "last_run": status}
 
 
 def _active_served() -> tuple[str, str]:

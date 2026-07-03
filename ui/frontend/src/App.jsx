@@ -5,11 +5,13 @@ import Archive from './components/Archive.jsx';
 import Simulator from './components/Simulator.jsx';
 import Models from './components/Models.jsx';
 
+// Models is an operator tab — hidden from the nav; open the app at /#models to reveal it.
+const SHOW_MODELS = typeof window !== 'undefined' && window.location.hash === '#models';
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'archive', label: 'Archive' },
   { id: 'simulator', label: 'Simulator' },
-  { id: 'models', label: 'Models' },
+  ...(SHOW_MODELS ? [{ id: 'models', label: 'Models' }] : []),
 ];
 
 /**
@@ -33,7 +35,7 @@ export default function App() {
       <header className="ss-header">
         <h1 className="ss-title">SentiSense</h1>
         <span className="ss-champion">
-          {champion ? `Champion: ${champion}` : ''}
+          {champion ? `Serving: ${champion}` : ''}
         </span>
       </header>
 
