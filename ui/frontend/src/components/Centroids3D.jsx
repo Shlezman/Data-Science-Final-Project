@@ -15,6 +15,38 @@ const CLUSTER_COLORS = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24',
                         '#a78bfa', '#f87171', '#2dd4bf', '#fb923c'];
 
 /**
+ * Detects WebGL availability. Plotly scatter3d REQUIRES WebGL; corporate
+ * browsers / remote-desktop sessions often have it disabled, so the drawer
+ * degrades to a 2D SVG projection instead of Plotly's WebGL error screen.
+ *
+ * @returns {boolean} True when a WebGL context can be created.
+ */
+function detectWebGL() {
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Converts scatter3d traces to plain SVG scatter (drops the z axis, bumps
+ * marker size). Used as the no-WebGL fallback — same data, 2D projection.
+ *
+ * @param {Array} traces Plotly scatter3d traces.
+ * @returns {Array} Equivalent 2D scatter traces.
+ */
+function to2D(traces) {
+  return traces.map((t) => ({
+    ...t,
+    type: 'scatter',
+    z: undefined,
+    marker: { ...t.marker, size: Math.max((t.marker?.size ?? 4) * 2, 7) },
+  }));
+}
+
+/**
  * Builds cluster-colored traces for the all-days view: one trace per KMeans
  * cluster (days grouped by their argmin embclus_dist_*), plus the projected
  * cluster centers as large open diamonds.
@@ -139,6 +171,7 @@ export default function Centroids3D() {
   const [axes, setAxes] = useState([0, 1, 2]);
   const [colorBy, setColorBy] = useState('outcome');
   const [clusters, setClusters] = useState([]);
+  const webgl = useMemo(detectWebGL, []);
 
   useEffect(() => {
     getJson('/api/centroids')
@@ -176,14 +209,25 @@ export default function Centroids3D() {
 
   const nPca = day?.n_pca || 16;
   const sceneAxis = (title) => ({ title, gridcolor: 'rgba(255,255,255,0.1)' });
-  const layout = darkLayout({
-    showlegend: true,
-    legend: { orientation: 'h', y: -0.05 },
-    scene: view === 'all'
-      ? { xaxis: sceneAxis('pca-0'), yaxis: sceneAxis('pca-1'), zaxis: sceneAxis('pca-2') }
-      : { xaxis: sceneAxis(`pca-${axes[0]}`), yaxis: sceneAxis(`pca-${axes[1]}`), zaxis: sceneAxis(`pca-${axes[2]}`) },
-    margin: { l: 0, r: 0, t: 0, b: 0 },
-  });
+  const axisTitles = view === 'all'
+    ? ['pca-0', 'pca-1', 'pca-2']
+    : [`pca-${axes[0]}`, `pca-${axes[1]}`, `pca-${axes[2]}`];
+  const layout = darkLayout(webgl
+    ? {
+      showlegend: true,
+      legend: { orientation: 'h', y: -0.05 },
+      scene: { xaxis: sceneAxis(axisTitles[0]), yaxis: sceneAxis(axisTitles[1]),
+               zaxis: sceneAxis(axisTitles[2]) },
+      margin: { l: 0, r: 0, t: 0, b: 0 },
+    }
+    : {
+      showlegend: true,
+      legend: { orientation: 'h', y: -0.12 },
+      xaxis: { title: axisTitles[0], gridcolor: 'rgba(255,255,255,0.08)' },
+      yaxis: { title: axisTitles[1], gridcolor: 'rgba(255,255,255,0.08)' },
+      margin: { l: 48, r: 12, t: 10, b: 44 },
+    });
+  const asPlot = (traces) => (webgl ? traces : to2D(traces));
 
   const openDay = (date) => { setDayDate(date); setView('day'); };
 
@@ -228,7 +272,13 @@ export default function Centroids3D() {
                   </select>
                 </label>
               </div>
-              <Plot data={allTraces} layout={layout} config={PLOT_CONFIG}
+              {!webgl ? (
+                <p className="ss-muted" style={{ margin: '0 2px 6px' }}>
+                  WebGL is disabled in this browser — showing a 2D projection
+                  ({axisTitles[0]} vs {axisTitles[1]}). Enable graphics acceleration for 3D.
+                </p>
+              ) : null}
+              <Plot data={asPlot(allTraces)} layout={layout} config={PLOT_CONFIG}
                     style={{ width: '100%', height: '64vh' }} useResizeHandler
                     onClick={(ev) => {
                       const d = ev?.points?.[0]?.customdata;
@@ -262,7 +312,7 @@ export default function Centroids3D() {
                 Date
                 <input type="date" value={dayDate} onChange={(e) => setDayDate(e.target.value)} />
               </label>
-              {['X', 'Y', 'Z'].map((lbl, i) => (
+              {(webgl ? ['X', 'Y', 'Z'] : ['X', 'Y']).map((lbl, i) => (
                 <label className="ss-field" key={lbl}>
                   {lbl} axis
                   <select value={axes[i]}
@@ -286,7 +336,7 @@ export default function Centroids3D() {
               </p>
             ) : (
               <>
-                <Plot data={headlineTraces(day, axes)} layout={layout} config={PLOT_CONFIG}
+                <Plot data={asPlot(headlineTraces(day, axes))} layout={layout} config={PLOT_CONFIG}
                       style={{ width: '100%', height: '62vh' }} useResizeHandler />
                 <p className="ss-muted" style={{ margin: '6px 2px 0' }}>
                   {day.points.length} headlines · hover a point for its text and source.
