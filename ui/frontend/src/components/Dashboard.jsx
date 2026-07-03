@@ -3,7 +3,6 @@ import { getJson } from '../lib/api.js';
 import { pct, direction, outcome } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
-import FullConfusion from './FullConfusion.jsx';
 import EdaPanels from './EdaPanels.jsx';
 import Centroids3D from './Centroids3D.jsx';
 
@@ -47,18 +46,21 @@ function LastRunBanner({ lastRun }) {
 }
 
 /**
- * Renders a single labeled statistic card.
+ * Renders a single labeled statistic card, optionally with a secondary line
+ * (e.g. the model's held-out evaluation score next to the live value).
  *
  * @param {object} props Component props.
  * @param {string} props.label The stat name.
  * @param {string|number} props.value The stat value.
+ * @param {string} [props.sub] Optional secondary line under the value.
  * @returns {JSX.Element} The stat card.
  */
-function Stat({ label, value }) {
+function Stat({ label, value, sub }) {
   return (
     <div className="ss-stat">
       <div className="label">{label}</div>
       <div className="value">{value}</div>
+      {sub ? <div className="label" style={{ marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }
@@ -116,6 +118,7 @@ export default function Dashboard() {
   }
 
   const c = dashboard.confusion || {};
+  const ev = dashboard.eval_metrics || null;
   const recent = dashboard.recent || [];
   const latest = dashboard.latest_headlines || {};
 
@@ -132,16 +135,19 @@ export default function Dashboard() {
         <p className="ss-muted">Serving: {dashboard.champion || '—'}</p>
         <p className="ss-section-title">Metrics <span className="ss-tag">Live / settled</span></p>
         <div className="ss-stat-grid">
-          <Stat label="Accuracy" value={metric(c.accuracy)} />
+          <Stat label="Accuracy" value={metric(c.accuracy)}
+                sub={ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null} />
           <Stat label="Precision" value={metric(c.precision)} />
           <Stat label="Recall" value={metric(c.recall)} />
           <Stat label="F1" value={metric(c.f1)} />
-          <Stat label="MCC" value={metric(c.mcc)} />
-          <Stat label="N" value={c.n ?? 0} />
+          <Stat label="MCC" value={metric(c.mcc)}
+                sub={ev?.mcc != null ? `eval ${metric(ev.mcc)}` : null} />
+          <Stat label="ROC-AUC" value={ev?.roc_auc != null ? metric(ev.roc_auc) : '—'}
+                sub={ev?.roc_auc != null ? 'eval' : null} />
+          <Stat label="N" value={c.n ?? 0}
+                sub={ev?.n != null ? `eval n ${ev.n}` : null} />
           <Stat label="Pending" value={c.pending ?? 0} />
         </div>
-        <hr className="ss-divider" />
-        <FullConfusion />
       </div>
 
       <EdaPanels />

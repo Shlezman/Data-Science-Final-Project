@@ -256,6 +256,36 @@ def eda_aggregates(engine=None) -> dict:
                      "n_sentiment_hist": len(sent_hist)}}
 
 
+_ACTIVE_METRICS = text(
+    """
+    SELECT version, model_type, oos_accuracy, oos_mcc, oos_roc_auc, oos_n
+    FROM model_registry WHERE is_active LIMIT 1
+    """
+)
+
+
+def active_model_metrics(engine=None) -> dict | None:
+    """The ACTIVE registry model's held-out evaluation scores (no artifact bytes).
+
+    Lightweight companion to ``registry.get_active`` — the dashboard annotates its live metric
+    boxes with these, so it must not drag the multi-MB artifact over the wire. None when the
+    registry table is absent or nothing is active.
+    """
+    engine = engine or get_engine()
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(_ACTIVE_METRICS).mappings().first()
+    except Exception:  # noqa: BLE001 — registry not deployed on this DB yet
+        return None
+    if not row:
+        return None
+    return {"version": row["version"], "model_type": row["model_type"],
+            "accuracy": (None if row["oos_accuracy"] is None else round(float(row["oos_accuracy"]), 4)),
+            "mcc": (None if row["oos_mcc"] is None else round(float(row["oos_mcc"]), 4)),
+            "roc_auc": (None if row["oos_roc_auc"] is None else round(float(row["oos_roc_auc"]), 4)),
+            "n": (None if row["oos_n"] is None else int(row["oos_n"]))}
+
+
 def _cluster_centers(engine) -> list[dict]:
     """KMeans cluster centers projected into the embpca space → ``[{id, v: [n_pca]}]``.
 

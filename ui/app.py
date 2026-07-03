@@ -100,7 +100,7 @@ def dashboard() -> dict:
                "actual": (None if r["actual"] is None else bool(r["actual"]))}
               for r in rows[:60]]
     return {"champion": version, "model_type": model_type, "confusion": cm, "recent": recent,
-            "latest_headlines": latest}
+            "eval_metrics": queries.active_model_metrics(), "latest_headlines": latest}
 
 
 @app.get("/api/prediction/today")
