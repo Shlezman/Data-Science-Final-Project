@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.4; }
+h1 { font-size: 20pt; } h2 { font-size: 16pt; } h3 { font-size: 13pt; }
+h4 { font-size: 12pt; }
+table { border-collapse: collapse; margin: 8pt 0; font-size: 10pt; }
+th, td { border: 1px solid #666; padding: 3pt 6pt; text-align: left; }
+th { background: #eee; }
+code { font-family: 'Courier New', monospace; font-size: 10pt; }
+pre { background: #f4f4f4; padding: 6pt; font-size: 9pt; }
+blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; padding-left: 8pt; }
+</style></head><body>
+<h1>SentiSense — Forecasting the Next-Day Direction of the TA-125 Index from Hebrew-News Sentiment</h1>
+<p>by [Your Name]</p>
+<p>Approved by the supervisor: Dr. Eliav Menachi</p>
+<p>Submitted to the Computer Science Faculty of College of Management Rishon LeZion [Month, Year]</p>
+<hr/>
+<h2>Acknowledgments</h2>
+<p>We would like to express our gratitude to our supervisor, Dr. Eliav Menachi, for his guidance throughout this project. We would also like to thank our families for their support, and the open-source community whose tools (PyTorch, scikit-learn, Optuna, pytorch-forecasting, and the Hugging Face ecosystem) made this work possible.</p>
+<hr/>
+<h2>Executive Summary</h2>
+<p>SentiSense is an end-to-end data-science system that asks a focused question: <strong>can the daily flow of Hebrew breaking-news, distilled by a large language model (LLM) into a structured sentiment signal, help predict whether the Tel-Aviv 125 (TA-125) stock index will close higher the next trading day?</strong></p>
+<p>The system has four stages. (1) A <strong>scraper</strong> collects Hebrew breaking-news headlines from <code>mivzakim.net</code> going back to ~2015. (2) A <strong>processing engine</strong> sends every headline through an LLM, which scores it on six relevance categories (politics, economy, security, health, science, technology) and one global sentiment value (−10…+10). This produced a corpus of roughly <strong>1.9 million scored headlines</strong> stored in PostgreSQL. (3) A <strong>feature-engineering layer</strong> aggregates these per-headline scores into leakage-safe daily feature vectors, joined with market data (TA-125 OHLC, the VTA-35 volatility index, S&amp;P 500, VIX, Brent crude, and the USD/ILS exchange rate), and optionally with multilingual headline <strong>embeddings</strong> and causal <strong>narrative-clustering</strong> features. (4) A <strong>forecasting layer</strong> trains and hyperparameter-tunes a large model zoo — gradient-boosted trees, recurrent and convolutional sequence classifiers, transformer forecasters, and zero-shot foundation models — to predict next-day TA-125 direction.</p>
+<p>Every stage is engineered to be <strong>leakage-safe</strong>: a hard data cutoff of <code>2023-10-07</code> (the regime break preceding a major market shock) is enforced in SQL and re-applied after feature assembly; all scalers, PCA, and clustering are fit on the training fold only; and splits are strictly chronological.</p>
+<p>The central empirical finding is sobering and honest, and it is corroborated across <strong>multiple independent experiment tracks</strong> — a tree-model proof of concept, an extensive feature-set comparison with walk-forward and multi-seed robustness checks, a nine-model transformer zoo, sequence-model HPO, and a hardened end-to-end package run of <strong>40+ tuned model × data-type × regime cells</strong>. In every track, out-of-sample performance hovers close to the no-skill baseline. On the unified grid the best model by ROC-AUC reaches only <strong>0.576</strong> and the best by accuracy <strong>0.592</strong>; on the hardened pipeline the score-only LSTM sits at accuracy 0.500 / ROC-AUC 0.509 / MCC 0.000; and no model anywhere meets the transformer track's pre-registered ≥58% success criterion or clears a permutation/binomial significance test. The project's contribution is therefore twofold: a <strong>reusable, reproducible, leakage-hardened pipeline</strong> for news-driven financial forecasting, and a rigorous, negative-leaning result that quantifies how little next-day directional signal the LLM-scored Hebrew-news stream carries on its own.</p>
+<hr/>
+<h2>Table of Contents</h2>
+<ol>
+<li>Introduction</li>
+</ol>
+<ul>
+<li>1.1 Background</li>
+<li>1.2 Problem Statement</li>
+<li>1.3 Objectives</li>
+<li>1.4 Scope and Limitations</li>
+<li>1.5 Methodology</li>
+<li>1.6 Organization of the Project Book</li>
+</ul>
+<ol>
+<li>Literature Review</li>
+</ol>
+<ul>
+<li>2.1 Overview of Relevant Literature</li>
+</ul>
+<ol>
+<li>System Design and Implementation</li>
+</ol>
+<ul>
+<li>3.1 System Architecture</li>
+<li>3.2 Data Collection and Preprocessing</li>
+<li>3.3 Implementation Details</li>
+<li>3.4 Evaluation Metrics</li>
+</ul>
+<ol>
+<li>Results and Analysis</li>
+</ol>
+<ul>
+<li>4.1 Experimental Setup</li>
+<li>4.2 Presentation of Results</li>
+<li>4.2.1 Tree-model proof-of-concept (<code>poc.ipynb</code>) — daily-mean</li>
+<li>4.2.2 LSTM feature-set vs PoC study (<code>compare_lstm_features_with_poc.ipynb</code>) — per-source</li>
+<li>4.2.3 LSTM base forecaster (<code>lstm_forecaster.ipynb</code>) — per-source</li>
+<li>4.2.4 Transformer model zoo + ablations (<code>transformer_forecaster.ipynb</code>)</li>
+<li>4.2.5 Sequence-model tuning &amp; robustness (<code>tuning.ipynb</code>)</li>
+<li>4.2.6 Hardened-package analysis (<code>sentisense_analysis.ipynb</code>)</li>
+<li>4.2.7 Foundation-model explainability (<code>timesfm_explainability.ipynb</code>)</li>
+<li>4.2.8 Unified out-of-sample grid (<code>leaderboard.md</code>)</li>
+<li>4.3 Data Analysis and Interpretation</li>
+<li>4.4 Comparison with Existing Approaches</li>
+<li>4.5 Discussion of Findings</li>
+</ul>
+<ol>
+<li>Conclusion and Future Work</li>
+<li>References</li>
+<li>Appendix A — Data Dictionary, Schema, and Commands</li>
+</ol>
+<hr/>
+<h2>List of Figures</h2>
+<ul>
+<li>Figure 1: SentiSense end-to-end pipeline (§1.6)</li>
+</ul>
+<h2>List of Tables</h2>
+<ul>
+<li>Table 1: Best result per experiment track vs its baseline (§4.2)</li>
+<li>Table 2: PoC tree-model 5-fold cross-validation accuracy (§4.2.1)</li>
+<li>Table 3: PoC chronological 80/20 holdout accuracy (§4.2.1)</li>
+<li>Table 4: PoC significance tests vs majority-class baseline (§4.2.1)</li>
+<li>Table 5: Per-source feature-set holdout comparison (tree models) (§4.2.2)</li>
+<li>Table 6: Feature-group ablation (CatBoost) (§4.2.2)</li>
+<li>Table 7: LSTM base forecaster holdout classification report (§4.2.3)</li>
+<li>Table 8: Transformer zoo final leaderboard vs baselines (§4.2.4)</li>
+<li>Table 9: Tuning notebook — threshold-optimized validation (Youden's J) (§4.2.5)</li>
+<li>Table 10: Hardened-package score-LSTM final holdout (§4.2.6)</li>
+<li>Table 11: Unified out-of-sample leaderboard (§4.2.8)</li>
+</ul>
+<hr/>
+<h2>Table of Abbreviations</h2>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Abbreviation</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>TA-125</td><td>Tel-Aviv 125 stock index</td></tr>
+<tr><td>VTA-35</td><td>Tel-Aviv 35 Volatility Index</td></tr>
+<tr><td>LLM</td><td>Large Language Model</td></tr>
+<tr><td>NLP</td><td>Natural Language Processing</td></tr>
+<tr><td>HPO</td><td>Hyper-Parameter Optimization</td></tr>
+<tr><td>ROC-AUC</td><td>Area Under the Receiver Operating Characteristic Curve</td></tr>
+<tr><td>F1</td><td>F1 score (harmonic mean of precision and recall)</td></tr>
+<tr><td>MCC</td><td>Matthews Correlation Coefficient</td></tr>
+<tr><td>LSTM</td><td>Long Short-Term Memory network</td></tr>
+<tr><td>GRU</td><td>Gated Recurrent Unit</td></tr>
+<tr><td>TCN</td><td>Temporal Convolutional Network</td></tr>
+<tr><td>TFT</td><td>Temporal Fusion Transformer</td></tr>
+<tr><td>PCA</td><td>Principal Component Analysis</td></tr>
+<tr><td>OHLC</td><td>Open / High / Low / Close (price data)</td></tr>
+<tr><td>FX</td><td>Foreign Exchange rate</td></tr>
+<tr><td>DSN</td><td>Database Source Name (connection string)</td></tr>
+</tbody></table>
+<hr/>
+<h2>1. Introduction</h2>
+<p>This chapter provides the background, defines the problem, and states the objectives and scope of the project, setting the stage for the chapters that follow.</p>
+<h3>1.1 Background</h3>
+<p>Financial markets are widely believed to react to news. The <em>efficient-market hypothesis</em> argues that prices already incorporate available information, implying that consistently predicting short-term direction from public news is hard. Yet a large body of work in <em>behavioral finance</em> and <em>NLP-for-finance</em> reports that the <strong>tone and topical mix of news</strong> carry measurable, if small, predictive signal — particularly for indices and over short horizons.</p>
+<p>Most of this literature focuses on English-language sources (e.g., financial newswires, Twitter/X, earnings calls). Hebrew-language news, and the Israeli market specifically, are comparatively under-studied. At the same time, modern LLMs have made it practical to convert unstructured, multi-source headline streams into clean, structured signals at scale — something that previously required hand-built lexicons or supervised classifiers per language.</p>
+<p>This project sits at that intersection: it uses an LLM to turn a high-volume Hebrew breaking-news feed into a structured daily sentiment signal, and asks whether that signal helps forecast the TA-125.</p>
+<h3>1.2 Problem Statement</h3>
+<p><strong>Can a structured, LLM-derived sentiment signal extracted from Hebrew breaking-news headlines predict the next-day close-to-close direction of the TA-125 index, beyond what market data alone provides — and how much signal, if any, is actually there?</strong></p>
+<p>The challenge has several specific difficulties:</p>
+<ol>
+<li><strong>Signal-to-noise.</strong> Daily index direction is notoriously close to random;</li>
+</ol>
+<p>   even small, genuine edges are easy to fabricate through data leakage.</p>
+<ol>
+<li><strong>Leakage risk.</strong> News, market, and target series share a calendar; naive</li>
+</ol>
+<p>   feature engineering (e.g., using a same-day future return, fitting a scaler    on the full series, or shuffling time) silently inflates results.</p>
+<ol>
+<li><strong>Language and source heterogeneity.</strong> Headlines are Hebrew, UTF-8, from</li>
+</ol>
+<p>   many outlets of varying quality and volume, including a real weekend lull.</p>
+<ol>
+<li><strong>Regime change.</strong> The market environment around <code>2023-10-07</code> is a sharp</li>
+</ol>
+<p>   structural break that would contaminate any model trained across it.</p>
+<h3>1.3 Objectives</h3>
+<ol>
+<li><strong>Build a reproducible ingestion-and-scoring pipeline</strong> that scrapes Hebrew</li>
+</ol>
+<p>   headlines and scores each on six relevance categories plus a global    sentiment, persisting the result in a relational database.</p>
+<ol>
+<li><strong>Engineer leakage-safe daily features</strong> combining the news scores with</li>
+</ol>
+<p>   market and macro data, with optional embedding- and narrative-based signals.</p>
+<ol>
+<li><strong>Train and rigorously hyperparameter-tune a broad model zoo</strong> for next-day</li>
+</ol>
+<p>   TA-125 direction, on a strictly chronological, cutoff-bounded split.</p>
+<ol>
+<li><strong>Quantify the predictive value honestly</strong> using threshold-free and</li>
+</ol>
+<p>   threshold-based metrics, against a Buy&amp;Hold / majority baseline.</p>
+<ol>
+<li><strong>Produce reusable artifacts</strong> (a Python package, scripts, notebooks, and an</li>
+</ol>
+<p>   auto-generated leaderboard) so the experiment is fully reproducible.</p>
+<h3>1.4 Scope and Limitations</h3>
+<p><strong>In scope:</strong> Hebrew-headline scraping; LLM scoring into a 7-dimensional vector; daily feature engineering; embeddings and causal narrative clustering; classification and forecasting models with HPO; a comparison leaderboard.</p>
+<p><strong>Out of scope / limitations:</strong></p>
+<ul>
+<li><strong>Target.</strong> The database stores only a boolean next-day direction; continuous</li>
+</ul>
+<p>  TA-125 OHLC exists only in a CSV. The project therefore predicts   <strong>close-to-close direction</strong>, not overnight-gap or intraday-return magnitude.</p>
+<ul>
+<li><strong>Cutoff.</strong> All modeling is bounded to <code>≤ 2023-10-07</code>; the post-cutoff regime</li>
+</ul>
+<p>  is used only as a read-only sanity overlay, never for training.</p>
+<ul>
+<li><strong>Intraday.</strong> The system is daily-resolution; no tick or minute data.</li>
+<li><strong>Causality.</strong> The work measures <em>predictive association</em>, not economic</li>
+</ul>
+<p>  causation.</p>
+<ul>
+<li><strong>Data quirks.</strong> A non-trivial fraction of "validated" LLM rows are all-zero</li>
+</ul>
+<p>  (a known LLM failure mode treated as missing); the corpus mixes LLM model   versions across disjoint date ranges.</p>
+<h3>1.5 Methodology</h3>
+<p>The project follows a staged, gate-driven methodology:</p>
+<ol>
+<li><strong>Ingest</strong> Hebrew headlines (backward scrape to ~2015) into <code>raw_headlines</code>.</li>
+<li><strong>Score</strong> each headline with an LLM into <code>nlp_vectors</code> (7 scores +</li>
+</ol>
+<p>   validation flag).</p>
+<ol>
+<li><strong>Assemble</strong> leakage-safe daily frames: daily-mean scores, per-source score</li>
+</ol>
+<p>   pivots, sentiment×relevance interactions, multilingual embedding centroids,    causal narrative-cluster features, and a finance/market block.</p>
+<ol>
+<li><strong>Split</strong> chronologically (≈70/15/15) with all transforms fit on train only.</li>
+<li><strong>Model &amp; tune</strong> a zoo of classifiers and forecasters with Optuna HPO.</li>
+<li><strong>Evaluate</strong> every model on the same sacred out-of-sample window using</li>
+</ol>
+<p>   ROC-AUC, F1, accuracy, balanced accuracy, and MCC, plus a backtest overlay.</p>
+<ol>
+<li><strong>Compare</strong> all cells in a single auto-generated leaderboard.</li>
+</ol>
+<h3>1.6 Organization of the Project Book</h3>
+<ul>
+<li><strong>Chapter 2</strong> reviews relevant literature on news-driven financial prediction</li>
+</ul>
+<p>  and LLM-based sentiment extraction.</p>
+<ul>
+<li><strong>Chapter 3</strong> details the system architecture, data collection and</li>
+</ul>
+<p>  preprocessing, implementation, and evaluation metrics.</p>
+<ul>
+<li><strong>Chapter 4</strong> presents the experimental setup, the full results leaderboard,</li>
+</ul>
+<p>  and an analysis and discussion of the findings.</p>
+<ul>
+<li><strong>Chapter 5</strong> concludes and proposes future work.</li>
+<li><strong>Chapter 6</strong> lists references; <strong>Appendix A</strong> gives the data dictionary,</li>
+</ul>
+<p>  schema, and reproduction commands.</p>
+<pre><code>
+ ┌──────────────────┐  headlines  ┌────────────────────┐  7 scores  ┌─────────────┐
+ │ mivzakim_scraper │ ──────────▶ │  processing_engine │ ─────────▶ │ PostgreSQL  │
+ │  Playwright/FF   │             │  LLM scoring       │/headline   │ raw_headlines│
+ │  mivzakim.net    │             │  (fast / 7-agent)  │            │ nlp_vectors  │
+ └──────────────────┘             └────────────────────┘            └──────┬──────┘
+        ┌──────────────────────────────────────────────────────────────── ┘
+        ▼
+ ┌────────────────────────────┐  features  ┌─────────────────────────────┐
+ │  sentisense/ (Phase 2&amp;3)   │ ─────────▶ │  Forecasting model zoo       │
+ │ features·embed·cluster·HPO │            │ trees/LSTM/GRU/TCN/PatchTST/ │
+ │ leakage-safe, ≤ 2023-10-07 │            │ TFT/N-HiTS/Chronos → TA-125  │
+ └────────────────────────────┘            └─────────────────────────────┘
+</code></pre>
+<p><em>Figure 1: SentiSense end-to-end pipeline.</em></p>
+<hr/>
+<h2>2. Literature Review</h2>
+<h3>2.1 Overview of Relevant Literature</h3>
+<p>The project draws on three strands of prior work.</p>
+<p><strong>News sentiment and market prediction.</strong> A long line of research links the tone of financial and general news to subsequent market movements. Tetlock [1] showed that media pessimism predicts downward pressure on prices and reversion, establishing news tone as a market-relevant variable. Bollen et al. [2] famously linked aggregate mood derived from social media to movements in the Dow Jones. The consistent theme is that <em>signal exists but is small and regime-dependent</em>, and that careful, leakage-free evaluation is essential — exactly the posture this project adopts.</p>
+<p><strong>Lexicon vs. model-based sentiment.</strong> Domain-specific lexicons such as Loughran and McDonald [3] demonstrated that general-purpose sentiment dictionaries mislabel financial text, motivating domain-aware scoring. Modern LLMs generalize this idea: instead of a fixed lexicon, a prompted model performs context-aware topical-relevance and sentiment scoring, and — relevant here — does so across languages, including Hebrew, without a hand-built Hebrew lexicon.</p>
+<p><strong>Sequence and foundation models for forecasting.</strong> On the modeling side, the project surveys the standard time-series toolkit: gradient-boosted trees (XGBoost [4]) as strong tabular baselines; recurrent networks (LSTM [5], GRU [6]) and temporal convolutions (TCN [7]) for sequence classification; transformer forecasters such as the Temporal Fusion Transformer [8] and PatchTST [9]; deep interpretable forecasters N-BEATS [10] and N-HiTS [11]; and zero-shot foundation forecasters Chronos [12] and TimesFM [13]. Multilingual sentence embeddings (multilingual-E5 [14]) provide the Hebrew-aware vector representations used for the embedding and narrative-clustering features.</p>
+<p>The research gap this project addresses: most prior work is English-centric and often under-controls for leakage. SentiSense contributes a <strong>Hebrew-news, LLM-scored, strictly leakage-controlled</strong> evaluation across a broad model zoo, and reports the result honestly rather than selectively.</p>
+<hr/>
+<h2>3. System Design and Implementation</h2>
+<h3>3.1 System Architecture</h3>
+<p>The system is organized as four loosely-coupled modules communicating through a PostgreSQL 16 database, so each stage can be developed, re-run, and verified independently.</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Module</th><th>Purpose</th><th>Entry point</th></tr></thead>
+<tbody>
+<tr><td><code>mivzakim_scraper/</code></td><td>Scrape Hebrew headlines (Playwright + Firefox)</td><td><code>python main.py</code></td></tr>
+<tr><td><code>processing_engine/</code></td><td>LLM scoring (6 relevance + sentiment)</td><td><code>process_single_observation</code> / fast pipeline</td></tr>
+<tr><td><code>scripts/</code></td><td>Data ops: schema, backfill, scoring, retry, standardize</td><td><code>python scripts/&lt;name&gt;.py</code></td></tr>
+<tr><td><code>sentisense/</code></td><td>Features, embeddings, clustering, models, HPO, orchestration</td><td><code>python -m sentisense.pipeline</code></td></tr>
+<tr><td><code>evaluation/</code></td><td>Benchmark LLM scoring against a golden dataset</td><td><code>python -m evaluation.evaluate</code></td></tr>
+</tbody></table>
+<p><strong>Design principles.</strong></p>
+<ul>
+<li><strong>Database as the contract.</strong> All inter-stage data flows through four tables</li>
+</ul>
+<p>  (<code>raw_headlines</code>, <code>nlp_vectors</code>, <code>daily_features</code>, <code>model_predictions</code>),   decoupling scraping, scoring, and modeling.</p>
+<ul>
+<li><strong>Single source of truth for constants.</strong> The cutoff date, active model name,</li>
+</ul>
+<p>  and score-column contract live in <code>sentisense/constants.py</code>, so no magic   strings leak into feature or model code.</p>
+<ul>
+<li><strong>Optional, layered dependencies.</strong> Heavy ML/embedding/forecasting libraries</li>
+</ul>
+<p>  are <code>pyproject.toml</code> <em>extras</em> (<code>ml</code>, <code>embed</code>, <code>finance</code>, <code>tft</code>, <code>chronos</code>),   so early stages install lightly and torch/CUDA wheels are pinned for   reproducibility.</p>
+<ul>
+<li><strong>Leakage-safety as an architectural invariant</strong>, enforced at every layer</li>
+</ul>
+<p>  (see §3.2).</p>
+<h3>3.2 Data Collection and Preprocessing</h3>
+<p><strong>Collection.</strong> The scraper drives a headless Firefox via Playwright over <code>mivzakim.net</code>, scraping <em>backward</em> in time (<code>scripts/backfill_history.py</code>) from the most recent day toward ~2015. Each headline yields a row in <code>raw_headlines</code>: date, source outlet, hour, popularity class, the Hebrew text, and an ingestion timestamp. Deduplication uses a stored <code>md5(headline)</code> hash (Hebrew strings exceed B-tree index limits) under a unique key of <code>(date, source, hour, headline_hash)</code>.</p>
+<p><strong>Scoring.</strong> The processing engine sends each headline to an LLM. A <strong>fast single-prompt path</strong> produces all seven scores in one structured call (used for the bulk backfill on a vLLM <code>mistral-small-4</code> server); a legacy <strong>seven-agent LangGraph path</strong> exists for local Ollama. Each result is a vector of six relevance integers (0–10), one global sentiment integer (−10…+10), and a <code>validation_passed</code> flag, written to <code>nlp_vectors</code>. The corpus contains <strong>~1.9M scored headlines</strong>.</p>
+<p><strong>Quality control and known quirks</strong> (documented in <code>DATA_HANDOFF.md</code>):</p>
+<ul>
+<li><strong>All-zero "validated" rows.</strong> The LLM sometimes emits all-zeros when it</li>
+</ul>
+<p>  cannot categorize a headline; the validator accepts it because all values are   in range. These are treated as missing data.</p>
+<ul>
+<li><strong>Mixed model versions.</strong> Earlier rows scored by <code>mistral-large-2</code> /</li>
+</ul>
+<p>  <code>mistral-small3.2</code> were standardized onto <code>mistral-small-4</code>; analytical   queries pin the active model to avoid double-counting.</p>
+<ul>
+<li><strong>Weekend lull.</strong> Saturday volume is genuinely low (Israeli weekend), not a</li>
+</ul>
+<p>  data gap.</p>
+<ul>
+<li><strong>Encoding / timezone.</strong> All text is UTF-8 Hebrew; event dates/hours are</li>
+</ul>
+<p>  Asia/Jerusalem while <code>created_at</code> is stored as UTC <code>TIMESTAMPTZ</code>.</p>
+<p><strong>Leakage-safe feature assembly</strong> (<code>sentisense/features/dataset.py</code>). This is the heart of the preprocessing and the project's most important engineering contribution. The module builds daily modeling frames with defense-in-depth against leakage:</p>
+<ul>
+<li><strong>Hard cutoff</strong> <code>≤ 2023-10-07</code> is pushed into the SQL (`WHERE rh.date &lt;=</li>
+</ul>
+<p>  :cutoff`) <em>and</em> re-applied after the calendar merge.</p>
+<ul>
+<li><strong>Event date, never ingestion time.</strong> The cutoff and all splits use</li>
+</ul>
+<p>  <code>raw_headlines.date</code>, never <code>created_at</code>.</p>
+<ul>
+<li><strong>Trading-calendar rollover.</strong> Weekend/holiday news is rolled <em>forward</em> to</li>
+</ul>
+<p>  the next trading day (Fri/Sat → Sun) via <code>np.searchsorted(side='left')</code>;   market/FX/volatility series are forward-filled.</p>
+<ul>
+<li><strong>Causal price features.</strong> TA-125 features (lagged log-returns 1–7, 5d/20d</li>
+</ul>
+<p>  rolling stats, Wilder RSI-14, 20-day volume z-score, day-of-week one-hots)   all use <code>.shift(&gt;=1)</code>. Cross-asset features (S&amp;P 500, VIX, Brent, USD/ILS,   VTA-35) are lagged log-returns only.</p>
+<ul>
+<li><strong>Train-only scaling.</strong> <code>StandardScaler</code> (and optional PCA, scoped by column</li>
+</ul>
+<p>  prefix to the embedding block) is fit on the <strong>train slice only</strong>. The   notebook's earlier full-frame <code>MinMaxScaler</code> on VTA-35 — a leak — was replaced   by a leak-free zero-fill plus a <code>VTA35_missing</code> indicator.</p>
+<ul>
+<li><strong>Honest target.</strong> <code>Target = (TA125_Price.shift(-1) &gt; TA125_Price)</code>; the</li>
+</ul>
+<p>  trailing row with no next-day price is explicitly set to NA and dropped, so no   fabricated label is ever produced.</p>
+<p>Three feature "views" are produced: a <strong>daily-mean</strong> frame (tree-model shape), a <strong>per-source</strong> pivot frame (sequence-model shape), and — when embeddings are cached — an <strong>embedding-centroid</strong> frame and a <strong>fused</strong> frame combining per-source scores with the daily e5 centroid.</p>
+<h3>3.3 Implementation Details</h3>
+<p><strong>Languages, frameworks, and tooling.</strong> Python 3.12, managed by <code>uv</code>. Persistence uses PostgreSQL 16 via SQLAlchemy 2 + psycopg v3; connection strings come <strong>only</strong> from the <code>SENTISENSE_DATABASE_URL</code> environment variable and the code fails fast if it is unset (no embedded secrets). Core libraries: pandas/numpy (features), scikit-learn/XGBoost/LightGBM/CatBoost (tabular), PyTorch (sequence models), Optuna (HPO), sentence-transformers (embeddings), pytorch-forecasting + Lightning (TFT/N-HiTS/N-BEATS), and Chronos/TimesFM (foundation forecasters).</p>
+<p><strong>Key implementation decisions and trade-offs.</strong></p>
+<ul>
+<li><strong>Notebook → package.</strong> A working but research-grade pipeline lived in</li>
+</ul>
+<p>  notebooks (<code>transformer_forecaster.ipynb</code>, <code>lstm_forecaster.ipynb</code>,   <code>tuning.ipynb</code>). It was extracted into the importable, server-runnable   <code>sentisense/</code> package, hardening the leakage controls in the process (the   package deliberately does <em>not</em> port the notebooks' earlier leaky features   such as shuffled <code>StratifiedKFold</code> or same-day target features).</p>
+<ul>
+<li><strong>Embeddings.</strong> A Hebrew-aware multilingual model</li>
+</ul>
+<p>  (<code>intfloat/multilingual-e5-base</code>) is used rather than an English-centric   default; embeddings are cached so downstream stages never recompute them.</p>
+<ul>
+<li><strong>Causal narrative clustering</strong> (<code>sentisense/cluster/narrative.py</code>). For each</li>
+</ul>
+<p>  trading day <em>T</em>, a MiniBatch-KMeans model is fit <strong>only on embeddings strictly   before T</strong> (expanding window with a refit cadence), then day-T headlines are   <em>assigned</em> with that past-fit model — yielding <code>dominant_cluster_ratio</code> and   normalized <code>cluster_entropy</code> without any look-ahead.</p>
+<ul>
+<li><strong>Resumable, cached experimentation.</strong> The comparison driver</li>
+</ul>
+<p>  (<code>scripts/pipeline_compare.py</code>) writes each finished cell's metrics to   <code>leaderboard_cache.json</code> immediately, so adding or fixing one model costs only   that cell, not the whole grid.</p>
+<p><strong>Software/hardware.</strong> Development on macOS (CPU); heavy training on a Linux server with an NVIDIA RTX 4090 (CUDA 12.3 driver). Torch is pinned to CUDA-12.1 wheels for that driver, with a CPU fallback index for local work. PostgreSQL runs via <code>docker-compose</code>.</p>
+<h3>3.4 Evaluation Metrics</h3>
+<p>Because next-day direction is near-balanced and accuracy alone is misleading, the project reports a metric set (<code>sentisense/models/metrics.py</code>), all computed on the <strong>same sacred last-15% out-of-sample window</strong>:</p>
+<ul>
+<li><strong>ROC-AUC</strong> — threshold-free ranking quality; the primary headline metric.</li>
+<li><strong>F1 (macro)</strong> — balances precision/recall across both classes.</li>
+<li><strong>Accuracy</strong> and <strong>balanced accuracy</strong> — overall and class-balanced hit rate.</li>
+<li><strong>MCC</strong> — Matthews correlation, robust to class imbalance.</li>
+</ul>
+<p>A <strong>backtest overlay</strong> and a <strong>Buy&amp;Hold</strong> benchmark place the statistical metrics in an economic context, and a read-only post-cutoff "buy-only" overlay sanity-checks behavior on the held-out future regime (never used for training).</p>
+<hr/>
+<h2>4. Results and Analysis</h2>
+<h3>4.1 Experimental Setup</h3>
+<p>Results were produced along <strong>two complementary experiment tracks</strong>, both reported in full below:</p>
+<ol>
+<li><strong>Exploratory notebook tracks</strong> — a sequence of research notebooks</li>
+</ol>
+<p>   (<code>poc.ipynb</code>, <code>compare_lstm_features_with_poc.ipynb</code>,    <code>transformer_forecaster.ipynb</code>, <code>tuning.ipynb</code>, <code>sentisense_analysis.ipynb</code>,    <code>timesfm_explainability.ipynb</code>) that iterate on splits, feature sets, model    families, ablations, and robustness checks. These differ deliberately in    their train/test windows and majority-class baselines, which is itself part    of the analysis (§4.3).</p>
+<ol>
+<li><strong>The unified, hardened package grid</strong> — <code>scripts/pipeline_compare.py</code>, which</li>
+</ol>
+<p>   reduces every cell to a uniform <code>(scores, labels)</code> pair on the identical    out-of-sample window and scores it with the shared metrics. This is the    canonical, leakage-hardened cross-model comparison.</p>
+<blockquote><strong>Note on reproduction state.</strong> A number of cells in the saved notebooks were not executed in the committed copy (e.g. the transformer Optuna "tuned leaderboard" and McNemar cells; the <code>tuning.ipynb</code> GRU/TCN, multi-seed, abstention, and final-report cells; and all of <code>timesfm_explainability.ipynb</code>). To keep this book honest and reproducible, <strong>only metrics that actually rendered in the saved outputs are reported</strong>, and each gap is flagged where it occurs.</blockquote>
+<p>The unified package grid is a three-axis grid evaluated by <code>scripts/pipeline_compare.py</code>, which reduces every cell to a uniform <code>(scores, labels)</code> pair on the identical out-of-sample window and scores it with the shared metrics:</p>
+<ul>
+<li><strong>Model axis</strong> — classifiers (XGBoost, LSTM, GRU, TCN, PatchTST) and</li>
+</ul>
+<p>  forecasters (TFT, N-HiTS, N-BEATS, Chronos, TimesFM), plus Buy&amp;Hold.</p>
+<ul>
+<li><strong>Data-type axis</strong> — <code>scored</code> (LLM news scores), <code>embedded</code> (768-d e5</li>
+</ul>
+<p>  centroid + finance), and <code>fused</code> (per-source scores ⊕ centroid). Classifiers   run on all three; forecasters use scored covariates / univariate only.</p>
+<ul>
+<li><strong>Regime axis</strong> — <code>CUT</code> (≤ 2023-10-07) vs <code>FULL</code> (entire timeline).</li>
+</ul>
+<p>Each classifier (model × data-type × regime) cell gets its <strong>own resumable Optuna study</strong>; search spaces are wide (e.g., sequence models tune window</p>
+<p>5–60, capacity to 384 units, depth to 4, dropout 0–0.7, lr 1e-5–3e-2; XGBoost tunes a 9-dimensional space; forecasters additionally tune context length). HPO selects on a validation slice only; the test tail stays sacred. Reproducibility is enforced with fixed seeds.</p>
+<h3>4.2 Presentation of Results</h3>
+<p>The project generated <strong>many</strong> result tables across its experiment tracks. They are reproduced faithfully below, organized by source, and then summarized by the unified package grid (§4.2.8). Every table predicts the <strong>next-day close-to-close TA-125 direction</strong>.</p>
+<p><strong>Aggregation lineage (how the notebooks relate).</strong> A crucial point for reading these results is that the notebooks deliberately use <em>different news-aggregation strategies</em>, and the later notebooks expand on the two base ones:</p>
+<ul>
+<li><strong>Base A — daily-mean aggregation (<code>poc.ipynb</code>).</strong> Each day's headlines are</li>
+</ul>
+<p>  collapsed to <strong>per-category means</strong> (<code>mean_politics … mean_sentiment</code>, plus   <code>std_sentiment</code>, <code>pct_negative</code>, <code>pct_positive</code>). This is the compact,   tree-friendly representation. (The base PoC also added <code>LastDay_Rise</code> /   <code>LastDay_Pct</code> features built with a <code>shift(-1)</code>, a leaky construction that the   hardened package deliberately drops.)</p>
+<ul>
+<li><strong>Base B — per-source wide aggregation (<code>lstm_forecaster.ipynb</code>).</strong> Scores are</li>
+</ul>
+<p>  <strong>summed per <code>(date, source)</code> and pivoted wide</strong> (<code>&lt;dim&gt;_&lt;source&gt;</code> ⇒ 320   feature columns), preserving <em>which outlet produced which signal</em>, then sliced   into 30-day windows for the LSTM.</p>
+<ul>
+<li><strong>Expansions.</strong> <code>compare_lstm_features_with_poc.ipynb</code> runs the **PoC tree</li>
+</ul>
+<p>  models on Base B's per-source wide features<strong> (directly testing "do per-source   features beat daily means?"), adding ablations, walk-forward, and multi-seed   checks. <code>transformer_forecaster.ipynb</code> and <code>tuning.ipynb</code> use </strong>both** shapes   (daily-mean for tree/vanilla models, per-source for sequence models). The   <code>sentisense/</code> package generalizes both into leakage-safe <code>mt</code> (daily-mean) and   <code>ml</code> (per-source) frames (§3.2).</p>
+<p>Each subsection below notes which aggregation it uses.</p>
+<p><strong>Cross-track summary.</strong> Before the detailed tables, Table 1 gives the one-glance picture: the best configuration in each track, its majority-class baseline, and whether it beats that baseline / reaches significance. The recurring theme is that "best" accuracies rarely clear their own baseline, and none reaches significance.</p>
+<p><em>Table 1: Best result per experiment track vs its baseline.</em></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Track (§)</th><th>Aggregation</th><th>Best config</th><th>Acc</th><th>Baseline</th><th>Beats base?</th><th>ROC-AUC</th><th>Significant?</th></tr></thead>
+<tbody>
+<tr><td>PoC (§4.2.1)</td><td>daily-mean</td><td>XGBoost / LightGBM</td><td>0.5459</td><td>0.4976</td><td>yes</td><td>n/a</td><td>no (p≈0.09–0.13)</td></tr>
+<tr><td>LSTM-features (§4.2.2)</td><td>per-source</td><td>LGBM "Top sources+Other"</td><td>0.5794</td><td>0.5675</td><td>+0.012</td><td>0.5415</td><td>no (p_perm=0.052)</td></tr>
+<tr><td>LSTM base (§4.2.3)</td><td>per-source</td><td>LSTM (window 30)</td><td>0.5636</td><td>0.5773</td><td><strong>no</strong></td><td>n/a</td><td>no (p=0.68)</td></tr>
+<tr><td>Transformer zoo (§4.2.4)</td><td>both</td><td>PatchTST_DailyMean</td><td>0.5370</td><td>0.4931</td><td>yes</td><td>0.5185</td><td>no (p≈0.09)</td></tr>
+<tr><td>Tuning (§4.2.5)</td><td>both</td><td>Ensemble / tuned LSTM</td><td>0.4596</td><td>0.5680</td><td><strong>no</strong></td><td>n/a</td><td>no</td></tr>
+<tr><td>Hardened pkg (§4.2.6)</td><td>daily-mean</td><td>Score-LSTM</td><td>0.5000</td><td>~0.50</td><td>~tie</td><td>0.5088</td><td>no (MCC≈0)</td></tr>
+<tr><td>Unified grid (§4.2.8)</td><td>all</td><td>GRU [scored] (by ROC-AUC)</td><td>0.5289</td><td>~0.50</td><td>~tie</td><td><strong>0.5755</strong></td><td>no</td></tr>
+</tbody></table>
+<p><em>(n/a = ROC-AUC not printed numerically in that notebook; "Significant?" = passes a permutation/binomial test at p&lt;0.05 vs the majority-class baseline.)</em></p>
+<h4>4.2.1 Tree-model proof-of-concept (<code>poc.ipynb</code>)</h4>
+<p><em>Aggregation: Base A — daily-mean per category (+ leaky <code>LastDay</code> features).</em></p>
+<p>The earliest experiment established a tree-model baseline. Two evaluation protocols were run.</p>
+<p><strong>5-fold cross-validation (accuracy):</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Model</th><th>Mean Accuracy</th><th>Std</th><th>Fold scores</th></tr></thead>
+<tbody>
+<tr><td>XGBoost</td><td>53.60%</td><td>1.87%</td><td>51.70 / 56.66 / 51.70 / 54.57 / 53.40</td></tr>
+<tr><td>LightGBM</td><td>52.40%</td><td>2.49%</td><td>48.04 / 55.35 / 51.70 / 53.00 / 53.93</td></tr>
+<tr><td>CatBoost</td><td>53.45%</td><td>3.21%</td><td>47.26 / 56.14 / 53.52 / 55.35 / 54.97</td></tr>
+</tbody></table>
+<p><em>Table 2: PoC tree-model 5-fold cross-validation accuracy.</em></p>
+<p><strong>Chronological 80/20 holdout</strong> (train 826 rows 2019-07-17→2022-12-04; test 207 rows 2022-12-05→2023-10-05; test up-rate 49.76%):</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Model</th><th>Test Accuracy</th></tr></thead>
+<tbody>
+<tr><td>XGBoost</td><td>54.59%</td></tr>
+<tr><td>LightGBM</td><td>54.59%</td></tr>
+<tr><td>CatBoost</td><td>53.62%</td></tr>
+</tbody></table>
+<p><em>Table 3: PoC chronological 80/20 holdout accuracy.</em></p>
+<p><strong>Significance vs majority-class baseline (49.76%):</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Model</th><th>Acc</th><th>p_binom</th><th>p_perm</th><th>95% CI</th></tr></thead>
+<tbody>
+<tr><td>XGBoost</td><td>54.59%</td><td>0.0933</td><td>0.1260</td><td>[48.30%, 61.35%]</td></tr>
+<tr><td>LightGBM</td><td>54.59%</td><td>0.0933</td><td>0.1280</td><td>[47.83%, 61.35%]</td></tr>
+<tr><td>CatBoost</td><td>53.62%</td><td>0.1486</td><td>0.1800</td><td>[46.86%, 59.92%]</td></tr>
+</tbody></table>
+<p><em>Table 4: PoC significance tests vs majority-class baseline.</em></p>
+<p>XGBoost holdout classification report (207-sample split):¹</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Class</th><th>precision</th><th>recall</th><th>f1</th><th>support</th></tr></thead>
+<tbody>
+<tr><td>0 (Fall)</td><td>0.56</td><td>0.45</td><td>0.50</td><td>104</td></tr>
+<tr><td>1 (Rise)</td><td>0.54</td><td>0.64</td><td>0.58</td><td>103</td></tr>
+<tr><td>accuracy</td><td></td><td></td><td>0.55</td><td>207</td></tr>
+</tbody></table>
+<p><em>Verdict:</em> all <code>p_binom</code>/<code>p_perm</code> are <strong>&gt; 0.05</strong> — no tree model beats the majority baseline at significance. (McNemar's test was skipped: <code>statsmodels</code> not installed.)</p>
+<blockquote>¹ <code>poc.ipynb</code> contains unresolved git merge-conflict markers; an alternate rendered report with a 507-sample support exists. The 207-sample version above matches the notebook's stated 80/20 split.</blockquote>
+<h4>4.2.2 LSTM feature-set vs PoC study (<code>compare_lstm_features_with_poc.ipynb</code>)</h4>
+<p><em>Aggregation: Base B — per-source wide (from <code>lstm_forecaster.ipynb</code>), fed to the PoC tree models. This notebook exists specifically to test whether Base B's per-source features beat Base A's daily means.</em></p>
+<p>The most extensive notebook compares feature families on the per-source "LSTM wide" representation, with ablations and robustness checks. Unless noted, the test window is 2024-03-26→2026-04-28 (504 rows, majority baseline 56.75%).</p>
+<p><strong>Main holdout summary (sorted by accuracy):</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Experiment</th><th>Model</th><th>Accuracy</th><th>Baseline</th><th>Gap</th><th>Bal.Acc</th><th>ROC-AUC</th><th>p_binom</th><th>p_perm</th></tr></thead>
+<tbody>
+<tr><td>Top sources + Other</td><td>LGBM</td><td>0.5794</td><td>0.5675</td><td>+0.0119</td><td>0.5230</td><td>0.5415</td><td>0.311</td><td>0.052</td></tr>
+<tr><td>Baseline wide</td><td>CatBoost</td><td>0.5714</td><td>0.5675</td><td>+0.0040</td><td>0.5068</td><td>0.4760</td><td>0.447</td><td>0.234</td></tr>
+<tr><td>Top sources + Other</td><td>XGBoost</td><td>0.5714</td><td>0.5675</td><td>+0.0040</td><td>0.5171</td><td>0.5359</td><td>0.447</td><td>0.130</td></tr>
+<tr><td>Baseline wide</td><td>XGBoost</td><td>0.5694</td><td>0.5675</td><td>+0.0020</td><td>0.5072</td><td>0.5196</td><td>0.483</td><td>0.255</td></tr>
+<tr><td>Baseline wide</td><td>LGBM</td><td>0.5694</td><td>0.5675</td><td>+0.0020</td><td>0.5067</td><td>0.5453</td><td>0.483</td><td>0.278</td></tr>
+<tr><td>Top sources + Other</td><td>CatBoost</td><td>0.5675</td><td>0.5675</td><td>0.0000</td><td>0.5065</td><td>0.4963</td><td>0.519</td><td>0.315</td></tr>
+</tbody></table>
+<p><em>Table 5: Per-source feature-set holdout comparison (tree models).</em></p>
+<p><strong>Feature-group ablation (CatBoost), test up-rate baseline 56.42%:</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Feature group</th><th>N features</th><th>Accuracy</th><th>Gap</th><th>ROC-AUC</th></tr></thead>
+<tbody>
+<tr><td>Basic market only</td><td>6</td><td>0.5811</td><td>+0.0168</td><td>0.5415</td></tr>
+<tr><td>News + all market features</td><td>344</td><td>0.5768</td><td>+0.0126</td><td>0.5074</td></tr>
+<tr><td>Market-derived only</td><td>17</td><td>0.5600</td><td>−0.0042</td><td>0.5296</td></tr>
+<tr><td>News wide only</td><td>321</td><td>0.5558</td><td>−0.0084</td><td>0.4841</td></tr>
+</tbody></table>
+<p><em>Table 6: Feature-group ablation (CatBoost) — market-only matches news+market.</em></p>
+<p><strong>Walk-forward validation (5 folds, CatBoost):</strong> mean accuracy <strong>0.5967</strong>, mean baseline 0.5733, mean gap +0.0233, with only <strong>2 / 5</strong> folds beating baseline (fold accuracies 0.633 / 0.650 / 0.567 / 0.617 / 0.517).</p>
+<p><strong>Multi-seed robustness (CatBoost, 5 seeds):</strong> mean accuracy **0.5714 ±</p>
+<p>0.0084<strong> (min 0.560, max 0.581), mean gap +0.0072, </strong>4 / 5** seeds positive; ROC-AUC ranges 0.507–0.577.</p>
+<p><strong>Feature importance by group (CatBoost):</strong> News 79.2%, Market-derived 17.6%, Basic market 3.2% of total importance — yet the strongest <em>individual</em> features are price-derived (<code>TA125_logret_5d_std</code>, <code>TA125_logret_lag5</code>, <code>TA125_RSI14</code>).</p>
+<p><em>Verdict:</em> the best configuration (LGBM, "Top sources + Other") reaches accuracy</p>
+<p>0.579 with <code>p_perm = 0.052</code> — the closest to significance anywhere — but its bootstrap 95% CI (0.534–0.623) straddles the baseline. The signal is <strong>weak and unstable</strong>.</p>
+<h4>4.2.3 LSTM base forecaster (<code>lstm_forecaster.ipynb</code>)</h4>
+<p><em>Aggregation: Base B — per-source wide (320 columns), 30-day windows. This is the original sequence model the per-source representation was built for.</em></p>
+<p>The base LSTM is trained on chronological, windowed sequences (window 30,</p>
+<p>326 features) with train/val/test = 1,163 / 249 / 250 daily rows (2019-07-17 → 2026-04-29); test up-rate 57.73%.</p>
+<p><strong>LSTM holdout test:</strong> accuracy <strong>56.36%</strong> (below the 57.73% majority baseline).</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Class</th><th>precision</th><th>recall</th><th>f1</th><th>support</th></tr></thead>
+<tbody>
+<tr><td>Fall</td><td>0.29</td><td>0.02</td><td>0.04</td><td>93</td></tr>
+<tr><td>Rise</td><td>0.57</td><td>0.96</td><td>0.72</td><td>127</td></tr>
+<tr><td>accuracy</td><td></td><td></td><td>0.56</td><td>220</td></tr>
+</tbody></table>
+<p><em>Table 7: LSTM base forecaster holdout classification report.</em></p>
+<p><strong>Significance vs baseline (57.73%):</strong> binomial p = 0.6845; permutation p = 0.8820; bootstrap 95% CI [50.00%, 62.73%].</p>
+<p><em>Verdict:</em> the model collapses toward the majority "Rise" class (recall 0.96 vs</p>
+<p>0.02), scores <strong>below</strong> baseline, and is statistically indistinguishable from it. Training accuracy reaches ~0.74 while validation stays ~0.48–0.53 — clear overfitting on the 320-column per-source representation. (ROC-AUC/MCC were rendered only inside plot images, so no numeric values are reported here.)</p>
+<h4>4.2.4 Transformer model zoo + ablations (<code>transformer_forecaster.ipynb</code>)</h4>
+<p><em>Aggregation: both — daily-mean (<code></em>_DailyMean</code> models) and per-source (<code><em>_PerSource</code> models), so the two base shapes compete head-to-head.</em></p>
+<p>This notebook set an explicit success bar: <strong>≥58% test accuracy with p&lt;0.05 vs majority</strong>. Nine transformer variants were evaluated against tree/linear baselines (majority-class baseline 49.31%).</p>
+<p><strong>Final leaderboard — transformer vs baselines (best per row):</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Model</th><th>accuracy</th><th>balanced_accuracy</th><th>f1</th><th>roc_auc</th><th>mcc</th></tr></thead>
+<tbody>
+<tr><td>ModelB_PatchTST_DailyMean</td><td>0.5370</td><td>0.5381</td><td>0.4926</td><td>0.5185</td><td>0.0949</td></tr>
+<tr><td>CatBoost</td><td>0.5069</td><td>0.5093</td><td>0.4940</td><td>0.5048</td><td>0.0196</td></tr>
+<tr><td>XGBoost</td><td>0.5035</td><td>0.5020</td><td>0.4969</td><td>0.5070</td><td>0.0040</td></tr>
+<tr><td>ModelE_Informer_PerSource</td><td>0.4981</td><td>0.5000</td><td>0.3325</td><td>0.5000</td><td>0.0000</td></tr>
+<tr><td>ModelC_TwoTower_DailyMean</td><td>0.5019</td><td>0.5000</td><td>0.3342</td><td>0.5000</td><td>0.0000</td></tr>
+<tr><td>ModelA_Vanilla_PerSource</td><td>0.4942</td><td>0.4941</td><td>0.4940</td><td>0.4996</td><td>−0.0118</td></tr>
+<tr><td>ModelA_Vanilla_DailyMean</td><td>0.4942</td><td>0.4926</td><td>0.4018</td><td>0.5216</td><td>−0.0236</td></tr>
+<tr><td>LGBM</td><td>0.4931</td><td>0.4926</td><td>0.4922</td><td>0.4727</td><td>−0.0149</td></tr>
+<tr><td>ModelE_Informer_DailyMean</td><td>0.4903</td><td>0.4889</td><td>0.4190</td><td>0.5397</td><td>−0.0309</td></tr>
+<tr><td>ModelD_Hierarchical_DailyMean</td><td>0.4903</td><td>0.4886</td><td>0.3810</td><td>0.5339</td><td>−0.0415</td></tr>
+<tr><td>ElasticNet</td><td>0.4792</td><td>0.4798</td><td>0.4783</td><td>0.4804</td><td>−0.0405</td></tr>
+<tr><td>ModelD_Hierarchical_PerSource</td><td>0.4708</td><td>0.4711</td><td>0.4690</td><td>0.4757</td><td>−0.0583</td></tr>
+<tr><td>ModelC_TwoTower_PerSource</td><td>0.4514</td><td>0.4516</td><td>0.4487</td><td>0.4766</td><td>−0.0977</td></tr>
+</tbody></table>
+<p><em>Table 8: Transformer zoo final leaderboard vs tree/linear baselines.</em></p>
+<p><strong>Statistical tests (permutation + binomial vs baseline):</strong> no model is significant — the lowest p-value is PatchTST (<code>p_binom=0.089</code>, <code>p_perm=0.090</code>).</p>
+<p><strong>Window-size ablation (PatchTST):</strong> best at window 15–20 (acc ≈ 54–55%, ROC-AUC up to 0.592); collapses to the majority class at windows 45–60. <strong>Feature-group ablation:</strong> Market-only 0.5409 &gt; LagReturns-only 0.5292 &gt; News-only 0.4864.</p>
+<p><em>Verdict (printed):</em> "Best transformer: PatchTST 53.81% balacc … Best overall score &lt; 55% … TA-125 direction at daily frequency may not be predictable from news sentiment + market features alone." The <strong>≥58% success criterion was not met</strong>. (The Optuna "tuned leaderboard" and McNemar cells were not executed.)</p>
+<h4>4.2.5 Sequence-model tuning &amp; robustness (<code>tuning.ipynb</code>)</h4>
+<p>This notebook applies leak-safe TimeSeriesSplit Optuna tuning (target: balanced accuracy) and walk-forward backtesting. Corpus: 1,898,499 validated rows,</p>
+<p>40 sources.</p>
+<p><strong>Reproducibility sanity (vanilla holdout, baseline 56.80%):</strong> XGBoost 51.06%, LightGBM 52.57%, CatBoost 50.76% — all below baseline.</p>
+<p><strong>Threshold-optimized validation (Youden's J):</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Model</th><th>best_thr</th><th>val_balacc</th><th>val_acc</th><th>val_F1</th></tr></thead>
+<tbody>
+<tr><td>XGBoost</td><td>0.597</td><td>0.5363</td><td>0.5142</td><td>0.4826</td></tr>
+<tr><td>LightGBM</td><td>0.521</td><td>0.5583</td><td>0.5628</td><td>0.5582</td></tr>
+<tr><td>CatBoost</td><td>0.525</td><td>0.5345</td><td>0.5263</td><td>0.5243</td></tr>
+</tbody></table>
+<p><em>Table 9: Tuning notebook — threshold-optimized validation (Youden's J).</em></p>
+<p><strong>LSTM (Optuna best val balacc 0.5611):</strong> test accuracy at tuned threshold <strong>0.4553</strong>. <strong>Ensemble (soft-vote):</strong> val balacc 0.5712, **test accuracy</p>
+<p>0.4596<strong>. </strong>Walk-forward CatBoost:<strong> mean accuracy </strong>0.5267 ± 0.0814**, mean baseline 0.5533 (gap −0.0267).</p>
+<p><em>Verdict:</em> tuned single models and the ensemble both <strong>underperform the majority baseline</strong> on the holdout. (GRU/TCN, multi-seed, abstention, and the final <code>final_results.csv</code> cells were not executed in the saved notebook.)</p>
+<h4>4.2.6 Hardened-package analysis (<code>sentisense_analysis.ipynb</code>)</h4>
+<p>Run directly against the live database (cutoff 2023-10-07). Corpus coverage: <strong>2,950,339 validated <code>mistral-small-4</code> rows</strong> (plus 52,640 <code>mistral-small:latest</code>).</p>
+<p><strong>Score-LSTM final holdout (mean ± std over repeats):</strong></p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>Metric</th><th>mean</th><th>std</th></tr></thead>
+<tbody>
+<tr><td>accuracy @0.5</td><td>0.5000</td><td>0.0058</td></tr>
+<tr><td>balanced_accuracy @0.5</td><td>0.5001</td><td>0.0057</td></tr>
+<tr><td>f1 @0.5</td><td>0.4990</td><td>0.0066</td></tr>
+<tr><td>roc_auc @0.5</td><td>0.5088</td><td>0.0144</td></tr>
+<tr><td>mcc @0.5</td><td>0.0001</td><td>0.0114</td></tr>
+<tr><td>accuracy @tuned</td><td>0.4961</td><td>0.0136</td></tr>
+<tr><td>roc_auc @tuned</td><td>0.5072</td><td>0.0080</td></tr>
+<tr><td>mcc @tuned</td><td>0.0013</td><td>0.0402</td></tr>
+</tbody></table>
+<p><em>Table 10: Hardened-package score-LSTM final holdout (mean ± std).</em></p>
+<p>(LSTM Optuna best value 0.538.) <em>Verdict:</em> <strong>near-chance</strong> — accuracy ≈ 0.50, ROC-AUC ≈ 0.51, MCC ≈ 0.00. On the hardened pipeline the score-only LSTM shows essentially <strong>no directional edge</strong>. (The §2 multi-track, baselines, and strategy-vs-Buy&amp;Hold cells were not executed; SHAP outputs exist only as plots.)</p>
+<h4>4.2.7 Foundation-model explainability (<code>timesfm_explainability.ipynb</code>)</h4>
+<p>This notebook scaffolds zero-shot/covariate-ablation/regime experiments for Google's TimesFM, but <strong>was not executed in the committed copy</strong> — no numeric results are available. It is retained as a wired template for future work (§5).</p>
+<h4>4.2.8 Unified out-of-sample grid (<code>leaderboard.md</code>)</h4>
+<p>The canonical, leakage-hardened comparison reduces every model × data-type × regime cell to the same out-of-sample window and metric set. Sorted by accuracy descending. Notation: <code>model [data-type]</code> for classifiers, <code>model [cov=...]</code> for forecasters.</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<thead><tr><th>model [data-type]</th><th>roc_auc</th><th>f1</th><th>accuracy</th></tr></thead>
+<tbody>
+<tr><td>TFT [cov=none]</td><td>0.5391</td><td>0.4148</td><td>0.5916</td></tr>
+<tr><td>XGBoost [embedded]</td><td>0.5314</td><td>0.5129</td><td>0.5890</td></tr>
+<tr><td>XGBoost [fused]</td><td>0.5253</td><td>0.4616</td><td>0.5759</td></tr>
+<tr><td>GRU [fused]</td><td>0.5359</td><td>0.5238</td><td>0.5568</td></tr>
+<tr><td>PatchTST [fused]</td><td>0.5112</td><td>0.3679</td><td>0.5553</td></tr>
+<tr><td>Chronos-zeroshot</td><td>0.4266</td><td>0.3617</td><td>0.5538</td></tr>
+<tr><td>LSTM [embedded]</td><td>0.5128</td><td>0.5317</td><td>0.5429</td></tr>
+<tr><td>XGBoost [fused]</td><td>0.5396</td><td>0.5373</td><td>0.5417</td></tr>
+<tr><td>LSTM [fused]</td><td>0.4724</td><td>0.4427</td><td>0.5402</td></tr>
+<tr><td>Chronos-tuned</td><td>0.4492</td><td>0.4181</td><td>0.5381</td></tr>
+<tr><td>TFT [cov=scored]</td><td>0.5524</td><td>0.5033</td><td>0.5366</td></tr>
+<tr><td>XGBoost [embedded]</td><td>0.5217</td><td>0.5289</td><td>0.5347</td></tr>
+<tr><td>TCN [fused]</td><td>0.5303</td><td>0.5280</td><td>0.5318</td></tr>
+<tr><td>TCN [scored]</td><td>0.5669</td><td>0.5281</td><td>0.5310</td></tr>
+<tr><td>TFT [cov=none]</td><td>0.5386</td><td>0.5212</td><td>0.5296</td></tr>
+<tr><td>GRU [scored]</td><td>0.5755</td><td>0.4118</td><td>0.5289</td></tr>
+<tr><td>PatchTST [embedded]</td><td>0.4726</td><td>0.3831</td><td>0.5283</td></tr>
+<tr><td>PatchTST [scored]</td><td>0.4541</td><td>0.4415</td><td>0.5208</td></tr>
+<tr><td>NHiTS [cov=none]</td><td>0.4808</td><td>0.4812</td><td>0.5157</td></tr>
+<tr><td>PatchTST [fused]</td><td>0.5040</td><td>0.5120</td><td>0.5126</td></tr>
+<tr><td>NBEATS</td><td>0.5227</td><td>0.5080</td><td>0.5105</td></tr>
+<tr><td>TCN [scored]</td><td>0.5422</td><td>0.4992</td><td>0.5094</td></tr>
+<tr><td>NHiTS [cov=scored]</td><td>0.4830</td><td>0.5033</td><td>0.5087</td></tr>
+<tr><td>XGBoost [scored]</td><td>0.5338</td><td>0.5044</td><td>0.5079</td></tr>
+<tr><td>LSTM [scored]</td><td>0.5204</td><td>0.3918</td><td>0.5041</td></tr>
+<tr><td>XGBoost [scored]</td><td>0.5129</td><td>0.4997</td><td>0.5035</td></tr>
+<tr><td>PatchTST [scored]</td><td>0.5270</td><td>0.4321</td><td>0.5035</td></tr>
+<tr><td>TCN [embedded]</td><td>0.4675</td><td>0.4275</td><td>0.5022</td></tr>
+<tr><td>TFT [cov=scored]</td><td>0.5119</td><td>0.5002</td><td>0.5017</td></tr>
+<tr><td>NBEATS</td><td>0.5106</td><td>0.4980</td><td>0.4983</td></tr>
+<tr><td>LSTM [scored]</td><td>0.5125</td><td>0.4938</td><td>0.4958</td></tr>
+<tr><td>GRU [embedded]</td><td>0.5091</td><td>0.3414</td><td>0.4910</td></tr>
+<tr><td>NHiTS [cov=none]</td><td>0.4837</td><td>0.4894</td><td>0.4895</td></tr>
+<tr><td>NHiTS [cov=scored]</td><td>0.4835</td><td>0.4869</td><td>0.4869</td></tr>
+<tr><td>GRU [embedded]</td><td>0.4642</td><td>0.4593</td><td>0.4820</td></tr>
+<tr><td>LSTM [fused]</td><td>0.5115</td><td>0.4797</td><td>0.4802</td></tr>
+<tr><td>TCN [fused]</td><td>0.4552</td><td>0.4667</td><td>0.4709</td></tr>
+<tr><td>LSTM [embedded]</td><td>0.4715</td><td>0.3840</td><td>0.4706</td></tr>
+<tr><td>GRU [fused]</td><td>0.4679</td><td>0.4401</td><td>0.4669</td></tr>
+<tr><td>GRU [scored]</td><td>0.4967</td><td>0.4221</td><td>0.4644</td></tr>
+<tr><td>PatchTST [embedded]</td><td>0.4552</td><td>0.4492</td><td>0.4513</td></tr>
+<tr><td>TCN [embedded]</td><td>0.5327</td><td>0.3269</td><td>0.4238</td></tr>
+</tbody></table>
+<p><em>Table 11: Unified out-of-sample leaderboard (40+ tuned cells). Coverage: 23 model configurations ran, 21 cached, 2 skipped.</em></p>
+<p><strong>Best by ROC-AUC (the headline criterion):</strong> <code>GRU [scored]</code> — ROC-AUC = <strong>0.5755</strong>, F1 = 0.4118. <strong>Best by accuracy:</strong> <code>TFT [cov=none]</code> — accuracy = <strong>0.5916</strong>.</p>
+<h3>4.3 Data Analysis and Interpretation</h3>
+<p>Reading <strong>across all six tracks</strong> of §4.2, several consistent patterns emerge.</p>
+<ol>
+<li><strong>Every track converges on near-chance.</strong> Whether trees (§4.2.1–4.2.2,</li>
+</ol>
+<p>   §4.2.5), transformers (§4.2.4), LSTMs (§4.2.3, §4.2.5–4.2.6), or foundation    models (§4.2.8), ROC-AUC clusters around 0.50 (≈ 0.43–0.59) and balanced    accuracy hovers near 0.50. The hardened score-LSTM is the cleanest statement    of this: accuracy 0.500, ROC-AUC 0.509, MCC 0.000 (§4.2.6).</p>
+<ol>
+<li><strong>The majority-class baseline is the real story.</strong> Baselines differ sharply</li>
+</ol>
+<p>   by split — 49.31% in the transformer notebook, 49.76% in the PoC, 56.42–</p>
+<p>   56.80% in the later windows — because the up-rate is window-dependent. On the    high-up-rate windows, <em>raw accuracy near 57% does not beat "always predict    up."</em> Several models that look respectable on accuracy (e.g. tuned LSTM</p>
+<p>   0.4553, ensemble 0.4596 in §4.2.5) are in fact <strong>below</strong> their baseline.</p>
+<ol>
+<li><strong>Accuracy, ROC-AUC, and baseline disagree.</strong> The unified grid's top-accuracy</li>
+</ol>
+<p>   model (<code>TFT [cov=none]</code>, 0.592) has only mediocre ROC-AUC (0.539) and low F1    (0.415) — the signature of leaning to the majority class. The top-ROC-AUC    model (<code>GRU [scored]</code>, 0.576) is mid-table on accuracy. Reporting a single    metric would mislead; the multi-metric view is essential.</p>
+<ol>
+<li><strong>No data-type or model family dominates.</strong> <code>scored</code>, <code>embedded</code>, and <code>fused</code></li>
+</ol>
+<p>   views land in the same band; foundation models (Chronos zero-shot 0.427) do    not beat trained models; complex transformers do not beat simple    GRU/TCN/XGBoost. The feature-group ablation is telling: <strong>market-only features    match or beat news+market</strong>, and <strong>news-only is the weakest</strong> (§4.2.2, §4.2.4).    Capacity is not the bottleneck; <strong>signal is.</strong></p>
+<ol>
+<li><strong>Significance is essentially never reached.</strong> Across the PoC, transformer,</li>
+</ol>
+<p>   and feature-comparison notebooks, every permutation/binomial test returns    p &gt; 0.05. The single closest call — LGBM "Top sources + Other", `p_perm =</p>
+<p>   0.052` (§4.2.2) — has a bootstrap CI that straddles its baseline, and is not    robust under walk-forward (2/5 folds positive) or multi-seed (mean gap    +0.7pp) checks.</p>
+<h3>4.4 Comparison with Existing Approaches</h3>
+<p><strong>Internal comparison across tracks.</strong> The notebook tracks (§4.2.1–4.2.5) and the hardened package (§4.2.6, §4.2.8) tell a consistent story, but the package numbers are the trustworthy ones. The exploratory notebooks vary their splits and baselines and occasionally show small positive gaps on a single favorable window; the hardened, fixed-window package run flattens these to near-chance. This is exactly the expected effect of removing window-selection freedom and tightening leakage controls — the transformer notebook's own ≥58% success criterion is <strong>not met</strong> anywhere, and its printed verdict already anticipates that "TA-125 direction at daily frequency may not be predictable from news sentiment + market features alone."</p>
+<p><strong>Comparison with the literature.</strong> The magnitude of the effect is consistent with the consensus that <strong>news-tone signal for next-day index direction is small and fragile</strong>, and that much of the apparent predictability reported elsewhere stems from evaluation leakage or favorable-period selection. The Buy&amp;Hold benchmark included in the unified grid contextualizes that none of the directional models offers a dependable economic edge over simply holding the index. Notably, the feature-importance breakdown (News ≈ 79% of total importance, §4.2.2) shows the models <em>do</em> lean on the news features — they simply do not convert that into out-of-sample skill.</p>
+<h3>4.5 Discussion of Findings</h3>
+<p>The honest interpretation is that, <strong>on its own and at daily resolution, the LLM-scored Hebrew-news stream carries little reliable next-day directional signal for the TA-125.</strong> This is not a failure of engineering but a substantive empirical result, and it is credible <em>because</em> of the leakage controls: the pipeline was specifically built to make it hard to fool oneself.</p>
+<p>The project's lasting value is methodological. It delivers (a) a reproducible, auditable, leakage-safe pipeline spanning scraping, LLM scoring, feature engineering, and a tuned model zoo; (b) a uniform, resumable comparison framework; and (c) a quantified, multi-metric baseline against which future richer signals (intraday data, magnitude targets, alternative LLM scoring schemes, longer horizons) can be measured. Limitations include the close-to-close-only target, daily resolution, the all-zero LLM rows, and the mixed scoring-model history — each a concrete lever for future work.</p>
+<hr/>
+<h2>5. Conclusion and Future Work</h2>
+<p><strong>Conclusion.</strong> SentiSense set out to test whether LLM-distilled Hebrew-news sentiment can predict next-day TA-125 direction. It produced a complete, leakage-hardened, reproducible system — scraper, LLM scorer, ~1.9M-row scored corpus, daily feature engineering, embeddings, causal narrative clustering, and a tuned zoo of 40+ model configurations — and evaluated them rigorously on a sacred out-of-sample window bounded by a hard <code>2023-10-07</code> cutoff. The result is a small, fragile edge at best (top ROC-AUC 0.576, top accuracy 0.592), broadly indistinguishable from chance. The contribution is therefore a <strong>trustworthy negative-leaning baseline plus a reusable research platform</strong>, not a profitable predictor.</p>
+<p><strong>Future work.</strong></p>
+<ol>
+<li><strong>Richer targets.</strong> Persist TA-125 OHLC to enable overnight-gap and</li>
+</ol>
+<p>   intraday-return (magnitude) targets, which may carry more news signal than    close-to-close direction.</p>
+<ol>
+<li><strong>Longer horizons &amp; event studies.</strong> Test weekly direction and event-window</li>
+</ol>
+<p>   responses around high-impact (very negative + high-security-relevance)    headlines.</p>
+<ol>
+<li><strong>Better signal extraction.</strong> Per-source credibility weighting, headline</li>
+</ol>
+<p>   embeddings fed as PCA-reduced covariates to forecasters, and improved LLM    prompts that reduce the all-zero failure mode.</p>
+<ol>
+<li><strong>Robustness.</strong> Multi-seed ablations (≥3 seeds, mean±std), walk-forward</li>
+</ol>
+<p>   evaluation across multiple windows, and statistical significance testing of    the small observed edges.</p>
+<ol>
+<li><strong>Operationalization.</strong> Wire the empty <code>daily_features</code> / <code>model_predictions</code></li>
+</ol>
+<p>   tables into a scheduled daily prediction job with a monitoring dashboard    (the planned fifth module).</p>
+<hr/>
+<h2>6. References</h2>
+<p>[1] P. C. Tetlock, "Giving Content to Investor Sentiment: The Role of Media in the Stock Market," <em>Journal of Finance</em>, vol. 62, no. 3, pp. 1139–1168, 2007.</p>
+<p>[2] J. Bollen, H. Mao, and X. Zeng, "Twitter mood predicts the stock market," <em>Journal of Computational Science</em>, vol. 2, no. 1, pp. 1–8, 2011.</p>
+<p>[3] T. Loughran and B. McDonald, "When Is a Liability Not a Liability? Textual Analysis, Dictionaries, and 10-Ks," <em>Journal of Finance</em>, vol. 66, no. 1, pp. 35–65, 2011.</p>
+<p>[4] T. Chen and C. Guestrin, "XGBoost: A Scalable Tree Boosting System," in <em>Proc. KDD</em>, 2016, pp. 785–794.</p>
+<p>[5] S. Hochreiter and J. Schmidhuber, "Long Short-Term Memory," <em>Neural Computation</em>, vol. 9, no. 8, pp. 1735–1780, 1997.</p>
+<p>[6] K. Cho et al., "Learning Phrase Representations using RNN Encoder–Decoder for Statistical Machine Translation," in <em>Proc. EMNLP</em>, 2014.</p>
+<p>[7] S. Bai, J. Z. Kolter, and V. Koltun, "An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling," arXiv:1803.01271,</p>
+<p>2018.</p>
+<p>[8] B. Lim et al., "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting," <em>International Journal of Forecasting</em>, vol. 37, no. 4, pp. 1748–1764, 2021.</p>
+<p>[9] Y. Nie et al., "A Time Series is Worth 64 Words: Long-term Forecasting with Transformers (PatchTST)," in <em>Proc. ICLR</em>, 2023.</p>
+<p>[10] B. N. Oreshkin et al., "N-BEATS: Neural basis expansion analysis for interpretable time series forecasting," in <em>Proc. ICLR</em>, 2020.</p>
+<p>[11] C. Challu et al., "N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting," in <em>Proc. AAAI</em>, 2023.</p>
+<p>[12] A. F. Ansari et al., "Chronos: Learning the Language of Time Series," <em>Transactions on Machine Learning Research</em>, 2024.</p>
+<p>[13] A. Das et al., "A decoder-only foundation model for time-series forecasting (TimesFM)," in <em>Proc. ICML</em>, 2024.</p>
+<p>[14] L. Wang et al., "Text Embeddings by Weakly-Supervised Contrastive Pre-training (E5 / multilingual-E5)," arXiv:2212.03533, 2022.</p>
+<hr/>
+<h2>7. Appendix A — Data Dictionary, Schema, and Commands</h2>
+<h3>A.1 Database schema (PostgreSQL 16)</h3>
+<p><code>raw_headlines</code> — one row per scraped headline (source of truth): <code>id</code> (PK), <code>date</code>, <code>source</code>, <code>hour</code>, <code>popularity</code>, <code>headline</code> (Hebrew, UTF-8), <code>created_at</code>, <code>headline_hash</code> (<code>md5(headline)</code>, stored). Unique on <code>(date, source, hour, headline_hash)</code>.</p>
+<p><code>nlp_vectors</code> — one row per <code>(headline, model)</code>: <code>id</code> (PK), <code>headline_id</code> (FK), <code>model_name</code>, six <code>relevance_*</code> SMALLINT (0–10), <code>global_sentiment</code> SMALLINT (−10…+10), <code>validation_passed</code> BOOLEAN, <code>processing_time_seconds</code>, <code>errors</code> TEXT[], <code>created_at</code>. Unique on <code>(headline_id, model_name)</code>.</p>
+<p><code>daily_features</code> — per-day aggregate vector (schema exists; first written by the feature layer). <code>model_predictions</code> — inference log (schema exists).</p>
+<h3>A.2 Score-scale reference</h3>
+<ul>
+<li><strong>Relevance</strong> (six columns): integer 0–10; higher = more relevant to that</li>
+</ul>
+<p>  category.</p>
+<ul>
+<li><strong>Sentiment</strong> (<code>global_sentiment</code>): integer −10 (very negative) … +10 (very</li>
+</ul>
+<p>  positive); 0 = neutral/mixed.</p>
+<ul>
+<li><strong><code>validation_passed</code></strong>: TRUE = parseable, in-range LLM output. Always filter</li>
+</ul>
+<p>  on TRUE (and on the active <code>model_name</code>) for analysis.</p>
+<h3>A.3 Reproduction commands</h3>
+<pre><code>
+# 0 — database (schema auto-initialises from scripts/init_db.sql)
+docker compose up -d
+
+# 1 — scrape headlines
+cd mivzakim_scraper &amp;&amp; uv sync &amp;&amp; uv run playwright install firefox &amp;&amp; uv run python main.py
+
+# 2 — score unscored headlines into nlp_vectors
+cd processing_engine &amp;&amp; uv sync
+uv run python ../scripts/process_headlines.py --fast --headlines-per-call 50 --concurrency 50
+
+# 3 — forecast (Phase 2&amp;3): features → embeddings → models → leaderboard
+uv sync --extra ml --extra embed --extra finance        # at repo root
+uv run python -m sentisense.pipeline --from features     # leakage-safe, ≤ 2023-10-07
+
+# 4 — full comparison leaderboard (server, run in tmux)
+uv sync --extra ml --extra finance --extra embed --extra tft --extra chronos
+uv run python scripts/pipeline_compare.py --seq-trials 30 --pf-trials 12 --xgb-trials 60
+</code></pre>
+<h3>A.4 Repository map</h3>
+<pre><code>
+mivzakim_scraper/   Playwright scraper for mivzakim.net (Hebrew news)
+processing_engine/  LLM scoring pipeline (fast single-prompt + 7-agent LangGraph)
+sentisense/         Phase 2&amp;3 forecasting package
+  constants.py        cutoff, model name, score contract
+  config.py           modeling/HPO knobs (env-overridable)
+  db/                 SQLAlchemy engine (env-only DSN)
+  ingest/             backfill · score · coverage report
+  features/           leak-safe daily dataset assembly
+  embed/              multilingual-e5 headline embeddings + cache
+  cluster/            causal expanding-window narrative clustering
+  models/             sequence datasets, train harness, model zoo, baselines
+  hpo/                resumable Optuna HPO + sacred-holdout eval
+  pipeline.py         end-to-end orchestrator
+evaluation/         LLM-scoring benchmark vs golden dataset
+scripts/            init_db.sql · backfill · process/retry/standardize · compare
+tests/              pytest — cutoff, leakage, calendar rollover, connection
+docs/               RUNBOOK · MODEL_ZOO · VECTORDB · sentisense-understanding
+*.ipynb             eda · poc · lstm_forecaster · tuning · transformer_forecaster
+</code></pre>
+<p><em>End of first version. Author name, date, and any institution-specific front matter are placeholders to be completed before submission.</em></p>
+</body></html>
