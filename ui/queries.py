@@ -51,10 +51,14 @@ _HEADLINES_FOR_DATE = text(
     """
     SELECT rh.id, rh.date, rh.source, rh.hour, rh.headline,
            nv.global_sentiment, nv.validation_passed,
+           nv.relevance_politics, nv.relevance_economy, nv.relevance_security,
+           nv.relevance_health, nv.relevance_science, nv.relevance_technology,
            (nv.headline_id IS NOT NULL) AS scored
     FROM raw_headlines rh
     LEFT JOIN LATERAL (
-        SELECT v.headline_id, v.global_sentiment, v.validation_passed
+        SELECT v.headline_id, v.global_sentiment, v.validation_passed,
+               v.relevance_politics, v.relevance_economy, v.relevance_security,
+               v.relevance_health, v.relevance_science, v.relevance_technology
         FROM nlp_vectors v
         WHERE v.headline_id = rh.id AND v.validation_passed
         ORDER BY (v.model_name = :model) DESC, v.id DESC

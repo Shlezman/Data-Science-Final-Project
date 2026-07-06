@@ -96,12 +96,25 @@ def dashboard() -> dict:
     aren't empty until the new champion writes its first daily row.
     """
     version, model_type = _active_served()
-    rows = queries.prediction_rows(version=version)
-    history_scope = "active"
+    active_rows = queries.prediction_rows(version=version)
+    rows, history_scope = active_rows, "active"
     if not rows:
         rows = queries.prediction_rows(version=None)
         history_scope = "all"
     cm = queries.confusion_matrix(rows)
+    ev = queries.active_model_metrics()
+
+    # Cumulative score: seed with the model's held-out evaluation, then fold in each settled
+    # LIVE day of the SAME model (never other versions' history — that would launder lineage).
+    combined = None
+    if ev and ev.get("accuracy") is not None and ev.get("n"):
+        cm_active = queries.confusion_matrix(active_rows) if active_rows else None
+        live_ok = (cm_active["tp"] + cm_active["tn"]) if cm_active else 0
+        live_n = cm_active["n"] if cm_active else 0
+        n_all = ev["n"] + live_n
+        combined = {"accuracy": round((ev["accuracy"] * ev["n"] + live_ok) / n_all, 4),
+                    "n": n_all, "n_eval": ev["n"], "n_live": live_n}
+
     day = queries.latest_date()
     latest = queries.headlines_for_date(day=day, page=0, page_size=100) if day else {"headlines": []}
     recent = [{"date": str(r["date"]), "prediction": bool(r["prediction"]),
@@ -109,8 +122,8 @@ def dashboard() -> dict:
                "actual": (None if r["actual"] is None else bool(r["actual"]))}
               for r in rows[:60]]
     return {"champion": version, "model_type": model_type, "confusion": cm, "recent": recent,
-            "history_scope": history_scope,
-            "eval_metrics": queries.active_model_metrics(), "latest_headlines": latest}
+            "history_scope": history_scope, "combined": combined,
+            "eval_metrics": ev, "latest_headlines": latest}
 
 
 @app.get("/api/prediction/today")

@@ -119,6 +119,8 @@ export default function Dashboard() {
 
   const c = dashboard.confusion || {};
   const ev = dashboard.eval_metrics || null;
+  const combined = dashboard.combined || null;
+  const liveN = combined?.n_live ?? 0;
   const recent = dashboard.recent || [];
   const latest = dashboard.latest_headlines || {};
 
@@ -134,23 +136,27 @@ export default function Dashboard() {
         </h2>
         <p className="ss-muted">Serving: {dashboard.champion || '—'}</p>
         <p className="ss-section-title">
-          Metrics <span className="ss-tag">Live / settled</span>
-          {dashboard.history_scope === 'all'
-            ? <span className="ss-tag">all models — new champion has no live rows yet</span>
-            : null}
+          Metrics <span className="ss-tag">Overall (eval + live)</span>
         </p>
         <div className="ss-stat-grid">
-          <Stat label="Accuracy" value={metric(c.accuracy)}
-                sub={ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null} />
-          <Stat label="Precision" value={metric(c.precision)} />
-          <Stat label="Recall" value={metric(c.recall)} />
-          <Stat label="F1" value={metric(c.f1)} />
-          <Stat label="MCC" value={metric(c.mcc)}
-                sub={ev?.mcc != null ? `eval ${metric(ev.mcc)}` : null} />
+          <Stat label="Accuracy"
+                value={combined ? metric(combined.accuracy) : metric(c.accuracy)}
+                sub={combined
+                  ? `eval ${metric(ev.accuracy)} + ${combined.n_live} live day${combined.n_live === 1 ? '' : 's'}`
+                  : (ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null)} />
+          <Stat label="MCC"
+                value={liveN > 0 ? metric(c.mcc) : (ev?.mcc != null ? metric(ev.mcc) : '—')}
+                sub={liveN > 0 && ev?.mcc != null ? `eval ${metric(ev.mcc)}` : (liveN === 0 ? 'eval' : null)} />
           <Stat label="ROC-AUC" value={ev?.roc_auc != null ? metric(ev.roc_auc) : '—'}
                 sub={ev?.roc_auc != null ? 'eval' : null} />
-          <Stat label="N" value={c.n ?? 0}
-                sub={ev?.n != null ? `eval n ${ev.n}` : null} />
+          <Stat label="Precision" value={liveN > 0 ? metric(c.precision) : '—'}
+                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
+          <Stat label="Recall" value={liveN > 0 ? metric(c.recall) : '—'}
+                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
+          <Stat label="F1" value={liveN > 0 ? metric(c.f1) : '—'}
+                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
+          <Stat label="N" value={combined ? combined.n : (c.n ?? 0)}
+                sub={combined ? `${combined.n_eval} eval + ${combined.n_live} live` : null} />
           <Stat label="Pending" value={c.pending ?? 0} />
         </div>
       </div>
