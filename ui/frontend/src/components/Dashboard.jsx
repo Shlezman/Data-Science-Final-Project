@@ -133,7 +133,12 @@ export default function Dashboard() {
           {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
         </h2>
         <p className="ss-muted">Serving: {dashboard.champion || '—'}</p>
-        <p className="ss-section-title">Metrics <span className="ss-tag">Live / settled</span></p>
+        <p className="ss-section-title">
+          Metrics <span className="ss-tag">Live / settled</span>
+          {dashboard.history_scope === 'all'
+            ? <span className="ss-tag">all models — new champion has no live rows yet</span>
+            : null}
+        </p>
         <div className="ss-stat-grid">
           <Stat label="Accuracy" value={metric(c.accuracy)}
                 sub={ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null} />

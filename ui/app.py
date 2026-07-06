@@ -89,9 +89,18 @@ def _active_served() -> tuple[str, str]:
 
 @app.get("/api/dashboard")
 def dashboard() -> dict:
-    """Served-model accuracy + confusion matrix (its predictions) + live last-day headlines."""
+    """Served-model accuracy + live metrics (its predictions) + live last-day headlines.
+
+    When the ACTIVE model is freshly promoted it has no prediction rows yet — fall back to the
+    all-model prediction history (``history_scope='all'``) so the recent table and live metrics
+    aren't empty until the new champion writes its first daily row.
+    """
     version, model_type = _active_served()
     rows = queries.prediction_rows(version=version)
+    history_scope = "active"
+    if not rows:
+        rows = queries.prediction_rows(version=None)
+        history_scope = "all"
     cm = queries.confusion_matrix(rows)
     day = queries.latest_date()
     latest = queries.headlines_for_date(day=day, page=0, page_size=100) if day else {"headlines": []}
@@ -100,6 +109,7 @@ def dashboard() -> dict:
                "actual": (None if r["actual"] is None else bool(r["actual"]))}
               for r in rows[:60]]
     return {"champion": version, "model_type": model_type, "confusion": cm, "recent": recent,
+            "history_scope": history_scope,
             "eval_metrics": queries.active_model_metrics(), "latest_headlines": latest}
 
 
