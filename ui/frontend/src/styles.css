@@ -768,3 +768,23 @@ body {
 .ss-btn--ghost:hover {
   color: var(--ss-fg);
 }
+
+/* Per-headline relevance score chips (Archive + last-day list) */
+.ss-headline-scores {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.ss-score-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.ss-score-chip {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--ss-border);
+  background: var(--ss-surface-2);
+  color: var(--ss-fg-muted);
+  white-space: nowrap;
+}

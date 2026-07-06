@@ -17,16 +17,53 @@ from sentisense.db import get_engine
 
 ACTIVE_MODEL = os.environ.get("SENTISENSE_ACTIVE_MODEL", "mistral-small-4")
 
+_resolved_model_cache: str | None = None
+
+
+def resolved_model(engine=None) -> str:
+    """The nlp_vectors model name to filter on — self-healing.
+
+    Prefers ``SENTISENSE_ACTIVE_MODEL`` when it actually has validated rows on THIS database;
+    otherwise falls back to the model with the most validated rows. Cached per process so the
+    fallback scan runs once. Prevents every model-filtered panel (EDA, personas, sentiment
+    badges) from silently rendering empty when the env var and the data disagree.
+    """
+    global _resolved_model_cache
+    if _resolved_model_cache:
+        return _resolved_model_cache
+    engine = engine or get_engine()
+    probe = text("SELECT 1 FROM nlp_vectors WHERE model_name = :m AND validation_passed LIMIT 1")
+    top = text("SELECT model_name FROM nlp_vectors WHERE validation_passed "
+               "GROUP BY model_name ORDER BY COUNT(*) DESC LIMIT 1")
+    with engine.connect() as conn:
+        if conn.execute(probe, {"m": ACTIVE_MODEL}).first():
+            _resolved_model_cache = ACTIVE_MODEL
+        else:
+            row = conn.execute(top).first()
+            _resolved_model_cache = row[0] if row else ACTIVE_MODEL
+    return _resolved_model_cache
+
 _LATEST_DATE = text("SELECT MAX(date) AS d FROM raw_headlines")
 
+# The dataset spans two scoring eras (mistral history, gemma going forward), so day-scoped
+# views take ONE validated row per headline from ANY model, preferring the active one.
 _HEADLINES_FOR_DATE = text(
     """
     SELECT rh.id, rh.date, rh.source, rh.hour, rh.headline,
            nv.global_sentiment, nv.validation_passed,
+           nv.relevance_politics, nv.relevance_economy, nv.relevance_security,
+           nv.relevance_health, nv.relevance_science, nv.relevance_technology,
            (nv.headline_id IS NOT NULL) AS scored
     FROM raw_headlines rh
-    LEFT JOIN nlp_vectors nv
-           ON nv.headline_id = rh.id AND nv.model_name = :model
+    LEFT JOIN LATERAL (
+        SELECT v.headline_id, v.global_sentiment, v.validation_passed,
+               v.relevance_politics, v.relevance_economy, v.relevance_security,
+               v.relevance_health, v.relevance_science, v.relevance_technology
+        FROM nlp_vectors v
+        WHERE v.headline_id = rh.id AND v.validation_passed
+        ORDER BY (v.model_name = :model) DESC, v.id DESC
+        LIMIT 1
+    ) nv ON TRUE
     WHERE rh.date = :d
     ORDER BY rh.hour DESC NULLS LAST, rh.id DESC
     OFFSET :offset LIMIT :limit
@@ -60,7 +97,7 @@ def headlines_for_date(engine=None, *, day, page: int = 0, page_size: int = 50) 
     with engine.connect() as conn:
         total = conn.execute(_COUNT_FOR_DATE, {"d": day}).scalar() or 0
         rows = conn.execute(_HEADLINES_FOR_DATE, {
-            "model": ACTIVE_MODEL, "d": day, "offset": page * page_size, "limit": page_size,
+            "model": resolved_model(engine), "d": day, "offset": page * page_size, "limit": page_size,
         }).mappings().all()
     return {"date": str(day), "page": page, "page_size": page_size, "total": int(total),
             "headlines": [dict(r) for r in rows]}
@@ -150,6 +187,7 @@ _CENTROIDS = text(
            (d.features->>'embpca_000')::float AS x,
            (d.features->>'embpca_001')::float AS y,
            (d.features->>'embpca_002')::float AS z,
+           d.features AS features,
            e.actual AS actual,
            COALESCE(v.n, 0) AS n_headlines
     FROM daily_embedding_derived d
@@ -162,6 +200,20 @@ _CENTROIDS = text(
     ORDER BY d.date
     """
 )
+
+
+def _cluster_of(features: dict) -> int | None:
+    """The KMeans cluster a day belongs to = argmin over its ``embclus_dist_*`` features."""
+    dists = {}
+    for key, val in (features or {}).items():
+        if key.startswith("embclus_dist_") and val is not None:
+            try:
+                dists[int(key.rsplit("_", 1)[1])] = float(val)
+            except (TypeError, ValueError):
+                continue
+    if not dists:
+        return None
+    return min(dists, key=dists.get)
 
 
 def full_eval_rows(engine=None, *, version=None) -> list[dict]:
@@ -186,7 +238,7 @@ def today_prediction(engine=None) -> dict | None:
 def eda_aggregates(engine=None) -> dict:
     """Server-side EDA aggregates for the dashboard panels (efficient SQL, not full-table pandas)."""
     engine = engine or get_engine()
-    m = {"model": ACTIVE_MODEL}
+    m = {"model": resolved_model(engine)}
     with engine.connect() as conn:
         volume = [{"date": str(r["date"]), "count": int(r["n"])}
                   for r in conn.execute(_EDA_VOLUME).mappings()]
@@ -209,18 +261,92 @@ def eda_aggregates(engine=None) -> dict:
     return {"volume": volume, "sentiment_ts": sent_ts, "sentiment_hist": sent_hist,
             "relevance_hist": rel_hist, "category_corr": {"labels": _CORR_LABELS, "matrix": matrix},
             "validation": {"passed": passed, "failed": failed,
-                           "rate": round(passed / total, 4) if total else 0.0}}
+                           "rate": round(passed / total, 4) if total else 0.0},
+            "meta": {"model_used": m["model"], "env_model": ACTIVE_MODEL,
+                     "n_volume": len(volume), "n_sentiment_ts": len(sent_ts),
+                     "n_sentiment_hist": len(sent_hist)}}
+
+
+_ACTIVE_METRICS = text(
+    """
+    SELECT version, model_type, oos_accuracy, oos_mcc, oos_roc_auc, oos_n
+    FROM model_registry WHERE is_active LIMIT 1
+    """
+)
+
+
+def active_model_metrics(engine=None) -> dict | None:
+    """The ACTIVE registry model's held-out evaluation scores (no artifact bytes).
+
+    Lightweight companion to ``registry.get_active`` — the dashboard annotates its live metric
+    boxes with these, so it must not drag the multi-MB artifact over the wire. None when the
+    registry table is absent or nothing is active.
+    """
+    engine = engine or get_engine()
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(_ACTIVE_METRICS).mappings().first()
+    except Exception:  # noqa: BLE001 — registry not deployed on this DB yet
+        return None
+    if not row:
+        return None
+    return {"version": row["version"], "model_type": row["model_type"],
+            "accuracy": (None if row["oos_accuracy"] is None else round(float(row["oos_accuracy"]), 4)),
+            "mcc": (None if row["oos_mcc"] is None else round(float(row["oos_mcc"]), 4)),
+            "roc_auc": (None if row["oos_roc_auc"] is None else round(float(row["oos_roc_auc"]), 4)),
+            "n": (None if row["oos_n"] is None else int(row["oos_n"]))}
+
+
+def _cluster_centers(engine) -> list[dict]:
+    """KMeans cluster centers projected into the embpca space → ``[{id, v: [n_pca]}]``.
+
+    Centers are stored in SCALED 768-d space (the KMeans fit space), so the projection skips
+    the scaler: ``(center - pca_mean) @ components.T`` — identical to how the day centroids got
+    their ``embpca_*`` coordinates. Empty list when the basis lacks centers (pre-upgrade row).
+    """
+    import json as _json
+
+    import numpy as np
+
+    with engine.connect() as conn:
+        b = conn.execute(_BASIS).mappings().first()
+    b = dict(b) if b else {}
+    if not b.get("kmeans_centers") or not b.get("n_clusters"):
+        return []
+    nf, k = int(b["n_features"]), int(b["n_clusters"])
+    centers = np.frombuffer(b["kmeans_centers"], dtype=np.float32).reshape(k, nf)
+    pmean = np.frombuffer(b["pca_mean"], dtype=np.float32)
+    comps = np.frombuffer(b["pca_components"], dtype=np.float32).reshape(int(b["n_pca"]), nf)
+    proj = (centers - pmean) @ comps.T
+    return [{"id": i, "v": [round(float(x), 4) for x in proj[i]]} for i in range(k)]
 
 
 def centroid_points(engine=None) -> dict:
-    """Per-day 3D news centroids (leak-safe embpca_000..002) + actual up/down + headline count."""
+    """Per-day 3D news centroids + actual up/down + headline count + KMeans cluster.
+
+    ``cluster`` = argmin over the day's stored ``embclus_dist_*`` (the grouping the pipeline
+    actually fit); ``clusters`` = the KMeans centers projected into the same embpca space so
+    the UI can draw them. Both degrade to None/[] when the derived/basis data is absent.
+    """
     engine = engine or get_engine()
     with engine.connect() as conn:
         rows = conn.execute(_CENTROIDS).mappings().all()
-    points = [{"date": str(r["date"]), "x": float(r["x"]), "y": float(r["y"]), "z": float(r["z"]),
-               "actual": (None if r["actual"] is None else bool(r["actual"])),
-               "n_headlines": int(r["n_headlines"])} for r in rows]
-    return {"points": points}
+    points = []
+    for r in rows:
+        feats = r["features"]
+        if isinstance(feats, str):
+            import json as _json
+            feats = _json.loads(feats)
+        points.append({"date": str(r["date"]), "x": float(r["x"]), "y": float(r["y"]),
+                       "z": float(r["z"]),
+                       "actual": (None if r["actual"] is None else bool(r["actual"])),
+                       "n_headlines": int(r["n_headlines"]),
+                       "cluster": _cluster_of(feats)})
+    try:
+        clusters = _cluster_centers(engine)
+    except Exception:  # noqa: BLE001 — basis table absent → clusters just don't render
+        clusters = []
+    return {"points": points, "clusters": clusters}
 
 
 _BASIS = text("SELECT * FROM embedding_pca_basis ORDER BY created_at DESC LIMIT 1")
@@ -230,8 +356,13 @@ _DAY_EMBED = text(
            nv.global_sentiment AS sentiment
     FROM headline_embeddings he
     JOIN raw_headlines rh ON rh.id = he.headline_id
-    LEFT JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
-                             AND nv.validation_passed
+    LEFT JOIN LATERAL (
+        SELECT v.global_sentiment
+        FROM nlp_vectors v
+        WHERE v.headline_id = rh.id AND v.validation_passed
+        ORDER BY (v.model_name = :model) DESC, v.id DESC
+        LIMIT 1
+    ) nv ON TRUE
     WHERE rh.date = :d AND he.embed_model = :em
     ORDER BY he.headline_id
     LIMIT :cap
@@ -261,7 +392,7 @@ def day_centroid_points(engine=None, *, day) -> dict:
             return {"date": str(day), "points": [], "centroid": None,
                     "error": "no PCA basis — rerun scripts/build_embedding_derived.py"}
         rows = conn.execute(_DAY_EMBED, {"d": day, "em": b["embed_model"],
-                                         "model": ACTIVE_MODEL, "cap": _DAY_POINT_CAP}).mappings().all()
+                                         "model": resolved_model(engine), "cap": _DAY_POINT_CAP}).mappings().all()
     if not rows:
         return {"date": str(day), "points": [], "centroid": None,
                 "error": "no embeddings stored for that date"}
@@ -293,8 +424,14 @@ _PERSONA_SOURCES = text(
     SELECT rh.source AS source, COUNT(*) AS n,
            AVG(nv.global_sentiment)::float AS mean_sentiment
     FROM raw_headlines rh
-    JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
-                        AND nv.validation_passed AND nv.global_sentiment IS NOT NULL
+    JOIN LATERAL (
+        SELECT v.global_sentiment
+        FROM nlp_vectors v
+        WHERE v.headline_id = rh.id AND v.validation_passed
+          AND v.global_sentiment IS NOT NULL
+        ORDER BY (v.model_name = :model) DESC, v.id DESC
+        LIMIT 1
+    ) nv ON TRUE
     WHERE rh.date = :d
     GROUP BY rh.source
     HAVING COUNT(*) >= :min_n
@@ -333,7 +470,7 @@ def persona_votes(engine=None, *, day, top: int = 12, min_n: int = 3) -> dict:
     engine = engine or get_engine()
     with engine.connect() as conn:
         rows = conn.execute(_PERSONA_SOURCES,
-                            {"d": day, "model": ACTIVE_MODEL, "min_n": min_n, "top": top}
+                            {"d": day, "model": resolved_model(engine), "min_n": min_n, "top": top}
                             ).mappings().all()
         pred = conn.execute(_PERSONA_PRED, {"d": day}).mappings().first()
     personas = [{"source": r["source"], "n": int(r["n"]),

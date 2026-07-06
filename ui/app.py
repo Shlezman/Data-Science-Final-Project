@@ -62,34 +62,68 @@ def _sim_modes() -> list[str]:
 
 @app.get("/api/health")
 def health() -> dict:
-    """Last orchestrator run status + the served champion version."""
-    from sentisense.serve.champion import load_champion
-
+    """Last orchestrator run status + the ACTIVE served model (registry winner, else pinned)."""
     status = {}
     if _STATUS_PATH.exists():
         try:
             status = json.loads(_STATUS_PATH.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             status = {"error": "unreadable status file"}
-    return {"ok": True, "champion": load_champion().get("version"), "last_run": status}
+    version, model_type = _active_served()
+    return {"ok": True, "champion": version, "model_type": model_type, "last_run": status}
+
+
+def _active_served() -> tuple[str, str]:
+    """(version, model_type) currently serving — active registry model, else pinned champion."""
+    from sentisense.serve.champion import load_champion
+
+    try:
+        from sentisense.serve import registry
+        active = registry.get_active()
+        if active:
+            return active["version"], active["model_type"]
+    except Exception:  # noqa: BLE001 — registry table may not exist yet
+        pass
+    return load_champion().get("version"), "pinned"
 
 
 @app.get("/api/dashboard")
 def dashboard() -> dict:
-    """Champion accuracy + confusion matrix (settled predictions) + live last-day headlines."""
-    from sentisense.serve.champion import load_champion
+    """Served-model accuracy + live metrics (its predictions) + live last-day headlines.
 
-    champ = load_champion()
-    rows = queries.prediction_rows(version=champ.get("version"))
+    When the ACTIVE model is freshly promoted it has no prediction rows yet — fall back to the
+    all-model prediction history (``history_scope='all'``) so the recent table and live metrics
+    aren't empty until the new champion writes its first daily row.
+    """
+    version, model_type = _active_served()
+    active_rows = queries.prediction_rows(version=version)
+    rows, history_scope = active_rows, "active"
+    if not rows:
+        rows = queries.prediction_rows(version=None)
+        history_scope = "all"
     cm = queries.confusion_matrix(rows)
+    ev = queries.active_model_metrics()
+
+    # Cumulative score: seed with the model's held-out evaluation, then fold in each settled
+    # LIVE day of the SAME model (never other versions' history — that would launder lineage).
+    combined = None
+    if ev and ev.get("accuracy") is not None and ev.get("n"):
+        cm_active = queries.confusion_matrix(active_rows) if active_rows else None
+        live_ok = (cm_active["tp"] + cm_active["tn"]) if cm_active else 0
+        live_n = cm_active["n"] if cm_active else 0
+        n_all = ev["n"] + live_n
+        combined = {"accuracy": round((ev["accuracy"] * ev["n"] + live_ok) / n_all, 4),
+                    "n": n_all, "n_eval": ev["n"], "n_live": live_n}
+
     day = queries.latest_date()
     latest = queries.headlines_for_date(day=day, page=0, page_size=100) if day else {"headlines": []}
     recent = [{"date": str(r["date"]), "prediction": bool(r["prediction"]),
                "confidence": round(float(r["confidence"]), 4),
                "actual": (None if r["actual"] is None else bool(r["actual"]))}
               for r in rows[:60]]
-    return {"champion": champ.get("version"), "confusion": cm, "recent": recent,
-            "latest_headlines": latest}
+    return {"champion": version, "model_type": model_type, "confusion": cm, "recent": recent,
+            "history_scope": history_scope, "combined": combined,
+            "eval_metrics": ev, "latest_headlines": latest}
 
 
 @app.get("/api/prediction/today")
@@ -153,6 +187,28 @@ def personas(date: str) -> dict:
         logger.warning("/api/personas failed: {}", str(exc)[:300])
         return {"date": date, "personas": [], "general": None, "model": None,
                 "actual": None, "error": str(exc)[:200]}
+
+
+@app.get("/api/models")
+def models() -> dict:
+    """All registered models (metrics + which is active) for the Models tab."""
+    try:
+        from sentisense.serve import registry
+        rows = registry.list_models()
+        for r in rows:
+            r.pop("feature_cols", None)          # drop the ~970-col list from the payload
+        return {"models": rows}
+    except Exception as exc:  # noqa: BLE001 — registry table absent → empty list, not a 500
+        return {"models": [], "error": str(exc)[:200]}
+
+
+@app.post("/api/models/{version}/activate")
+def activate_model(version: str) -> JSONResponse:
+    """Manually set the active (served) model. Manual picks are sticky vs auto-selection."""
+    from sentisense.serve import registry
+    if not registry.set_active(version=version, by="manual"):
+        return JSONResponse({"error": f"model '{version}' not found"}, status_code=404)
+    return JSONResponse({"ok": True, "active": version})
 
 
 @app.get("/api/headlines/latest")

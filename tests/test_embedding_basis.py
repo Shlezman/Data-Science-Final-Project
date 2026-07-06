@@ -46,3 +46,33 @@ def test_persona_vote_thresholds():
     assert _vote(0.49) == "neutral"
     assert _vote(-0.49) == "neutral"
     assert _vote(-0.5) == "down"
+
+
+def test_cluster_of_argmin():
+    """Day cluster = argmin over embclus_dist_*; None when absent/malformed."""
+    from ui.queries import _cluster_of
+
+    feats = {"embpca_000": 1.0, "embclus_dist_0": 3.2, "embclus_dist_1": 0.9,
+             "embclus_dist_2": 2.7, "embclus_dist_3": 0.95}
+    assert _cluster_of(feats) == 1
+    assert _cluster_of({"embpca_000": 1.0}) is None
+    assert _cluster_of({}) is None
+    assert _cluster_of({"embclus_dist_0": None, "embclus_dist_1": 2.0}) == 1
+
+
+def test_center_projection_matches_pca_transform():
+    """Centers live in SCALED space → projection must equal pca.transform(centers)."""
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.default_rng(7)
+    X = rng.normal(size=(100, 24)).astype(np.float64)
+    Xs = StandardScaler().fit_transform(X)
+    pca = PCA(n_components=5, random_state=7).fit(Xs)
+    centers = rng.normal(size=(4, 24)).astype(np.float32)          # pretend KMeans centers (scaled space)
+
+    pmean = pca.mean_.astype(np.float32)
+    comps = pca.components_.astype(np.float32)
+    ours = (centers - pmean) @ comps.T
+    ref = pca.transform(centers.astype(np.float64))
+    np.testing.assert_allclose(ours, ref, rtol=1e-3, atol=1e-3)

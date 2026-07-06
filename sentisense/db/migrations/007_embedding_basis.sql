@@ -15,3 +15,9 @@ CREATE TABLE IF NOT EXISTS embedding_pca_basis (
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     CONSTRAINT pk_embedding_pca_basis PRIMARY KEY (embed_model)
 );
+
+-- KMeans cluster centers (the same fit that produced embclus_dist_*), in SCALED 768-d space —
+-- lets the UI draw the clusters the day centroids were grouped into. Additive so a
+-- pre-existing table upgrades in place.
+ALTER TABLE embedding_pca_basis ADD COLUMN IF NOT EXISTS n_clusters INTEGER;
+ALTER TABLE embedding_pca_basis ADD COLUMN IF NOT EXISTS kmeans_centers BYTEA;

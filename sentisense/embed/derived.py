@@ -86,6 +86,8 @@ def fit_transform_derived(centroid_by_date: pd.DataFrame, *, fit_cutoff,
         "scaler_scale": scaler.scale_.astype(np.float32),
         "pca_mean": pca.mean_.astype(np.float32),
         "pca_components": pca.components_.astype(np.float32),   # (n_pca, n_features)
+        "n_clusters": int(n_clusters),
+        "kmeans_centers": km.cluster_centers_.astype(np.float32),   # (k, n_features), SCALED space
     }
     return out, basis
 
@@ -145,13 +147,16 @@ def persist_derived(derived: pd.DataFrame, *, fit_cutoff, n_pca: int, n_clusters
 _BASIS_UPSERT = text(
     """
     INSERT INTO embedding_pca_basis
-        (embed_model, n_features, n_pca, fit_cutoff, scaler_mean, scaler_scale, pca_mean, pca_components)
-    VALUES (:model, :n_features, :n_pca, :fit_cutoff, :scaler_mean, :scaler_scale, :pca_mean, :pca_components)
+        (embed_model, n_features, n_pca, fit_cutoff, scaler_mean, scaler_scale, pca_mean,
+         pca_components, n_clusters, kmeans_centers)
+    VALUES (:model, :n_features, :n_pca, :fit_cutoff, :scaler_mean, :scaler_scale, :pca_mean,
+            :pca_components, :n_clusters, :kmeans_centers)
     ON CONFLICT (embed_model) DO UPDATE
         SET n_features = EXCLUDED.n_features, n_pca = EXCLUDED.n_pca,
             fit_cutoff = EXCLUDED.fit_cutoff, scaler_mean = EXCLUDED.scaler_mean,
             scaler_scale = EXCLUDED.scaler_scale, pca_mean = EXCLUDED.pca_mean,
-            pca_components = EXCLUDED.pca_components, created_at = NOW()
+            pca_components = EXCLUDED.pca_components, n_clusters = EXCLUDED.n_clusters,
+            kmeans_centers = EXCLUDED.kmeans_centers, created_at = NOW()
     """
 )
 
@@ -175,6 +180,9 @@ def persist_basis(basis: dict, *, engine=None, model: str = EMBED_MODEL) -> None
             "scaler_scale": basis["scaler_scale"].tobytes(),
             "pca_mean": basis["pca_mean"].tobytes(),
             "pca_components": basis["pca_components"].tobytes(),
+            "n_clusters": basis.get("n_clusters"),
+            "kmeans_centers": (basis["kmeans_centers"].tobytes()
+                               if basis.get("kmeans_centers") is not None else None),
         })
     logger.info("Persisted PCA basis (model={}, {}→{} dims, fit_cutoff={})",
                 model, basis["n_features"], basis["n_pca"], basis["fit_cutoff"])

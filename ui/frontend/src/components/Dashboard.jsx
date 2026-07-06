@@ -3,7 +3,6 @@ import { getJson } from '../lib/api.js';
 import { pct, direction, outcome } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
-import FullConfusion from './FullConfusion.jsx';
 import EdaPanels from './EdaPanels.jsx';
 import Centroids3D from './Centroids3D.jsx';
 
@@ -47,18 +46,21 @@ function LastRunBanner({ lastRun }) {
 }
 
 /**
- * Renders a single labeled statistic card.
+ * Renders a single labeled statistic card, optionally with a secondary line
+ * (e.g. the model's held-out evaluation score next to the live value).
  *
  * @param {object} props Component props.
  * @param {string} props.label The stat name.
  * @param {string|number} props.value The stat value.
+ * @param {string} [props.sub] Optional secondary line under the value.
  * @returns {JSX.Element} The stat card.
  */
-function Stat({ label, value }) {
+function Stat({ label, value, sub }) {
   return (
     <div className="ss-stat">
       <div className="label">{label}</div>
       <div className="value">{value}</div>
+      {sub ? <div className="label" style={{ marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }
@@ -77,44 +79,7 @@ function metric(value) {
 }
 
 /**
- * Renders the 2x2 confusion matrix from the dashboard `confusion` object.
- *
- * @param {object} props Component props.
- * @param {object} props.c The confusion counts (tp/tn/fp/fn).
- * @returns {JSX.Element} The matrix grid.
- */
-function ConfusionMatrix({ c }) {
-  return (
-    <div className="ss-confusion">
-      <span className="corner" />
-      <span className="axis">Actual up</span>
-      <span className="axis">Actual down</span>
-
-      <span className="axis">Pred up</span>
-      <div className="ss-cell tp">
-        <div className="cell-label">TP</div>
-        <div className="cell-value">{c.tp ?? 0}</div>
-      </div>
-      <div className="ss-cell fp">
-        <div className="cell-label">FP</div>
-        <div className="cell-value">{c.fp ?? 0}</div>
-      </div>
-
-      <span className="axis">Pred down</span>
-      <div className="ss-cell fn">
-        <div className="cell-label">FN</div>
-        <div className="cell-value">{c.fn ?? 0}</div>
-      </div>
-      <div className="ss-cell tn">
-        <div className="cell-label">TN</div>
-        <div className="cell-value">{c.tn ?? 0}</div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Dashboard view: champion + last-run banner, confusion matrix, stat cards,
+ * Dashboard view: served-model hero + last-run banner, metric stat cards,
  * recent predictions table, and the last-day live headlines list. Polls
  * /api/dashboard and /api/health every 60 seconds.
  *
@@ -153,6 +118,9 @@ export default function Dashboard() {
   }
 
   const c = dashboard.confusion || {};
+  const ev = dashboard.eval_metrics || null;
+  const combined = dashboard.combined || null;
+  const liveN = combined?.n_live ?? 0;
   const recent = dashboard.recent || [];
   const latest = dashboard.latest_headlines || {};
 
@@ -162,28 +130,35 @@ export default function Dashboard() {
       <LastRunBanner lastRun={health?.last_run} />
 
       <div className="ss-card">
-        <h2>Model performance</h2>
-        <p className="ss-muted">Champion: {dashboard.champion || '—'}</p>
-        <div className="ss-graph-wrap">
-          <div style={{ flex: '0 0 auto' }}>
-            <p className="ss-section-title">Confusion matrix <span className="ss-tag">Live / settled</span></p>
-            <ConfusionMatrix c={c} />
-          </div>
-          <div style={{ flex: '1 1 360px' }}>
-            <p className="ss-section-title">Metrics</p>
-            <div className="ss-stat-grid">
-              <Stat label="Accuracy" value={metric(c.accuracy)} />
-              <Stat label="Precision" value={metric(c.precision)} />
-              <Stat label="Recall" value={metric(c.recall)} />
-              <Stat label="F1" value={metric(c.f1)} />
-              <Stat label="MCC" value={metric(c.mcc)} />
-              <Stat label="N" value={c.n ?? 0} />
-              <Stat label="Pending" value={c.pending ?? 0} />
-            </div>
-          </div>
+        <h2>
+          Model performance
+          {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
+        </h2>
+        <p className="ss-muted">Serving: {dashboard.champion || '—'}</p>
+        <p className="ss-section-title">
+          Metrics <span className="ss-tag">Overall (eval + live)</span>
+        </p>
+        <div className="ss-stat-grid">
+          <Stat label="Accuracy"
+                value={combined ? metric(combined.accuracy) : metric(c.accuracy)}
+                sub={combined
+                  ? `eval ${metric(ev.accuracy)} + ${combined.n_live} live day${combined.n_live === 1 ? '' : 's'}`
+                  : (ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null)} />
+          <Stat label="MCC"
+                value={liveN > 0 ? metric(c.mcc) : (ev?.mcc != null ? metric(ev.mcc) : '—')}
+                sub={liveN > 0 && ev?.mcc != null ? `eval ${metric(ev.mcc)}` : (liveN === 0 ? 'eval' : null)} />
+          <Stat label="ROC-AUC" value={ev?.roc_auc != null ? metric(ev.roc_auc) : '—'}
+                sub={ev?.roc_auc != null ? 'eval' : null} />
+          <Stat label="Precision" value={liveN > 0 ? metric(c.precision) : '—'}
+                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
+          <Stat label="Recall" value={liveN > 0 ? metric(c.recall) : '—'}
+                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
+          <Stat label="F1" value={liveN > 0 ? metric(c.f1) : '—'}
+                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
+          <Stat label="N" value={combined ? combined.n : (c.n ?? 0)}
+                sub={combined ? `${combined.n_eval} eval + ${combined.n_live} live` : null} />
+          <Stat label="Pending" value={c.pending ?? 0} />
         </div>
-        <hr className="ss-divider" />
-        <FullConfusion />
       </div>
 
       <EdaPanels />
