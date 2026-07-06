@@ -21,6 +21,7 @@ import argparse
 import datetime as dt
 import fcntl
 import json
+import os
 import subprocess
 import sys
 import time
@@ -41,10 +42,28 @@ _TASE_TRADING_WEEKDAYS = {6, 0, 1, 2, 3}                       # Sun=6, Mon..Thu
 # Subprocess stages: (name, argv, cwd-relative-to-REPO_ROOT). The champion predict runs
 # in-process (last). Commands mirror the documented per-module invocations / uv extras.
 _PE = "processing_engine"
+
+
+def _score_stage() -> tuple:
+    """Score-stage argv tuned to the active LLM backend.
+
+    The remote vLLM (openai backend) handles 50-headline batch calls at high concurrency;
+    local Ollama models (gemma4) fail batch-JSON parsing, so they score one headline per
+    call at low concurrency (tune with SENTISENSE_SCORE_CONCURRENCY). Both use
+    ``--unscored-any-model`` so a backend/model switch never re-scores the history another
+    model already covered.
+    """
+    if os.environ.get("SENTISENSE_LLM_BACKEND", "ollama").lower() == "openai":
+        extra = ["--headlines-per-call", "50", "--concurrency", "50"]
+    else:
+        extra = ["--concurrency", os.environ.get("SENTISENSE_SCORE_CONCURRENCY", "4")]
+    return ("score", ["uv", "run", "python", "../scripts/process_headlines.py", "--fast",
+                      "--unscored-any-model", *extra], _PE)
+
+
 _STAGES = [
     ("scrape", ["uv", "run", "python", "../scripts/daily_scrape_to_db.py", "--days", "2"], _PE),
-    ("score", ["uv", "run", "python", "../scripts/process_headlines.py", "--fast",
-               "--headlines-per-call", "50", "--concurrency", "50"], _PE),
+    _score_stage(),
     ("embed", ["uv", "run", "--extra", "embed", "python", "-m", "sentisense.embed.embeddings",
                "--scope", "all"], "."),
     ("derived", ["uv", "run", "--extra", "ml", "python", "scripts/build_embedding_derived.py"], "."),
