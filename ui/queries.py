@@ -45,14 +45,21 @@ def resolved_model(engine=None) -> str:
 
 _LATEST_DATE = text("SELECT MAX(date) AS d FROM raw_headlines")
 
+# The dataset spans two scoring eras (mistral history, gemma going forward), so day-scoped
+# views take ONE validated row per headline from ANY model, preferring the active one.
 _HEADLINES_FOR_DATE = text(
     """
     SELECT rh.id, rh.date, rh.source, rh.hour, rh.headline,
            nv.global_sentiment, nv.validation_passed,
            (nv.headline_id IS NOT NULL) AS scored
     FROM raw_headlines rh
-    LEFT JOIN nlp_vectors nv
-           ON nv.headline_id = rh.id AND nv.model_name = :model
+    LEFT JOIN LATERAL (
+        SELECT v.headline_id, v.global_sentiment, v.validation_passed
+        FROM nlp_vectors v
+        WHERE v.headline_id = rh.id AND v.validation_passed
+        ORDER BY (v.model_name = :model) DESC, v.id DESC
+        LIMIT 1
+    ) nv ON TRUE
     WHERE rh.date = :d
     ORDER BY rh.hour DESC NULLS LAST, rh.id DESC
     OFFSET :offset LIMIT :limit
@@ -345,8 +352,13 @@ _DAY_EMBED = text(
            nv.global_sentiment AS sentiment
     FROM headline_embeddings he
     JOIN raw_headlines rh ON rh.id = he.headline_id
-    LEFT JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
-                             AND nv.validation_passed
+    LEFT JOIN LATERAL (
+        SELECT v.global_sentiment
+        FROM nlp_vectors v
+        WHERE v.headline_id = rh.id AND v.validation_passed
+        ORDER BY (v.model_name = :model) DESC, v.id DESC
+        LIMIT 1
+    ) nv ON TRUE
     WHERE rh.date = :d AND he.embed_model = :em
     ORDER BY he.headline_id
     LIMIT :cap
@@ -408,8 +420,14 @@ _PERSONA_SOURCES = text(
     SELECT rh.source AS source, COUNT(*) AS n,
            AVG(nv.global_sentiment)::float AS mean_sentiment
     FROM raw_headlines rh
-    JOIN nlp_vectors nv ON nv.headline_id = rh.id AND nv.model_name = :model
-                        AND nv.validation_passed AND nv.global_sentiment IS NOT NULL
+    JOIN LATERAL (
+        SELECT v.global_sentiment
+        FROM nlp_vectors v
+        WHERE v.headline_id = rh.id AND v.validation_passed
+          AND v.global_sentiment IS NOT NULL
+        ORDER BY (v.model_name = :model) DESC, v.id DESC
+        LIMIT 1
+    ) nv ON TRUE
     WHERE rh.date = :d
     GROUP BY rh.source
     HAVING COUNT(*) >= :min_n
