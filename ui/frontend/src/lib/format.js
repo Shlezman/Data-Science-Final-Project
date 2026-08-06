@@ -33,6 +33,38 @@ export function direction(value) {
 }
 
 /**
+ * Classifies a direction label into a badge variant for color-coded display.
+ *
+ * @param {boolean|null|undefined} value True=Up, False=Down, null=unknown.
+ * @returns {string} "pos", "neg", or "neutral".
+ */
+export function directionCls(value) {
+  if (value === true) {
+    return 'pos';
+  }
+  if (value === false) {
+    return 'neg';
+  }
+  return 'neutral';
+}
+
+/**
+ * Classifies a Hit/Miss/Pending outcome into a badge variant.
+ *
+ * @param {string} label The result of {@link outcome}.
+ * @returns {string} "pos" for Hit, "neg" for Miss, "neutral" for Pending.
+ */
+export function outcomeCls(label) {
+  if (label === 'Hit') {
+    return 'pos';
+  }
+  if (label === 'Miss') {
+    return 'neg';
+  }
+  return 'neutral';
+}
+
+/**
  * Classifies a global sentiment score into a badge variant.
  *
  * @param {number|null|undefined} sentiment Integer sentiment, -10..+10.

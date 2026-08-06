@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
-import { pct, direction, outcome } from '../lib/format.js';
+import { pct, direction, directionCls, outcome, outcomeCls } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
 import EdaPanels from './EdaPanels.jsx';
@@ -180,15 +180,28 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {recent.map((r) => (
-                <tr key={r.date}>
-                  <td>{r.date}</td>
-                  <td>{direction(r.prediction)}</td>
-                  <td>{pct(r.confidence)}</td>
-                  <td>{direction(r.actual)}</td>
-                  <td>{outcome(r.prediction, r.actual)}</td>
-                </tr>
-              ))}
+              {recent.map((r) => {
+                const result = outcome(r.prediction, r.actual);
+                return (
+                  <tr key={r.date}>
+                    <td>{r.date}</td>
+                    <td>
+                      <span className={`ss-badge ${directionCls(r.prediction)}`}>
+                        {direction(r.prediction)}
+                      </span>
+                    </td>
+                    <td>{pct(r.confidence)}</td>
+                    <td>
+                      <span className={`ss-badge ${directionCls(r.actual)}`}>
+                        {direction(r.actual)}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`ss-badge ${outcomeCls(result)}`}>{result}</span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
