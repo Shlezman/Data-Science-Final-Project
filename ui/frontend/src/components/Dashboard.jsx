@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
-import { pct, direction, directionCls, outcome, outcomeCls } from '../lib/format.js';
+import { pct, direction, directionCls, outcome, outcomeCls, toneFromChance } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
 import EdaPanels from './EdaPanels.jsx';
@@ -46,6 +46,71 @@ function LastRunBanner({ lastRun }) {
 }
 
 /**
+ * A small radial progress ring for a 0..1 fraction, drawn as plain SVG (no
+ * charting lib needed for one gauge). Purely decorative — `aria-hidden`,
+ * since the same value is already shown as text next to it.
+ *
+ * @param {object} props Component props.
+ * @param {number|null|undefined} props.value Fraction in [0, 1].
+ * @param {'pos'|'neg'|null} [props.tone] Ring color: pos=green, neg=red,
+ *   else the app accent blue.
+ * @returns {JSX.Element} The gauge SVG.
+ */
+function Gauge({ value, tone }) {
+  const frac = typeof value === 'number' && !Number.isNaN(value)
+    ? Math.max(0, Math.min(1, value)) : 0;
+  const r = 44;
+  const c = 2 * Math.PI * r;
+  const color = tone === 'pos' ? 'var(--ss-pos)' : tone === 'neg' ? 'var(--ss-neg)' : 'var(--ss-accent)';
+  return (
+    <svg width="110" height="110" viewBox="0 0 110 110" className="ss-gauge" aria-hidden="true">
+      <circle cx="55" cy="55" r={r} fill="none" stroke="var(--ss-border)" strokeWidth="9" />
+      <circle cx="55" cy="55" r={r} fill="none" stroke={color} strokeWidth="9"
+              strokeLinecap="round" strokeDasharray={c}
+              strokeDashoffset={c * (1 - frac)} transform="rotate(-90 55 55)" />
+      <text x="55" y="61" textAnchor="middle" fontSize="22" fontWeight="700" fill={color}>
+        {Math.round(frac * 100)}%
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * A full-width stacked bar showing how a total splits into parts, with an
+ * inline legend. Used on the wide N tile so its extra width carries the
+ * eval/live composition instead of sitting empty.
+ *
+ * @param {object} props Component props.
+ * @param {Array<{label: string, value: number, color: string}>} props.parts
+ *   Segments, rendered left to right in the given order.
+ * @returns {JSX.Element|null} The bar, or null when the total is zero.
+ */
+function SplitBar({ parts }) {
+  const total = parts.reduce((sum, p) => sum + (p.value || 0), 0);
+  if (!total) {
+    return null;
+  }
+  return (
+    <div className="ss-splitbar">
+      <div className="ss-splitbar__track" aria-hidden="true">
+        {parts.map((p) => (
+          <span key={p.label} className="ss-splitbar__seg"
+                style={{ width: `${(p.value / total) * 100}%`, background: p.color }} />
+        ))}
+      </div>
+      <div className="ss-splitbar__legend">
+        {parts.map((p) => (
+          <span key={p.label}>
+            <span className="ss-splitbar__swatch" style={{ background: p.color }} aria-hidden="true" />
+            {p.value} {p.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Renders a single labeled statistic card, optionally with a secondary line
  * (e.g. the model's held-out evaluation score next to the live value).
  *
@@ -53,14 +118,40 @@ function LastRunBanner({ lastRun }) {
  * @param {string} props.label The stat name.
  * @param {string|number} props.value The stat value.
  * @param {string} [props.sub] Optional secondary line under the value.
+ * @param {'pos'|'neg'|null} [props.tone] Optional good/weak visual cue,
+ *   e.g. from {@link toneFromChance}. Reserved for metrics with a real
+ *   chance baseline (accuracy, MCC, ROC-AUC) — carries meaning.
+ * @param {'teal'|'violet'|'amber'|'blue'|'slate'} [props.accent] Purely
+ *   decorative color swatch for metrics with no good/bad baseline
+ *   (precision/recall/F1/N/pending), so the grid isn't all-grey without
+ *   implying a judgement `tone` doesn't back up.
+ * @param {string} [props.area] Bento grid-area name (see `.ss-stat-grid--metrics`).
+ * @param {boolean} [props.featured] Renders as the large anchor tile.
+ * @param {JSX.Element} [props.extra] Optional decoration (e.g. a {@link Gauge})
+ *   rendered beside the text, only meaningful on featured tiles.
+ * @param {JSX.Element} [props.below] Optional full-width element under the
+ *   text (e.g. a {@link SplitBar}), for wide tiles that would otherwise
+ *   leave most of their width empty.
  * @returns {JSX.Element} The stat card.
  */
-function Stat({ label, value, sub }) {
+function Stat({ label, value, sub, tone, accent, area, featured, extra, below }) {
+  const cls = ['ss-stat'];
+  if (tone) cls.push(`ss-stat--${tone}`);
+  if (accent) cls.push(`ss-stat--accent-${accent}`);
+  if (featured) cls.push('ss-stat--featured');
+  if (area) cls.push(`ss-stat--area-${area}`);
   return (
-    <div className="ss-stat">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {sub ? <div className="label" style={{ marginTop: 2 }}>{sub}</div> : null}
+    <div className={cls.join(' ')}>
+      <div className="ss-stat__body">
+        <div className="label">
+          <span className="ss-stat__dot" aria-hidden="true" />
+          {label}
+        </div>
+        <div className="value">{value}</div>
+        {sub ? <div className="label" style={{ marginTop: 2 }}>{sub}</div> : null}
+        {below || null}
+      </div>
+      {extra || null}
     </div>
   );
 }
@@ -123,6 +214,8 @@ export default function Dashboard() {
   const liveN = combined?.n_live ?? 0;
   const recent = dashboard.recent || [];
   const latest = dashboard.latest_headlines || {};
+  const accValue = combined ? combined.accuracy : c.accuracy;
+  const accTone = toneFromChance(accValue, 0.5);
 
   return (
     <div>
@@ -134,30 +227,38 @@ export default function Dashboard() {
           Model performance
           {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
         </h2>
-        <p className="ss-muted">Serving: {dashboard.champion || '—'}</p>
         <p className="ss-section-title">
           Metrics <span className="ss-tag">Overall (eval + live)</span>
         </p>
-        <div className="ss-stat-grid">
-          <Stat label="Accuracy"
-                value={combined ? metric(combined.accuracy) : metric(c.accuracy)}
+        <div className="ss-stat-grid ss-stat-grid--metrics">
+          <Stat label="Accuracy" area="acc" featured
+                value={metric(accValue)}
                 sub={combined
                   ? `eval ${metric(ev.accuracy)} + ${combined.n_live} live day${combined.n_live === 1 ? '' : 's'}`
-                  : (ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null)} />
-          <Stat label="MCC"
+                  : (ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null)}
+                tone={accTone}
+                extra={<Gauge value={accValue} tone={accTone} />} />
+          <Stat label="MCC" area="mcc"
                 value={liveN > 0 ? metric(c.mcc) : (ev?.mcc != null ? metric(ev.mcc) : '—')}
-                sub={liveN > 0 && ev?.mcc != null ? `eval ${metric(ev.mcc)}` : (liveN === 0 ? 'eval' : null)} />
-          <Stat label="ROC-AUC" value={ev?.roc_auc != null ? metric(ev.roc_auc) : '—'}
-                sub={ev?.roc_auc != null ? 'eval' : null} />
-          <Stat label="Precision" value={liveN > 0 ? metric(c.precision) : '—'}
+                sub={liveN > 0 && ev?.mcc != null ? `eval ${metric(ev.mcc)}` : (liveN === 0 ? 'eval' : null)}
+                tone={toneFromChance(liveN > 0 ? c.mcc : ev?.mcc, 0)} />
+          <Stat label="ROC-AUC" area="auc" value={ev?.roc_auc != null ? metric(ev.roc_auc) : '—'}
+                sub={ev?.roc_auc != null ? 'eval' : null}
+                tone={toneFromChance(ev?.roc_auc, 0.5)} />
+          <Stat label="Precision" area="prec" accent="teal" value={liveN > 0 ? metric(c.precision) : '—'}
                 sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
-          <Stat label="Recall" value={liveN > 0 ? metric(c.recall) : '—'}
+          <Stat label="Recall" area="rec" accent="violet" value={liveN > 0 ? metric(c.recall) : '—'}
                 sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
-          <Stat label="F1" value={liveN > 0 ? metric(c.f1) : '—'}
+          <Stat label="F1" area="f1" accent="amber" value={liveN > 0 ? metric(c.f1) : '—'}
                 sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
-          <Stat label="N" value={combined ? combined.n : (c.n ?? 0)}
-                sub={combined ? `${combined.n_eval} eval + ${combined.n_live} live` : null} />
-          <Stat label="Pending" value={c.pending ?? 0} />
+          <Stat label="N" area="n" accent="blue" value={combined ? combined.n : (c.n ?? 0)}
+                below={combined ? (
+                  <SplitBar parts={[
+                    { label: 'eval', value: combined.n_eval, color: '#60a5fa' },
+                    { label: 'live', value: combined.n_live, color: '#fbbf24' },
+                  ]} />
+                ) : null} />
+          <Stat label="Pending" area="pend" accent="slate" value={c.pending ?? 0} />
         </div>
       </div>
 

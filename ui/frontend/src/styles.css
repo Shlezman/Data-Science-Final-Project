@@ -162,11 +162,189 @@ body {
   gap: 10px;
 }
 
+/* Bento layout: Accuracy anchors the grid as a large 2×2 tile, N gets a
+   wide supporting tile, and the remaining four metrics fill small cells —
+   size communicates importance instead of every tile looking identical. */
+.ss-stat-grid--metrics {
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, minmax(64px, auto));
+  grid-template-areas:
+    "acc acc mcc auc"
+    "acc acc prec rec"
+    "n   n   f1   pend";
+}
+.ss-stat--area-acc  { grid-area: acc; }
+.ss-stat--area-mcc  { grid-area: mcc; }
+.ss-stat--area-auc  { grid-area: auc; }
+.ss-stat--area-prec { grid-area: prec; }
+.ss-stat--area-rec  { grid-area: rec; }
+.ss-stat--area-n    { grid-area: n; }
+.ss-stat--area-f1   { grid-area: f1; }
+.ss-stat--area-pend { grid-area: pend; }
+
+@media (max-width: 720px) {
+  .ss-stat-grid--metrics {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-areas:
+      "acc  acc"
+      "acc  acc"
+      "n    n"
+      "mcc  auc"
+      "prec rec"
+      "f1   pend";
+  }
+}
+@media (max-width: 380px) {
+  .ss-stat-grid--metrics {
+    grid-template-columns: 1fr;
+    grid-template-areas: "acc" "n" "mcc" "auc" "prec" "rec" "f1" "pend";
+  }
+}
+
 .ss-stat {
+  position: relative;
+  overflow: hidden;
   background: var(--ss-surface-2);
   border: 1px solid var(--ss-border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 16px;
+  padding: 12px 14px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.ss-stat:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ss-stat { transition: none; }
+  .ss-stat:hover { transform: none; }
+}
+
+/* Per-metric accent: a dot next to the label and a soft wash bleeding in
+   from the top-right, both driven by --stat-accent. Metrics WITH a chance
+   baseline inherit it from their .ss-stat--pos/--neg tone, so the dot
+   reinforces the good/weak reading; the rest get a purely decorative hue
+   so the grid doesn't read as a row of identical grey boxes. */
+.ss-stat__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 7px;
+  vertical-align: baseline;
+  background: var(--stat-accent, var(--ss-neutral));
+}
+
+.ss-stat::after {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 120px;
+  height: 120px;
+  border-radius: 999px;
+  background: var(--stat-accent, transparent);
+  opacity: 0.09;
+  pointer-events: none;
+}
+
+/* Stacked composition bar for wide tiles (see SplitBar). */
+.ss-splitbar {
+  margin-top: 10px;
+}
+.ss-splitbar__track {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ss-border);
+}
+.ss-splitbar__seg {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+.ss-splitbar__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 7px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ss-fg-muted);
+}
+.ss-splitbar__swatch {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 6px;
+}
+
+.ss-stat--accent-teal   { --stat-accent: #2dd4bf; }
+.ss-stat--accent-violet { --stat-accent: #a78bfa; }
+.ss-stat--accent-amber  { --stat-accent: #fbbf24; }
+.ss-stat--accent-blue   { --stat-accent: #60a5fa; }
+.ss-stat--accent-slate  { --stat-accent: #94a3b8; }
+
+/* The anchor tile: bigger radius, bigger number, text on the left with the
+   gauge filling the space that used to just sit empty on the right — reads
+   as the headline KPI instead of one entry in a wall of squares. */
+.ss-stat--featured {
+  border-radius: 22px;
+  padding: 20px 28px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  background: linear-gradient(160deg, var(--ss-surface-2), rgba(59, 130, 246, 0.06));
+}
+.ss-stat--featured .value {
+  font-size: 64px;
+  line-height: 1.1;
+  margin-top: 8px;
+}
+/* Scale the dot + wash with the anchor tile so they stay proportional. */
+.ss-stat--featured .ss-stat__dot {
+  width: 10px;
+  height: 10px;
+  margin-right: 9px;
+}
+.ss-stat--featured::after {
+  top: -70px;
+  right: -70px;
+  width: 220px;
+  height: 220px;
+}
+.ss-stat--featured .label {
+  font-size: 16px;
+}
+.ss-gauge {
+  flex: none;
+}
+
+/* Subtle good/weak cue for metrics with a meaningful chance baseline
+   (accuracy, MCC, ROC-AUC) — colored border + soft glow + value, not a
+   filled background, so it stays readable and doesn't compete with the
+   tiles that intentionally have no opinion (precision/recall/F1/N/pending). */
+.ss-stat--pos {
+  --stat-accent: var(--ss-pos);
+  border-color: rgba(34, 197, 94, 0.45);
+  box-shadow: 0 0 24px -10px rgba(34, 197, 94, 0.55);
+}
+.ss-stat--pos .value {
+  color: var(--ss-pos);
+}
+.ss-stat--neg {
+  --stat-accent: var(--ss-neg);
+  border-color: rgba(239, 68, 68, 0.45);
+  box-shadow: 0 0 24px -10px rgba(239, 68, 68, 0.55);
+}
+.ss-stat--neg .value {
+  color: var(--ss-neg);
 }
 
 .ss-stat .label {
