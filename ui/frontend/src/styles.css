@@ -710,26 +710,126 @@ body {
   margin: 18px 0 14px;
 }
 
-/* Hero — big current-day up/down */
+/* Hero — current-day call. Directional colour is carried by a gradient that
+   fades out to the right, an arrow badge and a confidence meter, rather than
+   a flat wash over the whole card; the prediction's metadata fills the right
+   side so the card doesn't run out of content halfway across. */
 .ss-hero {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 22px;
   border: 1px solid var(--ss-border);
-  border-radius: 14px;
+  border-radius: 22px;
   padding: 22px 26px;
   margin-bottom: var(--ss-gap);
   background: var(--ss-surface-2);
 }
-.ss-hero.is-up { background: var(--ss-pos-bg); border-color: rgba(34, 197, 94, 0.4); }
-.ss-hero.is-down { background: var(--ss-neg-bg); border-color: rgba(239, 68, 68, 0.4); }
-.ss-hero--pending { color: var(--ss-fg-muted); justify-content: center; }
-.ss-hero__arrow { font-size: 64px; line-height: 1; }
-.ss-hero.is-up .ss-hero__arrow, .ss-hero.is-up .ss-hero__dir { color: var(--ss-pos); }
-.ss-hero.is-down .ss-hero__arrow, .ss-hero.is-down .ss-hero__dir { color: var(--ss-neg); }
-.ss-hero__dir { font-size: 44px; font-weight: 800; letter-spacing: 1px; }
-.ss-hero__conf { font-size: 18px; font-weight: 600; }
-.ss-hero__sub { font-size: 13px; color: var(--ss-fg-muted); margin-top: 2px; }
+.ss-hero.is-up {
+  border-color: rgba(34, 197, 94, 0.35);
+  background:
+    linear-gradient(100deg, rgba(34, 197, 94, 0.20) 0%, rgba(34, 197, 94, 0.05) 46%, transparent 78%),
+    var(--ss-surface-2);
+}
+.ss-hero.is-down {
+  border-color: rgba(239, 68, 68, 0.35);
+  background:
+    linear-gradient(100deg, rgba(239, 68, 68, 0.20) 0%, rgba(239, 68, 68, 0.05) 46%, transparent 78%),
+    var(--ss-surface-2);
+}
+.ss-hero--pending {
+  color: var(--ss-fg-muted);
+  justify-content: center;
+}
+
+/* Arrow badge: an SVG triangle in a tinted disc, replacing the raw ▲/▼
+   glyph that rendered inconsistently across platforms at display size. */
+.ss-hero__badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.ss-hero.is-up .ss-hero__badge { color: var(--ss-pos); background: rgba(34, 197, 94, 0.12); }
+.ss-hero.is-down .ss-hero__badge { color: var(--ss-neg); background: rgba(239, 68, 68, 0.12); }
+.ss-hero.is-up .ss-hero__dir { color: var(--ss-pos); }
+.ss-hero.is-down .ss-hero__dir { color: var(--ss-neg); }
+
+.ss-hero__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ss-hero__dir {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1.05;
+}
+
+/* Confidence meter — the number alone gave no sense of scale. */
+.ss-hero__meter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  max-width: 340px;
+}
+.ss-hero__track {
+  flex: 1 1 auto;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ss-border);
+  overflow: hidden;
+}
+.ss-hero__track > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+}
+.ss-hero.is-up .ss-hero__track { color: var(--ss-pos); }
+.ss-hero.is-down .ss-hero__track { color: var(--ss-neg); }
+.ss-hero__conf {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ss-fg-muted);
+}
+
+.ss-hero__meta {
+  flex: none;
+  display: flex;
+  gap: 30px;
+  margin: 0;
+  text-align: right;
+}
+.ss-hero__meta dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ss-fg-muted);
+}
+.ss-hero__meta dd {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .ss-hero {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .ss-hero__meta {
+    flex-basis: 100%;
+    text-align: left;
+    padding-top: 14px;
+    border-top: 1px solid var(--ss-border);
+  }
+}
 
 /* Collapsible section head */
 .ss-collapse-head { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 10px; }

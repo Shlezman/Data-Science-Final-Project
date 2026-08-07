@@ -9,32 +9,34 @@ import Centroids3D from './Centroids3D.jsx';
 const REFRESH_MS = 60_000;
 
 /**
- * Renders the last-run banner derived from /api/health.
+ * Renders the last-run banner derived from /api/health, but ONLY when the run
+ * needs attention (errored or was skipped). A healthy run's timestamp is shown
+ * quietly in the {@link Hero} metadata instead — a full-width banner repeating
+ * routine status added noise, and when the orchestrator had written no status
+ * at all it rendered as a shell of em-dashes that read as broken. Note `{}` is
+ * truthy, so the emptiness check has to look at the keys.
  *
  * @param {object} props Component props.
  * @param {object|null} props.lastRun The health payload's `last_run` object.
- * @returns {JSX.Element|null} The banner, or null if no data yet.
+ * @returns {JSX.Element|null} The banner, or null when there is nothing wrong.
  */
 function LastRunBanner({ lastRun }) {
-  if (!lastRun) {
+  if (!lastRun || Object.keys(lastRun).length === 0) {
     return null;
   }
-  const variant = lastRun.error
-    ? 'is-error'
-    : lastRun.skipped
-      ? 'is-skip'
-      : '';
+  if (!lastRun.error && !lastRun.skipped) {
+    return null;
+  }
   return (
-    <div className={`ss-banner ${variant}`}>
-      <span>
-        <b>Today:</b> {lastRun.today || '—'}
-      </span>
-      <span>
-        <b>Last success:</b> {lastRun.last_success || '—'}
-      </span>
-      {lastRun.prediction !== undefined && lastRun.prediction !== null ? (
+    <div className={`ss-banner ${lastRun.error ? 'is-error' : 'is-skip'}`}>
+      {lastRun.today ? (
         <span>
-          <b>Prediction:</b> {String(lastRun.prediction)}
+          <b>Today:</b> {lastRun.today}
+        </span>
+      ) : null}
+      {lastRun.last_success ? (
+        <span>
+          <b>Last success:</b> {lastRun.last_success}
         </span>
       ) : null}
       {lastRun.skipped ? <span>Run skipped</span> : null}
@@ -219,7 +221,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      <Hero />
+      <Hero lastRun={health?.last_run} />
       <LastRunBanner lastRun={health?.last_run} />
 
       <div className="ss-card">
