@@ -3,8 +3,6 @@ import { getJson } from '../lib/api.js';
 import { Plot, darkLayout, PLOT_CONFIG, ACCENT } from '../lib/plotly.js';
 
 const AXIS = {
-  gridcolor: 'rgba(255,255,255,0.07)',
-  zerolinecolor: 'rgba(255,255,255,0.18)',
   automargin: true,
 };
 

@@ -40,24 +40,45 @@ export default function Hero({ lastRun }) {
   const up = pred.up;
   const raw = typeof pred.confidence === 'number' ? pred.confidence : 0.5;
   const dirConf = Math.round((up ? raw : 1 - raw) * 100);
+  const confidenceLabel = dirConf < 55
+    ? 'Low confidence'
+    : dirConf < 65
+      ? 'Moderate confidence'
+      : 'High confidence';
 
   return (
     <div className={`ss-hero ${up ? 'is-up' : 'is-down'}`}>
-      <div className="ss-hero__badge" aria-hidden="true">
-        <svg viewBox="0 0 48 48" width="34" height="34">
-          <path d={up ? 'M24 15 L36 31 L12 31 Z' : 'M24 33 L12 17 L36 17 Z'}
-                fill="currentColor" stroke="currentColor" strokeWidth="5"
-                strokeLinejoin="round" />
-        </svg>
-      </div>
+      <div className="ss-hero__signal">
+        <div className="ss-hero__badge" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="30" height="30">
+            <path d={up ? 'M24 15 L36 31 L12 31 Z' : 'M24 33 L12 17 L36 17 Z'}
+                  fill="currentColor" stroke="currentColor" strokeWidth="5"
+                  strokeLinejoin="round" />
+          </svg>
+        </div>
 
-      <div className="ss-hero__body">
-        <div className="ss-hero__dir">{up ? 'UP' : 'DOWN'}</div>
-        <div className="ss-hero__meter">
-          <div className="ss-hero__track" aria-hidden="true">
-            <span style={{ width: `${dirConf}%` }} />
+        <div className="ss-hero__body">
+          <div className="ss-hero__eyebrow">Next-day forecast</div>
+          <div className="ss-hero__dir">TA-125 {up ? 'UP' : 'DOWN'}</div>
+          <p className="ss-hero__summary">
+            TA-125 is expected to close {up ? 'higher' : 'lower'} based on today&apos;s news sentiment
+          </p>
+          <div className="ss-hero__meter">
+            <div className="ss-hero__meter-head">
+              <span>Model confidence</span>
+              <strong>{dirConf}% · {confidenceLabel}</strong>
+            </div>
+            <div
+              className="ss-hero__track"
+              role="progressbar"
+              aria-label="Model confidence"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={dirConf}
+            >
+              <span style={{ width: `${dirConf}%` }} />
+            </div>
           </div>
-          <span className="ss-hero__conf">{dirConf}% confidence</span>
         </div>
       </div>
 

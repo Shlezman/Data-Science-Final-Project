@@ -1,73 +1,107 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { sentimentBadge } from '../lib/format.js';
 
 const CATEGORIES = [
-  ['relevance_politics', 'pol'],
-  ['relevance_economy', 'eco'],
-  ['relevance_security', 'sec'],
-  ['relevance_health', 'hlt'],
-  ['relevance_science', 'sci'],
-  ['relevance_technology', 'tec'],
+  ['relevance_politics', 'pol', 'Politics'],
+  ['relevance_economy', 'eco', 'Economy'],
+  ['relevance_security', 'sec', 'Security'],
+  ['relevance_health', 'hlt', 'Health'],
+  ['relevance_science', 'sci', 'Science'],
+  ['relevance_technology', 'tec', 'Technology'],
 ];
 
-/**
- * Renders the per-headline LLM relevance scores as compact chips.
- * Only categories the model scored above zero are shown (0 = irrelevant).
- *
- * @param {object} props Component props.
- * @param {object} props.h The headline row (relevance_* columns 0–10 or null).
- * @returns {JSX.Element|null} The chips, or null when unscored.
- */
-function ScoreChips({ h }) {
-  const chips = CATEGORIES
-    .map(([key, label]) => [label, h[key]])
-    .filter(([, v]) => typeof v === 'number' && v > 0);
-  if (!chips.length) return null;
+function categoryScores(headline) {
+  return CATEGORIES
+    .map(([key, label, name]) => ({ label, name, value: headline[key] }))
+    .filter(({ value }) => typeof value === 'number' && value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+function ScoreChips({ scores }) {
+  if (!scores.length) return <span className="ss-muted">None</span>;
   return (
     <span className="ss-score-chips">
-      {chips.map(([label, v]) => (
-        <span key={label} className="ss-score-chip" title={label}>
-          {label} {v}
+      {scores.map(({ label, name, value }) => (
+        <span key={label} className="ss-score-chip" title={name}>
+          {label} {value}
         </span>
       ))}
     </span>
   );
 }
 
+function Fact({ label, children, className = '' }) {
+  return (
+    <span className={`ss-headline-fact ${className}`}>
+      <small>{label}</small>
+      <span>{children}</span>
+    </span>
+  );
+}
+
 /**
- * Renders a list of headlines with source, time, text, a sentiment badge and
- * the per-category relevance scores. Shared by the Dashboard (last-day list)
- * and the Archive tab.
- *
- * @param {object} props Component props.
- * @param {Array<object>} props.headlines Headline rows from the API.
- * @returns {JSX.Element} The rendered list (or an empty-state note).
+ * Structured headline cards showing the full title and all category scores,
+ * with optional progressive rendering for long dashboard feeds.
  */
-export default function HeadlineList({ headlines }) {
+export default function HeadlineList({ headlines, initialVisible, total }) {
+  const [visibleCount, setVisibleCount] = useState(initialVisible || headlines?.length || 0);
+
+  useEffect(() => {
+    setVisibleCount(initialVisible || headlines?.length || 0);
+  }, [headlines, initialVisible]);
+
   if (!headlines || headlines.length === 0) {
     return <p className="ss-muted">No headlines for this day.</p>;
   }
 
+  const visibleHeadlines = headlines.slice(0, visibleCount);
+  const canShowMore = visibleCount < headlines.length;
+
   return (
-    <ul className="ss-headline-list">
-      {headlines.map((h) => {
-        const badge = sentimentBadge(h.global_sentiment);
-        return (
-          <li key={h.id}>
-            <span className="ss-headline-meta">
-              {h.source} · {h.hour}
-            </span>
-            <span className="ss-headline-text">{h.headline}</span>
-            <span className="ss-headline-scores">
-              <span className={`ss-badge ${badge.cls}`}>{badge.text}</span>
-              <ScoreChips h={h} />
-              {h.scored === false ? (
-                <span className="ss-tag">unscored</span>
-              ) : null}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      <ul className="ss-headline-list ss-headline-cards">
+        {visibleHeadlines.map((h) => {
+          const badge = sentimentBadge(h.global_sentiment);
+          const scores = categoryScores(h);
+
+          return (
+            <li key={h.id} className="ss-headline-card">
+              <p className="ss-headline-text" dir="rtl" title={h.headline}>{h.headline}</p>
+
+              <div className="ss-headline-facts">
+                <Fact label="Source">{h.source}</Fact>
+                <Fact label="Published">{h.hour || '—'}</Fact>
+                <Fact label="Sentiment">
+                  <span className={`ss-badge ${badge.cls}`}>{badge.text}</span>
+                </Fact>
+                <Fact label="Category relevance" className="ss-headline-fact--categories">
+                  {h.scored === false ? <span className="ss-tag">unscored</span> : (
+                    <ScoreChips scores={scores} />
+                  )}
+                </Fact>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      {typeof initialVisible === 'number' ? (
+        <div className="ss-headline-load-more">
+          <span>
+            Showing {Math.min(visibleCount, headlines.length)} of {headlines.length} loaded
+            {typeof total === 'number' && total > headlines.length ? ` · ${total} total today` : ''}
+          </span>
+          {canShowMore ? (
+            <button
+              type="button"
+              className="ss-btn secondary"
+              onClick={() => setVisibleCount((count) => Math.min(count + initialVisible, headlines.length))}
+            >
+              Load {Math.min(initialVisible, headlines.length - visibleCount)} more
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </>
   );
 }

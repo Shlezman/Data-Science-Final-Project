@@ -318,7 +318,7 @@ export default function Dashboard() {
             <span className="ss-tag">{latest.total} total</span>
           ) : null}
         </h2>
-        <HeadlineList headlines={latest.headlines} />
+        <HeadlineList headlines={latest.headlines} initialVisible={24} total={latest.total} />
       </div>
     </div>
   );

@@ -12,6 +12,18 @@ import '@fontsource/rubik/800.css';
 import App from './App.jsx';
 import './styles.css';
 
+function preferredTheme() {
+  try {
+    const stored = window.localStorage.getItem('sentisense-theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+document.documentElement.dataset.theme = preferredTheme();
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <App />
