@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
-import { pct, direction, directionCls, outcome, outcomeCls, toneFromChance } from '../lib/format.js';
+import { pct, direction, directionCls, outcome, outcomeCls } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
 import EdaPanels from './EdaPanels.jsx';
@@ -171,6 +171,74 @@ function metric(value) {
   return value.toFixed(3);
 }
 
+function metricPercent(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function metricAssessment(kind, value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return { label: 'No data', tone: 'neutral' };
+  }
+  if (kind === 'accuracy') {
+    const delta = (value - 0.5) * 100;
+    return { label: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp vs baseline`, tone: 'neutral' };
+  }
+  if (kind === 'auc') {
+    const delta = value - 0.5;
+    return { label: `${delta >= 0 ? '+' : ''}${delta.toFixed(3)} vs baseline`, tone: 'neutral' };
+  }
+  return { label: `${value >= 0 ? '+' : ''}${value.toFixed(3)} vs baseline`, tone: 'neutral' };
+}
+
+function MetricInfo({ text }) {
+  return (
+    <span className="ss-metric-info" role="img" tabIndex="0" aria-label={text} title={text}>i</span>
+  );
+}
+
+function CoreMetric({ label, value, displayValue, kind, baseline, domain, scope, info, comparison }) {
+  const assessment = metricAssessment(kind, value);
+  const [min, max] = domain;
+  const clamp = (number) => Math.max(0, Math.min(100, ((number - min) / (max - min)) * 100));
+  const valuePosition = typeof value === 'number' ? clamp(value) : clamp(baseline);
+  const baselinePosition = clamp(baseline);
+  const start = Math.min(valuePosition, baselinePosition);
+  const width = Math.abs(valuePosition - baselinePosition);
+
+  return (
+    <article className={`ss-core-metric is-${assessment.tone}`}>
+      <div className="ss-core-metric__head">
+        <span>{label} <MetricInfo text={info} /></span>
+        <span className="ss-metric-scope">{scope}</span>
+      </div>
+      <strong className="ss-core-metric__value">{displayValue}</strong>
+      <span className="ss-core-metric__assessment">{assessment.label}</span>
+      <div className="ss-baseline-scale" aria-hidden="true">
+        <span className="ss-baseline-scale__delta" style={{ left: `${start}%`, width: `${Math.max(width, 0.6)}%` }} />
+        <span className="ss-baseline-scale__baseline" style={{ left: `${baselinePosition}%` }} />
+        <span className="ss-baseline-scale__point" style={{ left: `${valuePosition}%` }} />
+      </div>
+      <div className="ss-core-metric__foot">
+        <span>Baseline {kind === 'accuracy' ? metricPercent(baseline) : kind === 'auc' ? metric(baseline) : '0'}</span>
+        {comparison ? <span>{comparison}</span> : null}
+      </div>
+    </article>
+  );
+}
+
+function ClassificationMetric({ label, value, accent, info }) {
+  return (
+    <article className="ss-classification-metric" style={{ '--metric-accent': accent }}>
+      <div className="ss-core-metric__head">
+        <span>{label} <MetricInfo text={info} /></span>
+        <span className="ss-metric-scope">Live</span>
+      </div>
+      <strong>{metricPercent(value)}</strong>
+    </article>
+  );
+}
+
 /**
  * Dashboard view: served-model hero + last-run banner, metric stat cards,
  * recent predictions table, and the last-day live headlines list. Polls
@@ -217,50 +285,119 @@ export default function Dashboard() {
   const recent = dashboard.recent || [];
   const latest = dashboard.latest_headlines || {};
   const accValue = combined ? combined.accuracy : c.accuracy;
-  const accTone = toneFromChance(accValue, 0.5);
+  const mccValue = liveN > 0 ? c.mcc : ev?.mcc;
+  const aucValue = ev?.roc_auc;
+  const totalN = combined?.n ?? c.n ?? 0;
+  const evalN = combined?.n_eval ?? ev?.n ?? 0;
+  const pendingN = c.pending ?? 0;
+  const evalShare = totalN > 0 ? (evalN / totalN) * 100 : 0;
+  const liveShare = totalN > 0 ? (liveN / totalN) * 100 : 0;
 
   return (
     <div>
       <Hero lastRun={health?.last_run} />
       <LastRunBanner lastRun={health?.last_run} />
 
-      <div className="ss-card">
-        <h2>
-          Model performance
-          {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
-        </h2>
-        <p className="ss-section-title">
-          Metrics <span className="ss-tag">Overall (eval + live)</span>
-        </p>
-        <div className="ss-stat-grid ss-stat-grid--metrics">
-          <Stat label="Accuracy" area="acc" featured
-                value={metric(accValue)}
-                sub={combined
-                  ? `eval ${metric(ev.accuracy)} + ${combined.n_live} live day${combined.n_live === 1 ? '' : 's'}`
-                  : (ev?.accuracy != null ? `eval ${metric(ev.accuracy)}` : null)}
-                tone={accTone}
-                extra={<Gauge value={accValue} tone={accTone} />} />
-          <Stat label="MCC" area="mcc"
-                value={liveN > 0 ? metric(c.mcc) : (ev?.mcc != null ? metric(ev.mcc) : '—')}
-                sub={liveN > 0 && ev?.mcc != null ? `eval ${metric(ev.mcc)}` : (liveN === 0 ? 'eval' : null)}
-                tone={toneFromChance(liveN > 0 ? c.mcc : ev?.mcc, 0)} />
-          <Stat label="ROC-AUC" area="auc" value={ev?.roc_auc != null ? metric(ev.roc_auc) : '—'}
-                sub={ev?.roc_auc != null ? 'eval' : null}
-                tone={toneFromChance(ev?.roc_auc, 0.5)} />
-          <Stat label="Precision" area="prec" accent="teal" value={liveN > 0 ? metric(c.precision) : '—'}
-                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
-          <Stat label="Recall" area="rec" accent="violet" value={liveN > 0 ? metric(c.recall) : '—'}
-                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
-          <Stat label="F1" area="f1" accent="amber" value={liveN > 0 ? metric(c.f1) : '—'}
-                sub={liveN > 0 ? 'live' : 'live — pending first settled day'} />
-          <Stat label="N" area="n" accent="blue" value={combined ? combined.n : (c.n ?? 0)}
-                below={combined ? (
-                  <SplitBar parts={[
-                    { label: 'eval', value: combined.n_eval, color: '#60a5fa' },
-                    { label: 'live', value: combined.n_live, color: '#fbbf24' },
-                  ]} />
-                ) : null} />
-          <Stat label="Pending" area="pend" accent="slate" value={c.pending ?? 0} />
+      <div className="ss-card ss-performance-card">
+        <div className="ss-performance-head">
+          <div>
+            <h2>
+              Model performance
+              {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
+            </h2>
+            <p>Evaluation and live-monitoring metrics with reference baselines.</p>
+          </div>
+        </div>
+
+        <div className="ss-metric-group-head">
+          <h3>Core metrics</h3>
+          <span className="ss-tag">Overall · evaluation + live</span>
+        </div>
+        <div className="ss-core-metrics">
+          <CoreMetric
+            label="Accuracy"
+            value={accValue}
+            displayValue={metricPercent(accValue)}
+            kind="accuracy"
+            baseline={0.5}
+            domain={[0, 1]}
+            scope="Overall"
+            comparison={ev?.accuracy != null ? `Eval ${metricPercent(ev.accuracy)}` : null}
+            info="The share of predictions that matched the actual market direction."
+          />
+          <CoreMetric
+            label="ROC-AUC"
+            value={aucValue}
+            displayValue={metric(aucValue)}
+            kind="auc"
+            baseline={0.5}
+            domain={[0, 1]}
+            scope="Evaluation"
+            comparison="Higher is better"
+            info="How well the model separates up days from down days across decision thresholds."
+          />
+          <CoreMetric
+            label="MCC"
+            value={mccValue}
+            displayValue={metric(mccValue)}
+            kind="mcc"
+            baseline={0}
+            domain={[-1, 1]}
+            scope={liveN > 0 ? 'Live' : 'Evaluation'}
+            comparison={liveN > 0 && ev?.mcc != null ? `Eval ${metric(ev.mcc)}` : 'Range −1 to +1'}
+            info="A balanced correlation score from −1 to +1; zero means no predictive relationship."
+          />
+        </div>
+
+        <div className="ss-metric-group-head ss-metric-group-head--secondary">
+          <h3>Classification metrics</h3>
+          {liveN > 0 ? <span className="ss-tag">Live monitoring · {liveN} days</span> : null}
+        </div>
+        <div className="ss-classification-metrics">
+          <ClassificationMetric label="Precision" value={liveN > 0 ? c.precision : null} accent="#2dd4bf"
+            info="Of the predicted positive days, the share that were actually positive." />
+          <ClassificationMetric label="Recall" value={liveN > 0 ? c.recall : null} accent="#a78bfa"
+            info="Of the actual positive days, the share the model identified." />
+          <ClassificationMetric label="F1" value={liveN > 0 ? c.f1 : null} accent="#fbbf24"
+            info="The harmonic mean of precision and recall." />
+        </div>
+
+        <div className="ss-metric-status" aria-label="Metric sample status">
+          <div className="ss-metric-status__total">
+            <span>Sample coverage</span>
+            <div><strong>{totalN}</strong><small>observations</small></div>
+          </div>
+
+          <div className="ss-metric-status__composition">
+            <div className="ss-metric-status__labels">
+              <span>
+                <i className="is-eval" aria-hidden="true" />
+                Evaluation <strong>{evalN}</strong><small>{evalShare.toFixed(1)}%</small>
+              </span>
+              <span>
+                <i className="is-live" aria-hidden="true" />
+                Live <strong>{liveN}</strong><small>{liveShare.toFixed(1)}%</small>
+              </span>
+            </div>
+            <div
+              className="ss-metric-status__track"
+              role="img"
+              aria-label={`${evalN} evaluation observations and ${liveN} live observations`}
+            >
+              <span className="is-eval" style={{ width: `${evalShare}%` }} />
+              <span className="is-live" style={{ width: `${liveShare}%` }} />
+            </div>
+          </div>
+
+          <div className={`ss-metric-status__outcomes ${pendingN === 0 ? 'is-ready' : 'is-pending'}`}>
+            <span className="ss-metric-status__icon" aria-hidden="true">
+              {pendingN === 0 ? '✓' : '…'}
+            </span>
+            <div>
+              <span>Outcomes</span>
+              <strong>{pendingN === 0 ? 'Up to date' : `${pendingN} pending`}</strong>
+            </div>
+          </div>
         </div>
       </div>
 
