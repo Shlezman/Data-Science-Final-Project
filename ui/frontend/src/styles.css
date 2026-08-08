@@ -105,11 +105,11 @@ body {
   color: #ffffff;
 }
 
-/* Wordmark lockup: "Senti" light and blue, "Sense" bold and white, as in
-   the brand's dark-surface variant. */
+/* Wordmark lockup: both halves share identical typography; colour is the
+   only distinction between "Senti" and "Sense". */
 .ss-title {
   font-size: 23px;
-  font-weight: 700;
+  font-weight: 400;
   color: #ffffff;
   margin: 0;
   letter-spacing: -0.01em;
@@ -117,7 +117,7 @@ body {
 }
 
 .ss-title__senti {
-  font-weight: 400;
+  font: inherit;
   color: #7EB2E4;
 }
 
@@ -930,18 +930,186 @@ body {
 
 /* Collapsible section head */
 .ss-collapse-head { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 10px; }
+.ss-collapse-button {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ss-fg);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: left;
+  padding: 0;
+}
+.ss-collapse-button .ss-tag { font-size: 10px; font-weight: 600; }
 
-/* EDA grid of chart panels */
+/* EDA summary and chart panels */
+.ss-eda-card { overflow: hidden; }
+.ss-eda-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 14px;
+}
+.ss-eda-kpi {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--ss-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.ss-eda-kpi > span {
+  display: block;
+  color: var(--ss-fg-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.ss-eda-kpi strong {
+  display: block;
+  margin-top: 5px;
+  font-size: clamp(20px, 2vw, 27px);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ss-eda-kpi small {
+  display: block;
+  margin-top: 5px;
+  color: var(--ss-fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ss-eda-kpi.is-positive strong { color: var(--ss-pos); }
+.ss-eda-kpi.is-negative strong { color: var(--ss-neg); }
+
+.ss-eda-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--ss-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.ss-eda-toolbar strong { display: block; font-size: 12px; }
+.ss-eda-toolbar span { color: var(--ss-fg-muted); font-size: 11px; }
+.ss-segmented {
+  flex: none;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.28);
+}
+.ss-segmented button {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--ss-fg-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.ss-segmented button:hover { color: var(--ss-fg); }
+.ss-segmented button.is-active {
+  color: #fff;
+  background: var(--ss-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
 .ss-eda-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--ss-gap);
 }
 .ss-eda-panel {
+  min-width: 0;
   background: var(--ss-surface-2);
   border: 1px solid var(--ss-border);
   border-radius: var(--ss-radius);
-  padding: 10px 12px;
+  padding: 14px 16px 8px;
+}
+.ss-eda-panel__head h3 {
+  margin: 0;
+  color: var(--ss-fg);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.ss-eda-panel__head p {
+  margin: 3px 0 0;
+  color: var(--ss-fg-muted);
+  font-size: 11px;
+}
+
+.ss-validation-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 384px;
+  padding-bottom: 18px;
+}
+.ss-validation-card__score {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: auto 0 14px;
+}
+.ss-validation-card__score strong {
+  color: var(--ss-pos);
+  font-size: clamp(42px, 5vw, 62px);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ss-validation-card__score span { color: var(--ss-fg-muted); font-weight: 650; }
+.ss-validation-card__track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.22);
+}
+.ss-validation-card__track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ss-pos);
+}
+.ss-validation-card__counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 22px 0 0;
+}
+.ss-validation-card__counts div {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.ss-validation-card__counts dt { color: var(--ss-fg-muted); font-size: 10px; text-transform: uppercase; }
+.ss-validation-card__counts dd { margin: 3px 0 0; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ss-validation-card__counts small { color: var(--ss-fg-muted); font-size: 10px; }
+
+@media (max-width: 960px) {
+  .ss-eda-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .ss-eda-grid { grid-template-columns: 1fr; }
+  .ss-eda-toolbar { align-items: flex-start; flex-direction: column; }
+  .ss-segmented { width: 100%; }
+  .ss-segmented button { flex: 1; }
+}
+@media (max-width: 520px) {
+  .ss-eda-kpis { grid-template-columns: 1fr; }
+  .ss-validation-card__counts { grid-template-columns: 1fr; }
 }
 
 /* 3D centroid drawer */
