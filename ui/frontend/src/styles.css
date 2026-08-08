@@ -43,12 +43,22 @@
   box-sizing: border-box;
 }
 
+/* Rubik covers Latin and Hebrew in one family, so the Hebrew headline feed
+   and the Latin chrome stay visually of a piece; system-ui also rendered as a
+   different typeface on every OS, which made the design unreproducible. */
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  font-family: Rubik, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
   color: var(--ss-fg);
   line-height: 1.45;
+}
+
+/* This is a numbers-first product: lining tabular figures keep digits on a
+   fixed advance so metric tiles and table columns don't jitter as values
+   change, and stop older-style figures appearing in any weight. */
+body {
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .ss-app {
@@ -387,7 +397,9 @@ body {
   gap: 40px;
   background: linear-gradient(160deg, var(--ss-surface-2), rgba(59, 130, 246, 0.06));
 }
-.ss-stat--featured .value {
+/* Doubled class raises specificity above the later `.ss-stat .value` /
+   `.ss-stat .label` rules, which otherwise win on source order alone. */
+.ss-stat.ss-stat--featured .value {
   font-size: 64px;
   line-height: 1.1;
   margin-top: 8px;
@@ -404,7 +416,7 @@ body {
   width: 220px;
   height: 220px;
 }
-.ss-stat--featured .label {
+.ss-stat.ss-stat--featured .label {
   font-size: 16px;
 }
 .ss-gauge {
