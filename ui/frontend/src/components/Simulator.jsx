@@ -20,11 +20,14 @@ function NodePanel({ node }) {
     );
   }
   const attrs = node.attrs || {};
-  const keys = Object.keys(attrs);
+  const keys = Object.keys(attrs).filter((k) => k !== 'statement');
   return (
     <div className="ss-side-panel">
       <h3>{node.label}</h3>
       <p className="ss-muted">Type: {node.type}</p>
+      {attrs.statement ? (
+        <blockquote className="ss-persona-quote">“{attrs.statement}”</blockquote>
+      ) : null}
       {keys.length === 0 ? (
         <p className="ss-muted">No attributes.</p>
       ) : (
@@ -156,56 +159,9 @@ export default function Simulator() {
     };
   }, []);
 
-  // MiroFish unreachable → route the run through the local-LLM queue instead:
-  // POST /api/llm/ask {kind:'simulate'} and poll until the worker on the GPU box
-  // has written the graph + report into the narrative_sim tables, then reload.
-  const runLocalSimulation = useCallback(async (targetDate) => {
-    setEvents([{ event: 'accepted', date: targetDate, mode: 'source' }]);
-    setRunning(true);
-    try {
-      const req = await postJson('/api/llm/ask', { kind: 'simulate', date: targetDate });
-      const startedAt = Date.now();
-      const poll = setInterval(async () => {
-        try {
-          const row = await getJson(`/api/llm/answer?id=${req.id}`);
-          if (row.status === 'done') {
-            clearInterval(poll);
-            setEvents((prev) => [...prev, { event: 'done', cached: false }]);
-            setRunning(false);
-            setDate(targetDate);
-            loadGraphAndReport(targetDate, 'source');
-          } else if (row.status === 'error') {
-            clearInterval(poll);
-            setEvents((prev) => [...prev, { event: 'error', message: row.answer }]);
-            setRunning(false);
-          } else if (Date.now() - startedAt > 300_000) {
-            clearInterval(poll);
-            setEvents((prev) => [...prev, { event: 'error', message: 'timed out — LLM worker offline?' }]);
-            setRunning(false);
-          } else {
-            setEvents((prev) => (prev.length < 40
-              ? [...prev, { event: 'running', elapsed_s: Math.round((Date.now() - startedAt) / 1000) }]
-              : prev));
-          }
-        } catch (err) {
-          clearInterval(poll);
-          setEvents((prev) => [...prev, { event: 'error', message: err.message }]);
-          setRunning(false);
-        }
-      }, 4000);
-    } catch (err) {
-      setEvents((prev) => [...prev, { event: 'error', message: err.message }]);
-      setRunning(false);
-    }
-  }, [loadGraphAndReport]);
-
   const runSimulation = useCallback(() => {
     const targetDate = runDate || date;
     if (!targetDate || !mode || running) {
-      return;
-    }
-    if (liveDisabled) {
-      runLocalSimulation(targetDate);   // MiroFish down → local-LLM persona simulation
       return;
     }
     setEvents([]);
@@ -251,7 +207,7 @@ export default function Simulator() {
     ws.onclose = () => {
       setRunning(false);
     };
-  }, [runDate, date, mode, running, liveDisabled, loadGraphAndReport, runLocalSimulation]);
+  }, [runDate, date, mode, running, loadGraphAndReport]);
 
   return (
     <div>
@@ -297,7 +253,26 @@ export default function Simulator() {
       <PersonaPanel date={date} />
 
       <div className="ss-card">
-        <h3>Influence graph</h3>
+        <h3>
+          Agent map
+          {graph?.meta?.lean ? (
+            <span className={`ss-badge ${graph.meta.lean === 'UP' ? 'pos' : graph.meta.lean === 'DOWN' ? 'neg' : 'neutral'}`}
+                  style={{ marginLeft: 8 }}>
+              Lean {graph.meta.lean}
+            </span>
+          ) : null}
+          {graph?.meta?.n_agents ? (
+            <span className="ss-tag">{graph.meta.n_agents} agents</span>
+          ) : null}
+        </h3>
+        <p className="ss-muted">
+          Each node is a news outlet acting as an agent — size = how much it published,
+          color = its stance (green bullish, red bearish, grey neutral); solid green links
+          agree, dashed red links disagree. Tap a node to read its statement.
+        </p>
+        {graph?.meta?.consensus ? (
+          <blockquote className="ss-persona-quote">{graph.meta.consensus}</blockquote>
+        ) : null}
         <div className="ss-graph-wrap">
           <div style={{ flex: '1 1 480px' }}>
             <CytoscapeGraph
@@ -323,16 +298,18 @@ export default function Simulator() {
 
       <div className="ss-card">
         <h3>Run new simulation</h3>
-        <p className="ss-muted">
-          Runs the multi-agent simulation for the chosen day on the MiroFish
-          service — takes several minutes.
-        </p>
         {liveDisabled ? (
           <p className="ss-muted">
-            MiroFish service unreachable — runs use the local LLM instead
-            (persona simulation on the GPU box, ~1–2 minutes).
+            Simulations are generated automatically at the end of each trading day
+            by the nightly pipeline — pick a day above to explore its agent map.
           </p>
-        ) : null}
+        ) : (
+          <p className="ss-muted">
+            Runs the multi-agent simulation for the chosen day on the MiroFish
+            service — takes several minutes.
+          </p>
+        )}
+        {liveDisabled ? null : (
         <div className="ss-controls">
           <label className="ss-field">
             Date
@@ -347,9 +324,10 @@ export default function Simulator() {
             onClick={runSimulation}
             disabled={running || (!runDate && !date) || !mode}
           >
-            {running ? 'Running…' : liveDisabled ? 'Run simulation (local LLM)' : 'Run new simulation'}
+            {running ? 'Running…' : 'Run new simulation'}
           </button>
         </div>
+        )}
         {events.length > 0 ? (
           <ul className="ss-events">
             {events.map((ev, i) => (

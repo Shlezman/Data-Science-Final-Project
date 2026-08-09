@@ -1914,3 +1914,15 @@ body {
   color: var(--ss-fg);
   font: inherit;
 }
+
+/* Persona quote (agent statements + consensus) */
+.ss-persona-quote {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--ss-accent);
+  background: var(--ss-surface-2);
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
