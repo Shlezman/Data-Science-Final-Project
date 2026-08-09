@@ -249,16 +249,19 @@ function ClassificationMetric({ label, value, accent, info }) {
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState(null);
   const [health, setHealth] = useState(null);
+  const [perf, setPerf] = useState(null);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [d, h] = await Promise.all([
+      const [d, h, p] = await Promise.all([
         getJson('/api/dashboard'),
         getJson('/api/health'),
+        getJson('/api/performance'),
       ]);
       setDashboard(d);
       setHealth(h);
+      setPerf(p);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -278,18 +281,18 @@ export default function Dashboard() {
     return <p className="ss-muted">Loading dashboard…</p>;
   }
 
-  const c = dashboard.confusion || {};
-  const ev = dashboard.eval_metrics || null;
-  const combined = dashboard.combined || null;
-  const liveN = combined?.n_live ?? 0;
   const recent = dashboard.recent || [];
   const latest = dashboard.latest_headlines || {};
-  const accValue = combined ? combined.accuracy : c.accuracy;
-  const mccValue = liveN > 0 ? c.mcc : ev?.mcc;
-  const aucValue = ev?.roc_auc;
-  const totalN = combined?.n ?? c.n ?? 0;
-  const evalN = combined?.n_eval ?? ev?.n ?? 0;
-  const pendingN = c.pending ?? 0;
+
+  // The Model-performance panel is rendered VERBATIM from /api/performance —
+  // the server owns every number/label (models/performance.json overrides).
+  const core = perf?.core || [];
+  const classification = perf?.classification || [];
+  const sample = perf?.sample || { total: 0, eval: 0, live: 0, pending: 0 };
+  const totalN = sample.total ?? 0;
+  const evalN = sample.eval ?? 0;
+  const liveN = sample.live ?? 0;
+  const pendingN = sample.pending ?? 0;
   const evalShare = totalN > 0 ? (evalN / totalN) * 100 : 0;
   const liveShare = totalN > 0 ? (liveN / totalN) * 100 : 0;
 
@@ -303,63 +306,42 @@ export default function Dashboard() {
           <div>
             <h2>
               Model performance
-              {dashboard.model_type ? <span className="ss-tag">{dashboard.model_type}</span> : null}
+              {perf?.model_type ? <span className="ss-tag">{perf.model_type}</span> : null}
             </h2>
-            <p>Evaluation and live-monitoring metrics with reference baselines.</p>
+            <p>{perf?.subtitle || 'Evaluation and live-monitoring metrics with reference baselines.'}</p>
           </div>
         </div>
 
         <div className="ss-metric-group-head">
           <h3>Core metrics</h3>
-          <span className="ss-tag">Overall · evaluation + live</span>
+          {perf?.core_tag ? <span className="ss-tag">{perf.core_tag}</span> : null}
         </div>
         <div className="ss-core-metrics">
-          <CoreMetric
-            label="Accuracy"
-            value={accValue}
-            displayValue={metricPercent(accValue)}
-            kind="accuracy"
-            baseline={0.5}
-            domain={[0, 1]}
-            scope="Overall"
-            comparison={ev?.accuracy != null ? `Eval ${metricPercent(ev.accuracy)}` : null}
-            info="The share of predictions that matched the actual market direction."
-          />
-          <CoreMetric
-            label="ROC-AUC"
-            value={aucValue}
-            displayValue={metric(aucValue)}
-            kind="auc"
-            baseline={0.5}
-            domain={[0, 1]}
-            scope="Evaluation"
-            comparison="Higher is better"
-            info="How well the model separates up days from down days across decision thresholds."
-          />
-          <CoreMetric
-            label="MCC"
-            value={mccValue}
-            displayValue={metric(mccValue)}
-            kind="mcc"
-            baseline={0}
-            domain={[-1, 1]}
-            scope={liveN > 0 ? 'Live' : 'Evaluation'}
-            comparison={liveN > 0 && ev?.mcc != null ? `Eval ${metric(ev.mcc)}` : 'Range −1 to +1'}
-            info="A balanced correlation score from −1 to +1; zero means no predictive relationship."
-          />
+          {core.map((m) => (
+            <CoreMetric
+              key={m.label}
+              label={m.label}
+              value={m.value}
+              displayValue={m.kind === 'accuracy' ? metricPercent(m.value) : metric(m.value)}
+              kind={m.kind}
+              baseline={m.baseline ?? 0.5}
+              domain={m.domain || [0, 1]}
+              scope={m.scope}
+              comparison={m.comparison}
+              info={m.info || ''}
+            />
+          ))}
         </div>
 
         <div className="ss-metric-group-head ss-metric-group-head--secondary">
           <h3>Classification metrics</h3>
-          {liveN > 0 ? <span className="ss-tag">Live monitoring · {liveN} days</span> : null}
+          {perf?.classification_tag ? <span className="ss-tag">{perf.classification_tag}</span> : null}
         </div>
         <div className="ss-classification-metrics">
-          <ClassificationMetric label="Precision" value={liveN > 0 ? c.precision : null} accent="#2dd4bf"
-            info="Of the predicted positive days, the share that were actually positive." />
-          <ClassificationMetric label="Recall" value={liveN > 0 ? c.recall : null} accent="#a78bfa"
-            info="Of the actual positive days, the share the model identified." />
-          <ClassificationMetric label="F1" value={liveN > 0 ? c.f1 : null} accent="#fbbf24"
-            info="The harmonic mean of precision and recall." />
+          {classification.map((m) => (
+            <ClassificationMetric key={m.label} label={m.label} value={m.value}
+                                  accent={m.accent || '#2dd4bf'} info={m.info || ''} />
+          ))}
         </div>
 
         <div className="ss-metric-status" aria-label="Metric sample status">

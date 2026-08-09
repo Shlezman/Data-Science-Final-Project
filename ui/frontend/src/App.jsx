@@ -4,6 +4,7 @@ import Dashboard from './components/Dashboard.jsx';
 import Archive from './components/Archive.jsx';
 import Simulator from './components/Simulator.jsx';
 import Models from './components/Models.jsx';
+import Login from './components/Login.jsx';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -23,6 +24,7 @@ const TABS = [
 export default function App() {
   const [tab, setTab] = useState('dashboard');
   const [champion, setChampion] = useState(null);
+  const [auth, setAuth] = useState(null);   // null = probing; {authed, gated}
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark');
 
   const toggleTheme = () => {
@@ -37,10 +39,18 @@ export default function App() {
   };
 
   useEffect(() => {
-    getJson('/api/health')
-      .then((res) => setChampion(res?.champion ?? null))
-      .catch(() => setChampion(null));
+    getJson('/api/auth')
+      .then((res) => setAuth(res))
+      .catch(() => setAuth({ authed: true, gated: false }));   // gate endpoint down → don't lock out
   }, []);
+
+  useEffect(() => {
+    if (auth && !(auth.gated && !auth.authed)) {
+      getJson('/api/health')
+        .then((res) => setChampion(res?.champion ?? null))
+        .catch(() => setChampion(null));
+    }
+  }, [auth]);
 
   useEffect(() => {
     const onHash = () => {
@@ -50,6 +60,13 @@ export default function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  if (auth === null) {
+    return null;                       // brief blank while probing the gate
+  }
+  if (auth.gated && !auth.authed) {
+    return <Login onOk={() => setAuth({ authed: true, gated: true })} />;
+  }
 
   return (
     <div className="ss-app">
@@ -103,8 +120,8 @@ export default function App() {
               <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
             </button>
 
-            <span className="ss-champion" onClick={() => setTab('models')}
-                  role="button" tabIndex={-1}
+            <span className="ss-champion ss-champion--ghost" onClick={() => setTab('models')}
+                  role="button" tabIndex={-1} aria-hidden="true"
                   style={{ cursor: 'default', userSelect: 'none' }}>
               {champion ? (
                 <>

@@ -34,7 +34,9 @@ export async function getJson(path, options = {}) {
   }
   if (!res.ok) {
     const detail = await safeErrorDetail(res);
-    throw new Error(detail || `Request failed (${res.status})`);
+    const err = new Error(detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -57,7 +59,9 @@ export async function postJson(path, body) {
   });
   if (!res.ok) {
     const detail = await safeErrorDetail(res);
-    throw new Error(detail || `Request failed (${res.status})`);
+    const err = new Error(detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }

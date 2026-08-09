@@ -13,12 +13,15 @@ Run (server-side, inside /tf, port 3000 exposed to host):
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -34,7 +37,68 @@ _MIRO_BASE = os.environ.get("SENTISENSE_MIRO_BASE_URL", "http://localhost:5001")
 _SIM_HEALTH_TTL = 30.0
 _sim_health: dict = {"t": -1e9, "val": None}
 
+# --- site login gate ---------------------------------------------------------
+# One shared password from the environment (never committed). When unset, the
+# gate is OFF (local dev). The session cookie is an HMAC of a fixed message
+# under a key derived from the password, so it is stateless and survives
+# restarts; rotating the password invalidates every session.
+_UI_PASSWORD = os.environ.get("SENTISENSE_UI_PASSWORD", "")
+_AUTH_COOKIE = "ss_auth"
+
+
+def _auth_token() -> str:
+    """The expected session-cookie value for the current password."""
+    key = hashlib.sha256(("sentisense-ui:" + _UI_PASSWORD).encode()).digest()
+    return hmac.new(key, b"session-v1", hashlib.sha256).hexdigest()
+
+
+def _is_authed(cookies) -> bool:
+    """True when the gate is off or the request carries a valid session cookie."""
+    if not _UI_PASSWORD:
+        return True
+    tok = cookies.get(_AUTH_COOKIE, "")
+    return bool(tok) and hmac.compare_digest(tok, _auth_token())
+
+
 app = FastAPI(title="SentiSense live", version="1.0")
+
+_AUTH_EXEMPT = ("/api/login", "/api/auth")
+
+
+@app.middleware("http")
+async def _auth_middleware(request: Request, call_next):
+    """Require the session cookie for every data endpoint (API + websocket upgrade).
+
+    Static assets and the SPA shell stay open — the shell renders the login
+    screen; only data is gated.
+    """
+    path = request.url.path
+    if (path.startswith("/api") or path.startswith("/ws")) and path not in _AUTH_EXEMPT:
+        if not _is_authed(request.cookies):
+            return JSONResponse({"error": "authentication required"}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/api/auth")
+def auth_state(request: Request) -> dict:
+    """Whether this browser session is authenticated (drives the login screen)."""
+    return {"authed": _is_authed(request.cookies), "gated": bool(_UI_PASSWORD)}
+
+
+@app.post("/api/login")
+async def login(request: Request) -> JSONResponse:
+    """Validate the shared password and set the session cookie (30 days)."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    supplied = str(body.get("password", ""))
+    if not _UI_PASSWORD or not secrets.compare_digest(supplied, _UI_PASSWORD):
+        return JSONResponse({"error": "wrong password"}, status_code=401)
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(_AUTH_COOKIE, _auth_token(), max_age=30 * 24 * 3600,
+                    httponly=True, samesite="lax")
+    return resp
 
 _CACHE: dict = {}
 _CACHE_TTL = 60.0
@@ -130,6 +194,123 @@ def dashboard() -> dict:
 def prediction_today() -> dict:
     """Current-day served prediction (up/down + confidence) for the dashboard hero."""
     return _cached("today", lambda: queries.today_prediction() or {})
+
+
+_PERF_OVERRIDE = REPO_ROOT / "models" / "performance.json"
+
+
+def _build_performance() -> dict:
+    """Compute the FULL Model-performance panel payload server-side.
+
+    The UI renders this JSON verbatim, so the panel can be changed manually (drop an edited
+    copy at ``models/performance.json`` — it wins over the computed values) or methodically
+    (regenerate it with ``scripts/generate_performance.py``).
+    """
+    version, model_type = _active_served()
+    active_rows = queries.prediction_rows(version=version)
+    rows = active_rows or queries.prediction_rows(version=None)
+    cm = queries.confusion_matrix(rows)
+    ev = queries.active_model_metrics() or {}
+
+    cm_active = queries.confusion_matrix(active_rows) if active_rows else None
+    live_n = cm_active["n"] if cm_active else 0
+    live_ok = (cm_active["tp"] + cm_active["tn"]) if cm_active else 0
+    ev_n = ev.get("n") or 0
+    n_all = ev_n + live_n
+    acc = (((ev.get("accuracy") or 0) * ev_n + live_ok) / n_all) if n_all else cm.get("accuracy")
+    mcc = cm_active["mcc"] if (cm_active and live_n > 0) else ev.get("mcc")
+
+    def pctf(v):
+        return f"{v * 100:.1f}%" if isinstance(v, (int, float)) else "—"
+
+    return {
+        "source": "computed",
+        "champion": version,
+        "model_type": model_type,
+        "subtitle": "Evaluation and live-monitoring metrics with reference baselines.",
+        "core_tag": "Overall · evaluation + live",
+        "core": [
+            {"label": "Accuracy", "value": (round(acc, 4) if acc is not None else None),
+             "kind": "accuracy", "baseline": 0.5, "domain": [0, 1], "scope": "Overall",
+             "comparison": (f"Eval {pctf(ev.get('accuracy'))}" if ev.get("accuracy") is not None else None),
+             "info": "The share of predictions that matched the actual market direction."},
+            {"label": "ROC-AUC", "value": ev.get("roc_auc"),
+             "kind": "auc", "baseline": 0.5, "domain": [0, 1], "scope": "Evaluation",
+             "comparison": "Higher is better",
+             "info": "How well the model separates up days from down days across decision thresholds."},
+            {"label": "MCC", "value": (round(mcc, 4) if isinstance(mcc, (int, float)) else None),
+             "kind": "mcc", "baseline": 0, "domain": [-1, 1],
+             "scope": ("Live" if live_n > 0 else "Evaluation"),
+             "comparison": (f"Eval {ev.get('mcc')}" if live_n > 0 and ev.get("mcc") is not None
+                            else "Range −1 to +1"),
+             "info": "A balanced correlation score from −1 to +1; zero means no predictive relationship."},
+        ],
+        "classification_tag": (f"Live monitoring · {live_n} days" if live_n > 0 else None),
+        "classification": [
+            {"label": "Precision", "value": (cm_active["precision"] if live_n > 0 else None),
+             "accent": "#2dd4bf",
+             "info": "Of the predicted positive days, the share that were actually positive."},
+            {"label": "Recall", "value": (cm_active["recall"] if live_n > 0 else None),
+             "accent": "#a78bfa",
+             "info": "Of the actual positive days, the share the model identified."},
+            {"label": "F1", "value": (cm_active["f1"] if live_n > 0 else None),
+             "accent": "#fbbf24",
+             "info": "The harmonic mean of precision and recall."},
+        ],
+        "sample": {"total": n_all or cm.get("n", 0), "eval": ev_n, "live": live_n,
+                   "pending": cm.get("pending", 0)},
+    }
+
+
+@app.get("/api/performance")
+def performance() -> dict:
+    """The Model-performance panel as one JSON document (file override > computed)."""
+    if _PERF_OVERRIDE.exists():
+        try:
+            doc = json.loads(_PERF_OVERRIDE.read_text(encoding="utf-8"))
+            doc["source"] = "file"
+            return doc
+        except Exception as exc:  # noqa: BLE001 — a broken override must not blank the panel
+            logger.warning("performance.json unreadable ({}); serving computed.", str(exc)[:120])
+    try:
+        return _cached("performance", _build_performance)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("/api/performance failed: {}", str(exc)[:300])
+        return {"source": "error", "error": str(exc)[:200], "core": [], "classification": [],
+                "sample": {"total": 0, "eval": 0, "live": 0, "pending": 0}}
+
+
+@app.post("/api/llm/ask")
+async def llm_ask(request: Request) -> JSONResponse:
+    """Queue a question (or day-narration) for the LLM worker on the GPU box.
+
+    The firewall only passes Postgres between the hosts, so the DB is the transport:
+    this inserts a row; ``scripts/llm_worker.py`` answers it; the UI polls /api/llm/answer.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    kind = body.get("kind", "ask")
+    if kind not in ("ask", "narrate"):
+        return JSONResponse({"error": "kind must be ask|narrate"}, status_code=400)
+    day = body.get("date") or None
+    question = (str(body.get("question", "")).strip() or None)
+    if kind == "ask" and not question:
+        return JSONResponse({"error": "question required"}, status_code=400)
+    if question and len(question) > 2000:
+        return JSONResponse({"error": "question too long"}, status_code=400)
+    rid = queries.llm_submit(kind=kind, day=day, question=question)
+    return JSONResponse({"id": rid, "status": "pending"})
+
+
+@app.get("/api/llm/answer")
+def llm_answer(id: int) -> JSONResponse:
+    """Poll one queued LLM request; returns status pending|done|error with the answer."""
+    row = queries.llm_fetch(request_id=id)
+    if row is None:
+        return JSONResponse({"error": "unknown id"}, status_code=404)
+    return JSONResponse(row)
 
 
 @app.get("/api/confusion/full")
@@ -307,6 +488,9 @@ async def ws_sim_run(ws: WebSocket) -> None:
     is already cached, the graph returns immediately. Errors (e.g. MiroFish service down) are
     sent as an ``error`` event rather than dropping the socket.
     """
+    if not _is_authed(ws.cookies):        # HTTP middleware doesn't cover websockets
+        await ws.close(code=4401)
+        return
     await ws.accept()
     try:
         req = await ws.receive_json()

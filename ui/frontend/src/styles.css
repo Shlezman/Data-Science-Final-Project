@@ -1854,3 +1854,63 @@ body {
   .ss-headline-facts { grid-template-columns: 1fr 1fr; }
   .ss-headline-load-more { align-items: stretch; flex-direction: column; }
 }
+
+/* Serving indicator ghosted: still clickable (opens Models) but invisible */
+.ss-champion--ghost {
+  opacity: 0;
+}
+.ss-champion--ghost:hover,
+.ss-champion--ghost:focus {
+  opacity: 0;             /* no hover reveal — deliberate */
+}
+
+/* Full-page login gate */
+.ss-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.ss-login__card {
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--ss-surface);
+  border: 1px solid var(--ss-border);
+  border-radius: var(--ss-radius);
+  padding: 28px 26px;
+  text-align: center;
+}
+.ss-login__card input[type='password'] {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ss-border);
+  background: var(--ss-surface-2);
+  color: var(--ss-fg);
+  font: inherit;
+}
+
+/* Ask-the-analyst (LLM) panel on the Simulator tab */
+.ss-analyst__answer {
+  white-space: pre-wrap;
+  background: var(--ss-surface-2);
+  border: 1px solid var(--ss-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.ss-analyst__question {
+  flex: 1 1 320px;
+}
+.ss-analyst__question input {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--ss-border);
+  background: var(--ss-surface-2);
+  color: var(--ss-fg);
+  font: inherit;
+}

@@ -513,3 +513,43 @@ def confusion_matrix(rows: list[dict]) -> dict:
     return {"tp": tp, "tn": tn, "fp": fp, "fn": fn, "n": n, "pending": len(rows) - len(settled),
             "accuracy": round(acc, 4), "precision": round(prec, 4), "recall": round(rec, 4),
             "f1": round(f1, 4), "mcc": round(mcc, 4)}
+
+
+# --- LLM request queue (DB is the transport; see migrations/008_llm_requests.sql) ---
+
+def ensure_llm_table(engine=None) -> None:
+    """Apply migration 008 (idempotent) so the queue table exists."""
+    import re
+    from pathlib import Path
+
+    engine = engine or get_engine()
+    mig = Path(__file__).resolve().parents[1] / "sentisense" / "db" / "migrations" / "008_llm_requests.sql"
+    ddl = re.sub(r"--[^\n]*", "", mig.read_text(encoding="utf-8"))
+    with engine.begin() as conn:
+        for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
+            conn.execute(text(stmt))
+
+
+def llm_submit(engine=None, *, kind: str, day: str | None, question: str | None) -> int:
+    """Insert an LLM request row; returns its id (the UI polls it via llm_fetch)."""
+    engine = engine or get_engine()
+    ensure_llm_table(engine)
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            "INSERT INTO llm_requests (kind, date, question) VALUES (:k, :d, :q) RETURNING id"),
+            {"k": kind, "d": day, "q": question}).first()
+    return int(row[0])
+
+
+def llm_fetch(engine=None, *, request_id: int) -> dict | None:
+    """Current state of one LLM request (status/answer), or None if unknown id."""
+    engine = engine or get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT id, kind, date, question, status, answer, created_at, answered_at "
+            "FROM llm_requests WHERE id = :i"), {"i": request_id}).mappings().first()
+    if not row:
+        return None
+    return {"id": int(row["id"]), "kind": row["kind"], "date": (str(row["date"]) if row["date"] else None),
+            "question": row["question"], "status": row["status"], "answer": row["answer"],
+            "created_at": str(row["created_at"]), "answered_at": (str(row["answered_at"]) if row["answered_at"] else None)}

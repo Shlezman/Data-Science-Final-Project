@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getJson, simRunSocketUrl } from '../lib/api.js';
 import CytoscapeGraph from './CytoscapeGraph.jsx';
 import PersonaPanel from './PersonaPanel.jsx';
+import AnalystPanel from './AnalystPanel.jsx';
 
 /**
  * Renders the side panel showing a tapped node's attributes.
@@ -243,6 +244,8 @@ export default function Simulator() {
 
         {loadError ? <p className="ss-error-text">Error: {loadError}</p> : null}
       </div>
+
+      <AnalystPanel date={date} />
 
       <PersonaPanel date={date} />
 
