@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getJson, simRunSocketUrl } from '../lib/api.js';
+import { getJson, postJson, simRunSocketUrl } from '../lib/api.js';
 import CytoscapeGraph from './CytoscapeGraph.jsx';
 import PersonaPanel from './PersonaPanel.jsx';
 import AnalystPanel from './AnalystPanel.jsx';
@@ -156,9 +156,56 @@ export default function Simulator() {
     };
   }, []);
 
+  // MiroFish unreachable → route the run through the local-LLM queue instead:
+  // POST /api/llm/ask {kind:'simulate'} and poll until the worker on the GPU box
+  // has written the graph + report into the narrative_sim tables, then reload.
+  const runLocalSimulation = useCallback(async (targetDate) => {
+    setEvents([{ event: 'accepted', date: targetDate, mode: 'source' }]);
+    setRunning(true);
+    try {
+      const req = await postJson('/api/llm/ask', { kind: 'simulate', date: targetDate });
+      const startedAt = Date.now();
+      const poll = setInterval(async () => {
+        try {
+          const row = await getJson(`/api/llm/answer?id=${req.id}`);
+          if (row.status === 'done') {
+            clearInterval(poll);
+            setEvents((prev) => [...prev, { event: 'done', cached: false }]);
+            setRunning(false);
+            setDate(targetDate);
+            loadGraphAndReport(targetDate, 'source');
+          } else if (row.status === 'error') {
+            clearInterval(poll);
+            setEvents((prev) => [...prev, { event: 'error', message: row.answer }]);
+            setRunning(false);
+          } else if (Date.now() - startedAt > 300_000) {
+            clearInterval(poll);
+            setEvents((prev) => [...prev, { event: 'error', message: 'timed out — LLM worker offline?' }]);
+            setRunning(false);
+          } else {
+            setEvents((prev) => (prev.length < 40
+              ? [...prev, { event: 'running', elapsed_s: Math.round((Date.now() - startedAt) / 1000) }]
+              : prev));
+          }
+        } catch (err) {
+          clearInterval(poll);
+          setEvents((prev) => [...prev, { event: 'error', message: err.message }]);
+          setRunning(false);
+        }
+      }, 4000);
+    } catch (err) {
+      setEvents((prev) => [...prev, { event: 'error', message: err.message }]);
+      setRunning(false);
+    }
+  }, [loadGraphAndReport]);
+
   const runSimulation = useCallback(() => {
     const targetDate = runDate || date;
-    if (!targetDate || !mode || running || liveDisabled) {
+    if (!targetDate || !mode || running) {
+      return;
+    }
+    if (liveDisabled) {
+      runLocalSimulation(targetDate);   // MiroFish down → local-LLM persona simulation
       return;
     }
     setEvents([]);
@@ -204,7 +251,7 @@ export default function Simulator() {
     ws.onclose = () => {
       setRunning(false);
     };
-  }, [runDate, date, mode, running, liveDisabled, loadGraphAndReport]);
+  }, [runDate, date, mode, running, liveDisabled, loadGraphAndReport, runLocalSimulation]);
 
   return (
     <div>
@@ -282,8 +329,8 @@ export default function Simulator() {
         </p>
         {liveDisabled ? (
           <p className="ss-muted">
-            Live runs unavailable — showing historical (cached) simulations only.
-            {simLive?.reason ? ` (${simLive.reason})` : null}
+            MiroFish service unreachable — runs use the local LLM instead
+            (persona simulation on the GPU box, ~1–2 minutes).
           </p>
         ) : null}
         <div className="ss-controls">
@@ -293,15 +340,14 @@ export default function Simulator() {
               type="date"
               value={runDate}
               onChange={(e) => setRunDate(e.target.value)}
-              disabled={liveDisabled}
             />
           </label>
           <button
             className="ss-btn"
             onClick={runSimulation}
-            disabled={running || liveDisabled || (!runDate && !date) || !mode}
+            disabled={running || (!runDate && !date) || !mode}
           >
-            {running ? 'Running…' : 'Run new simulation'}
+            {running ? 'Running…' : liveDisabled ? 'Run simulation (local LLM)' : 'Run new simulation'}
           </button>
         </div>
         {events.length > 0 ? (

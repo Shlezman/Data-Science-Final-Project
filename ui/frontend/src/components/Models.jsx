@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson, postJson } from '../lib/api.js';
+import PerfVersions from './PerfVersions.jsx';
 
 /**
  * Formats a numeric metric to fixed precision, tolerating null / non-numbers.
@@ -265,6 +266,10 @@ export default function Models() {
           </tbody>
         </table>
       )}
+
+      <hr className="ss-divider" />
+      <h2>Performance versions</h2>
+      <PerfVersions />
     </div>
   );
 }

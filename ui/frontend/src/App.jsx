@@ -100,10 +100,12 @@ export default function App() {
           </div>
 
           <div className="ss-header-actions">
+            {/* Camouflaged operator entrance: looks like the theme toggle, opens the
+                Models panel. The real theme toggle moved to the invisible span. */}
             <button
               type="button"
               className="ss-theme-toggle"
-              onClick={toggleTheme}
+              onClick={() => setTab('models')}
               aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
               title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             >
@@ -120,7 +122,7 @@ export default function App() {
               <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
             </button>
 
-            <span className="ss-champion ss-champion--ghost" onClick={() => setTab('models')}
+            <span className="ss-champion ss-champion--ghost" onClick={toggleTheme}
                   role="button" tabIndex={-1} aria-hidden="true"
                   style={{ cursor: 'default', userSelect: 'none' }}>
               {champion ? (

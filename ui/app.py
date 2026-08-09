@@ -262,9 +262,43 @@ def _build_performance() -> dict:
     }
 
 
+# Versioned performance documents live in the front machine's MongoDB (env-configured URL,
+# e.g. mongodb://user:pass@localhost:21771/?authSource=admin). The ACTIVE Mongo version wins
+# over the file override, which wins over computed values — so the panel can be tuned,
+# versioned, and rolled back without touching git.
+_MONGO_URL = os.environ.get("SENTISENSE_MONGO_URL", "")
+
+
+def _perf_coll():
+    """The performance_versions Mongo collection, or None (unset env / driver / server down)."""
+    if not _MONGO_URL:
+        return None
+    try:
+        from pymongo import MongoClient
+        client = MongoClient(_MONGO_URL, serverSelectionTimeoutMS=1500)
+        client.admin.command("ping")
+        return client["sentisense"]["performance_versions"]
+    except Exception as exc:  # noqa: BLE001 — Mongo is optional; never break the panel
+        logger.warning("Mongo unavailable ({}); performance versions disabled.", str(exc)[:120])
+        return None
+
+
 @app.get("/api/performance")
 def performance() -> dict:
-    """The Model-performance panel as one JSON document (file override > computed)."""
+    """The Model-performance panel as one JSON document.
+
+    Resolution order: active Mongo version > models/performance.json > computed.
+    """
+    coll = _perf_coll()
+    if coll is not None:
+        try:
+            row = coll.find_one({"active": True})
+            if row and isinstance(row.get("doc"), dict):
+                doc = dict(row["doc"])
+                doc["source"] = f"mongo:{row['_id']}"
+                return doc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Mongo active-version read failed: {}", str(exc)[:120])
     if _PERF_OVERRIDE.exists():
         try:
             doc = json.loads(_PERF_OVERRIDE.read_text(encoding="utf-8"))
@@ -280,6 +314,84 @@ def performance() -> dict:
                 "sample": {"total": 0, "eval": 0, "live": 0, "pending": 0}}
 
 
+@app.get("/api/performance/versions")
+def performance_versions() -> dict:
+    """List stored performance versions (metadata only; fetch one by id for the doc)."""
+    coll = _perf_coll()
+    if coll is None:
+        return {"versions": [], "mongo": False}
+    rows = [{"id": str(r["_id"]), "note": r.get("note", ""), "active": bool(r.get("active")),
+             "created_at": str(r.get("created_at", ""))}
+            for r in coll.find({}, {"doc": False}).sort("created_at", -1).limit(100)]
+    return {"versions": rows, "mongo": True}
+
+
+@app.get("/api/performance/versions/{vid}")
+def performance_version(vid: str) -> JSONResponse:
+    """One stored version's full document (for the editor)."""
+    coll = _perf_coll()
+    if coll is None:
+        return JSONResponse({"error": "mongo unavailable"}, status_code=503)
+    from bson import ObjectId
+    try:
+        row = coll.find_one({"_id": ObjectId(vid)})
+    except Exception:  # noqa: BLE001 — malformed id
+        row = None
+    if not row:
+        return JSONResponse({"error": "unknown version"}, status_code=404)
+    return JSONResponse({"id": vid, "note": row.get("note", ""), "active": bool(row.get("active")),
+                         "doc": row.get("doc", {})})
+
+
+@app.post("/api/performance/versions")
+async def performance_version_save(request: Request) -> JSONResponse:
+    """Save a new version. Body: {doc?: object, note?: str} — doc defaults to computed."""
+    coll = _perf_coll()
+    if coll is None:
+        return JSONResponse({"error": "mongo unavailable"}, status_code=503)
+    import datetime as dt
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    doc = body.get("doc")
+    if doc is not None and not isinstance(doc, dict):
+        return JSONResponse({"error": "doc must be an object"}, status_code=400)
+    if doc is None:
+        doc = _build_performance()
+    res = coll.insert_one({"doc": doc, "note": str(body.get("note", ""))[:200],
+                           "active": False, "created_at": dt.datetime.utcnow()})
+    return JSONResponse({"id": str(res.inserted_id), "active": False})
+
+
+@app.post("/api/performance/versions/{vid}/activate")
+def performance_version_activate(vid: str) -> JSONResponse:
+    """Make one version the served document (deactivates the rest)."""
+    coll = _perf_coll()
+    if coll is None:
+        return JSONResponse({"error": "mongo unavailable"}, status_code=503)
+    from bson import ObjectId
+    try:
+        oid = ObjectId(vid)
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "bad id"}, status_code=400)
+    if not coll.find_one({"_id": oid}):
+        return JSONResponse({"error": "unknown version"}, status_code=404)
+    coll.update_many({}, {"$set": {"active": False}})
+    coll.update_one({"_id": oid}, {"$set": {"active": True}})
+    return JSONResponse({"ok": True, "active": vid})
+
+
+@app.post("/api/performance/versions/deactivate")
+def performance_version_deactivate() -> JSONResponse:
+    """Deactivate all versions — the panel falls back to file/computed values."""
+    coll = _perf_coll()
+    if coll is None:
+        return JSONResponse({"error": "mongo unavailable"}, status_code=503)
+    coll.update_many({}, {"$set": {"active": False}})
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/llm/ask")
 async def llm_ask(request: Request) -> JSONResponse:
     """Queue a question (or day-narration) for the LLM worker on the GPU box.
@@ -292,12 +404,14 @@ async def llm_ask(request: Request) -> JSONResponse:
     except Exception:  # noqa: BLE001
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     kind = body.get("kind", "ask")
-    if kind not in ("ask", "narrate"):
-        return JSONResponse({"error": "kind must be ask|narrate"}, status_code=400)
+    if kind not in ("ask", "narrate", "simulate"):
+        return JSONResponse({"error": "kind must be ask|narrate|simulate"}, status_code=400)
     day = body.get("date") or None
     question = (str(body.get("question", "")).strip() or None)
     if kind == "ask" and not question:
         return JSONResponse({"error": "question required"}, status_code=400)
+    if kind == "simulate" and not day:
+        return JSONResponse({"error": "date required for simulate"}, status_code=400)
     if question and len(question) > 2000:
         return JSONResponse({"error": "question too long"}, status_code=400)
     rid = queries.llm_submit(kind=kind, day=day, question=question)
