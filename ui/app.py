@@ -538,7 +538,7 @@ def sim_dates() -> dict:
     """Dates that have a cached narrative simulation (newest first)."""
     with get_engine().connect() as conn:
         rows = conn.execute(text(
-            "SELECT DISTINCT sim_date FROM narrative_sim ORDER BY sim_date DESC LIMIT 400")).all()
+            "SELECT DISTINCT sim_date FROM narrative_sim_graph ORDER BY sim_date DESC LIMIT 400")).all()
     return {"dates": [str(r[0]) for r in rows]}
 
 
