@@ -100,12 +100,24 @@ export default function App() {
           </div>
 
           <div className="ss-header-actions">
-            {/* Camouflaged operator entrance: looks like the theme toggle, opens the
-                Models panel. The real theme toggle moved to the invisible span. */}
+            {/* Invisible operator entrance (opens Models) — placed FIRST so it sits
+                where the theme toggle used to be; the visible toggle moved right. */}
+            <span className="ss-champion ss-champion--ghost" onClick={() => setTab('models')}
+                  role="button" tabIndex={-1} aria-hidden="true"
+                  style={{ cursor: 'default', userSelect: 'none' }}>
+              {champion ? (
+                <>
+                  <span className="ss-champion__dot" aria-hidden="true" />
+                  <span className="ss-champion__label">Serving</span>
+                  <span className="ss-champion__value">{champion}</span>
+                </>
+              ) : null}
+            </span>
+
             <button
               type="button"
               className="ss-theme-toggle"
-              onClick={() => setTab('models')}
+              onClick={toggleTheme}
               aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
               title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             >
@@ -121,18 +133,6 @@ export default function App() {
               )}
               <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
             </button>
-
-            <span className="ss-champion ss-champion--ghost" onClick={toggleTheme}
-                  role="button" tabIndex={-1} aria-hidden="true"
-                  style={{ cursor: 'default', userSelect: 'none' }}>
-              {champion ? (
-                <>
-                  <span className="ss-champion__dot" aria-hidden="true" />
-                  <span className="ss-champion__label">Serving</span>
-                  <span className="ss-champion__value">{champion}</span>
-                </>
-              ) : null}
-            </span>
           </div>
         </header>
 
