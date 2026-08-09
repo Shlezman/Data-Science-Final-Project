@@ -150,9 +150,9 @@ _SIM_GRAPH_UPSERT = text(
 )
 _SIM_REPORT_UPSERT = text(
     """
-    INSERT INTO narrative_sim_report (report_id, sim_date, report_md, sections, mode)
-    VALUES (:rid, :d, :md, :sections, :mode)
-    ON CONFLICT (report_id) DO UPDATE
+    INSERT INTO narrative_sim_report (sim_run_id, report_id, sim_date, report_md, sections, mode)
+    VALUES (:rid, :rid, :d, :md, :sections, :mode)
+    ON CONFLICT (sim_run_id) DO UPDATE
         SET report_md = EXCLUDED.report_md, sections = EXCLUDED.sections, created_at = NOW()
     """
 )
