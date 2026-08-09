@@ -32,7 +32,7 @@ _ROWS = text(
     FROM narrative_sim_graph g
     LEFT JOIN narrative_sim_report r
            ON r.sim_run_id = g.sim_run_id AND r.mode = g.mode
-    WHERE (:since IS NULL OR g.sim_date >= CAST(:since AS date))
+    WHERE (CAST(:since AS date) IS NULL OR g.sim_date >= CAST(:since AS date))
     ORDER BY g.sim_date
     """
 )
