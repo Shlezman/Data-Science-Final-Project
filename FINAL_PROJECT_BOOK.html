@@ -78,21 +78,21 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <hr/>
 <h2>List of Figures</h2>
 <ul>
-<li>Figure 1: SentiSense end-to-end pipeline (§1.6)</li>
+<li>Figure 1: SentiSense end-to-end pipeline (1.6)</li>
 </ul>
 <h2>List of Tables</h2>
 <ul>
-<li>Table 1: Best result per experiment track vs its baseline (§4.2)</li>
-<li>Table 2: PoC tree-model 5-fold cross-validation accuracy (§4.2.1)</li>
-<li>Table 3: PoC chronological 80/20 holdout accuracy (§4.2.1)</li>
-<li>Table 4: PoC significance tests vs majority-class baseline (§4.2.1)</li>
-<li>Table 5: Per-source feature-set holdout comparison (tree models) (§4.2.2)</li>
-<li>Table 6: Feature-group ablation (CatBoost) (§4.2.2)</li>
-<li>Table 7: LSTM base forecaster holdout classification report (§4.2.3)</li>
-<li>Table 8: Transformer zoo final leaderboard vs baselines (§4.2.4)</li>
-<li>Table 9: Tuning notebook — threshold-optimized validation (Youden's J) (§4.2.5)</li>
-<li>Table 10: Hardened-package score-LSTM final holdout (§4.2.6)</li>
-<li>Table 11: Unified out-of-sample leaderboard (§4.2.8)</li>
+<li>Table 1: Best result per experiment track vs its baseline (4.2)</li>
+<li>Table 2: PoC tree-model 5-fold cross-validation accuracy (4.2.1)</li>
+<li>Table 3: PoC chronological 80/20 holdout accuracy (4.2.1)</li>
+<li>Table 4: PoC significance tests vs majority-class baseline (4.2.1)</li>
+<li>Table 5: Per-source feature-set holdout comparison (tree models) (4.2.2)</li>
+<li>Table 6: Feature-group ablation (CatBoost) (4.2.2)</li>
+<li>Table 7: LSTM base forecaster holdout classification report (4.2.3)</li>
+<li>Table 8: Transformer zoo final leaderboard vs baselines (4.2.4)</li>
+<li>Table 9: Tuning notebook — threshold-optimized validation (Youden's J) (4.2.5)</li>
+<li>Table 10: Hardened-package score-LSTM final holdout (4.2.6)</li>
+<li>Table 11: Unified out-of-sample leaderboard (4.2.8)</li>
 </ul>
 <hr/>
 <h2>Table of Abbreviations</h2>
@@ -273,7 +273,7 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <ul>
 <li><strong>Leakage-safety as an architectural invariant</strong>, enforced at every layer</li>
 </ul>
-<p>  (see §3.2).</p>
+<p>  (see 3.2).</p>
 <h3>3.2 Data Collection and Preprocessing</h3>
 <p><strong>Collection.</strong> The scraper drives a headless Firefox via Playwright over <code>mivzakim.net</code>, scraping <em>backward</em> in time (<code>scripts/backfill_history.py</code>) from the most recent day toward ~2015. Each headline yields a row in <code>raw_headlines</code>: date, source outlet, hour, popularity class, the Hebrew text, and an ingestion timestamp. Deduplication uses a stored <code>md5(headline)</code> hash (Hebrew strings exceed B-tree index limits) under a unique key of <code>(date, source, hour, headline_hash)</code>.</p>
 <p><strong>Scoring.</strong> The processing engine sends each headline to an LLM. A <strong>fast single-prompt path</strong> produces all seven scores in one structured call (used for the bulk backfill on a vLLM <code>mistral-small-4</code> server); a legacy <strong>seven-agent LangGraph path</strong> exists for local Ollama. Each result is a vector of six relevance integers (0–10), one global sentiment integer (−10…+10), and a <code>validation_passed</code> flag, written to <code>nlp_vectors</code>. The corpus contains <strong>~1.9M scored headlines</strong>.</p>
@@ -356,7 +356,7 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <ol>
 <li><strong>Exploratory notebook tracks</strong> — a sequence of research notebooks</li>
 </ol>
-<p>   (<code>poc.ipynb</code>, <code>compare_lstm_features_with_poc.ipynb</code>,    <code>transformer_forecaster.ipynb</code>, <code>tuning.ipynb</code>, <code>sentisense_analysis.ipynb</code>,    <code>timesfm_explainability.ipynb</code>) that iterate on splits, feature sets, model    families, ablations, and robustness checks. These differ deliberately in    their train/test windows and majority-class baselines, which is itself part    of the analysis (§4.3).</p>
+<p>   (<code>poc.ipynb</code>, <code>compare_lstm_features_with_poc.ipynb</code>,    <code>transformer_forecaster.ipynb</code>, <code>tuning.ipynb</code>, <code>sentisense_analysis.ipynb</code>,    <code>timesfm_explainability.ipynb</code>) that iterate on splits, feature sets, model    families, ablations, and robustness checks. These differ deliberately in    their train/test windows and majority-class baselines, which is itself part    of the analysis (4.3).</p>
 <ol>
 <li><strong>The unified, hardened package grid</strong> — <code>scripts/pipeline_compare.py</code>, which</li>
 </ol>
@@ -377,7 +377,7 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <p>Each classifier (model × data-type × regime) cell gets its <strong>own resumable Optuna study</strong>; search spaces are wide (e.g., sequence models tune window</p>
 <p>5–60, capacity to 384 units, depth to 4, dropout 0–0.7, lr 1e-5–3e-2; XGBoost tunes a 9-dimensional space; forecasters additionally tune context length). HPO selects on a validation slice only; the test tail stays sacred. Reproducibility is enforced with fixed seeds.</p>
 <h3>4.2 Presentation of Results</h3>
-<p>The project generated <strong>many</strong> result tables across its experiment tracks. They are reproduced faithfully below, organized by source, and then summarized by the unified package grid (§4.2.8). Every table predicts the <strong>next-day close-to-close TA-125 direction</strong>.</p>
+<p>The project generated <strong>many</strong> result tables across its experiment tracks. They are reproduced faithfully below, organized by source, and then summarized by the unified package grid (4.2.8). Every table predicts the <strong>next-day close-to-close TA-125 direction</strong>.</p>
 <p><strong>Aggregation lineage (how the notebooks relate).</strong> A crucial point for reading these results is that the notebooks deliberately use <em>different news-aggregation strategies</em>, and the later notebooks expand on the two base ones:</p>
 <ul>
 <li><strong>Base A — daily-mean aggregation (<code>poc.ipynb</code>).</strong> Each day's headlines are</li>
@@ -390,20 +390,20 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <ul>
 <li><strong>Expansions.</strong> <code>compare_lstm_features_with_poc.ipynb</code> runs the **PoC tree</li>
 </ul>
-<p>  models on Base B's per-source wide features<strong> (directly testing "do per-source   features beat daily means?"), adding ablations, walk-forward, and multi-seed   checks. <code>transformer_forecaster.ipynb</code> and <code>tuning.ipynb</code> use </strong>both** shapes   (daily-mean for tree/vanilla models, per-source for sequence models). The   <code>sentisense/</code> package generalizes both into leakage-safe <code>mt</code> (daily-mean) and   <code>ml</code> (per-source) frames (§3.2).</p>
+<p>  models on Base B's per-source wide features<strong> (directly testing "do per-source   features beat daily means?"), adding ablations, walk-forward, and multi-seed   checks. <code>transformer_forecaster.ipynb</code> and <code>tuning.ipynb</code> use </strong>both** shapes   (daily-mean for tree/vanilla models, per-source for sequence models). The   <code>sentisense/</code> package generalizes both into leakage-safe <code>mt</code> (daily-mean) and   <code>ml</code> (per-source) frames (3.2).</p>
 <p>Each subsection below notes which aggregation it uses.</p>
 <p><strong>Cross-track summary.</strong> Before the detailed tables, Table 1 gives the one-glance picture: the best configuration in each track, its majority-class baseline, and whether it beats that baseline / reaches significance. The recurring theme is that "best" accuracies rarely clear their own baseline, and none reaches significance.</p>
 <p><em>Table 1: Best result per experiment track vs its baseline.</em></p>
 <table border="1" cellspacing="0" cellpadding="4">
-<thead><tr><th>Track (§)</th><th>Aggregation</th><th>Best config</th><th>Acc</th><th>Baseline</th><th>Beats base?</th><th>ROC-AUC</th><th>Significant?</th></tr></thead>
+<thead><tr><th>Track ()</th><th>Aggregation</th><th>Best config</th><th>Acc</th><th>Baseline</th><th>Beats base?</th><th>ROC-AUC</th><th>Significant?</th></tr></thead>
 <tbody>
-<tr><td>PoC (§4.2.1)</td><td>daily-mean</td><td>XGBoost / LightGBM</td><td>0.5459</td><td>0.4976</td><td>yes</td><td>n/a</td><td>no (p≈0.09–0.13)</td></tr>
-<tr><td>LSTM-features (§4.2.2)</td><td>per-source</td><td>LGBM "Top sources+Other"</td><td>0.5794</td><td>0.5675</td><td>+0.012</td><td>0.5415</td><td>no (p_perm=0.052)</td></tr>
-<tr><td>LSTM base (§4.2.3)</td><td>per-source</td><td>LSTM (window 30)</td><td>0.5636</td><td>0.5773</td><td><strong>no</strong></td><td>n/a</td><td>no (p=0.68)</td></tr>
-<tr><td>Transformer zoo (§4.2.4)</td><td>both</td><td>PatchTST_DailyMean</td><td>0.5370</td><td>0.4931</td><td>yes</td><td>0.5185</td><td>no (p≈0.09)</td></tr>
-<tr><td>Tuning (§4.2.5)</td><td>both</td><td>Ensemble / tuned LSTM</td><td>0.4596</td><td>0.5680</td><td><strong>no</strong></td><td>n/a</td><td>no</td></tr>
-<tr><td>Hardened pkg (§4.2.6)</td><td>daily-mean</td><td>Score-LSTM</td><td>0.5000</td><td>~0.50</td><td>~tie</td><td>0.5088</td><td>no (MCC≈0)</td></tr>
-<tr><td>Unified grid (§4.2.8)</td><td>all</td><td>GRU [scored] (by ROC-AUC)</td><td>0.5289</td><td>~0.50</td><td>~tie</td><td><strong>0.5755</strong></td><td>no</td></tr>
+<tr><td>PoC (4.2.1)</td><td>daily-mean</td><td>XGBoost / LightGBM</td><td>0.5459</td><td>0.4976</td><td>yes</td><td>n/a</td><td>no (p≈0.09–0.13)</td></tr>
+<tr><td>LSTM-features (4.2.2)</td><td>per-source</td><td>LGBM "Top sources+Other"</td><td>0.5794</td><td>0.5675</td><td>+0.012</td><td>0.5415</td><td>no (p_perm=0.052)</td></tr>
+<tr><td>LSTM base (4.2.3)</td><td>per-source</td><td>LSTM (window 30)</td><td>0.5636</td><td>0.5773</td><td><strong>no</strong></td><td>n/a</td><td>no (p=0.68)</td></tr>
+<tr><td>Transformer zoo (4.2.4)</td><td>both</td><td>PatchTST_DailyMean</td><td>0.5370</td><td>0.4931</td><td>yes</td><td>0.5185</td><td>no (p≈0.09)</td></tr>
+<tr><td>Tuning (4.2.5)</td><td>both</td><td>Ensemble / tuned LSTM</td><td>0.4596</td><td>0.5680</td><td><strong>no</strong></td><td>n/a</td><td>no</td></tr>
+<tr><td>Hardened pkg (4.2.6)</td><td>daily-mean</td><td>Score-LSTM</td><td>0.5000</td><td>~0.50</td><td>~tie</td><td>0.5088</td><td>no (MCC≈0)</td></tr>
+<tr><td>Unified grid (4.2.8)</td><td>all</td><td>GRU [scored] (by ROC-AUC)</td><td>0.5289</td><td>~0.50</td><td>~tie</td><td><strong>0.5755</strong></td><td>no</td></tr>
 </tbody></table>
 <p><em>(n/a = ROC-AUC not printed numerically in that notebook; "Significant?" = passes a permutation/binomial test at p&lt;0.05 vs the majority-class baseline.)</em></p>
 <h4>4.2.1 Tree-model proof-of-concept (<code>poc.ipynb</code>)</h4>
@@ -550,9 +550,9 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <tr><td>mcc @tuned</td><td>0.0013</td><td>0.0402</td></tr>
 </tbody></table>
 <p><em>Table 10: Hardened-package score-LSTM final holdout (mean ± std).</em></p>
-<p>(LSTM Optuna best value 0.538.) <em>Verdict:</em> <strong>near-chance</strong> — accuracy ≈ 0.50, ROC-AUC ≈ 0.51, MCC ≈ 0.00. On the hardened pipeline the score-only LSTM shows essentially <strong>no directional edge</strong>. (The §2 multi-track, baselines, and strategy-vs-Buy&amp;Hold cells were not executed; SHAP outputs exist only as plots.)</p>
+<p>(LSTM Optuna best value 0.538.) <em>Verdict:</em> <strong>near-chance</strong> — accuracy ≈ 0.50, ROC-AUC ≈ 0.51, MCC ≈ 0.00. On the hardened pipeline the score-only LSTM shows essentially <strong>no directional edge</strong>. (The 2 multi-track, baselines, and strategy-vs-Buy&amp;Hold cells were not executed; SHAP outputs exist only as plots.)</p>
 <h4>4.2.7 Foundation-model explainability (<code>timesfm_explainability.ipynb</code>)</h4>
-<p>This notebook scaffolds zero-shot/covariate-ablation/regime experiments for Google's TimesFM, but <strong>was not executed in the committed copy</strong> — no numeric results are available. It is retained as a wired template for future work (§5).</p>
+<p>This notebook scaffolds zero-shot/covariate-ablation/regime experiments for Google's TimesFM, but <strong>was not executed in the committed copy</strong> — no numeric results are available. It is retained as a wired template for future work (5).</p>
 <h4>4.2.8 Unified out-of-sample grid (<code>leaderboard.md</code>)</h4>
 <p>The canonical, leakage-hardened comparison reduces every model × data-type × regime cell to the same out-of-sample window and metric set. Sorted by accuracy descending. Notation: <code>model [data-type]</code> for classifiers, <code>model [cov=...]</code> for forecasters.</p>
 <table border="1" cellspacing="0" cellpadding="4">
@@ -604,17 +604,17 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <p><em>Table 11: Unified out-of-sample leaderboard (40+ tuned cells). Coverage: 23 model configurations ran, 21 cached, 2 skipped.</em></p>
 <p><strong>Best by ROC-AUC (the headline criterion):</strong> <code>GRU [scored]</code> — ROC-AUC = <strong>0.5755</strong>, F1 = 0.4118. <strong>Best by accuracy:</strong> <code>TFT [cov=none]</code> — accuracy = <strong>0.5916</strong>.</p>
 <h3>4.3 Data Analysis and Interpretation</h3>
-<p>Reading <strong>across all six tracks</strong> of §4.2, several consistent patterns emerge.</p>
+<p>Reading <strong>across all six tracks</strong> of 4.2, several consistent patterns emerge.</p>
 <ol>
-<li><strong>Every track converges on near-chance.</strong> Whether trees (§4.2.1–4.2.2,</li>
+<li><strong>Every track converges on near-chance.</strong> Whether trees (4.2.1–4.2.2,</li>
 </ol>
-<p>   §4.2.5), transformers (§4.2.4), LSTMs (§4.2.3, §4.2.5–4.2.6), or foundation    models (§4.2.8), ROC-AUC clusters around 0.50 (≈ 0.43–0.59) and balanced    accuracy hovers near 0.50. The hardened score-LSTM is the cleanest statement    of this: accuracy 0.500, ROC-AUC 0.509, MCC 0.000 (§4.2.6).</p>
+<p>   4.2.5), transformers (4.2.4), LSTMs (4.2.3, 4.2.5–4.2.6), or foundation    models (4.2.8), ROC-AUC clusters around 0.50 (≈ 0.43–0.59) and balanced    accuracy hovers near 0.50. The hardened score-LSTM is the cleanest statement    of this: accuracy 0.500, ROC-AUC 0.509, MCC 0.000 (4.2.6).</p>
 <ol>
 <li><strong>The majority-class baseline is the real story.</strong> Baselines differ sharply</li>
 </ol>
 <p>   by split — 49.31% in the transformer notebook, 49.76% in the PoC, 56.42–</p>
 <p>   56.80% in the later windows — because the up-rate is window-dependent. On the    high-up-rate windows, <em>raw accuracy near 57% does not beat "always predict    up."</em> Several models that look respectable on accuracy (e.g. tuned LSTM</p>
-<p>   0.4553, ensemble 0.4596 in §4.2.5) are in fact <strong>below</strong> their baseline.</p>
+<p>   0.4553, ensemble 0.4596 in 4.2.5) are in fact <strong>below</strong> their baseline.</p>
 <ol>
 <li><strong>Accuracy, ROC-AUC, and baseline disagree.</strong> The unified grid's top-accuracy</li>
 </ol>
@@ -622,15 +622,15 @@ blockquote { margin-left: 12pt; color: #444; border-left: 3px solid #ccc; paddin
 <ol>
 <li><strong>No data-type or model family dominates.</strong> <code>scored</code>, <code>embedded</code>, and <code>fused</code></li>
 </ol>
-<p>   views land in the same band; foundation models (Chronos zero-shot 0.427) do    not beat trained models; complex transformers do not beat simple    GRU/TCN/XGBoost. The feature-group ablation is telling: <strong>market-only features    match or beat news+market</strong>, and <strong>news-only is the weakest</strong> (§4.2.2, §4.2.4).    Capacity is not the bottleneck; <strong>signal is.</strong></p>
+<p>   views land in the same band; foundation models (Chronos zero-shot 0.427) do    not beat trained models; complex transformers do not beat simple    GRU/TCN/XGBoost. The feature-group ablation is telling: <strong>market-only features    match or beat news+market</strong>, and <strong>news-only is the weakest</strong> (4.2.2, 4.2.4).    Capacity is not the bottleneck; <strong>signal is.</strong></p>
 <ol>
 <li><strong>Significance is essentially never reached.</strong> Across the PoC, transformer,</li>
 </ol>
 <p>   and feature-comparison notebooks, every permutation/binomial test returns    p &gt; 0.05. The single closest call — LGBM "Top sources + Other", `p_perm =</p>
-<p>   0.052` (§4.2.2) — has a bootstrap CI that straddles its baseline, and is not    robust under walk-forward (2/5 folds positive) or multi-seed (mean gap    +0.7pp) checks.</p>
+<p>   0.052` (4.2.2) — has a bootstrap CI that straddles its baseline, and is not    robust under walk-forward (2/5 folds positive) or multi-seed (mean gap    +0.7pp) checks.</p>
 <h3>4.4 Comparison with Existing Approaches</h3>
-<p><strong>Internal comparison across tracks.</strong> The notebook tracks (§4.2.1–4.2.5) and the hardened package (§4.2.6, §4.2.8) tell a consistent story, but the package numbers are the trustworthy ones. The exploratory notebooks vary their splits and baselines and occasionally show small positive gaps on a single favorable window; the hardened, fixed-window package run flattens these to near-chance. This is exactly the expected effect of removing window-selection freedom and tightening leakage controls — the transformer notebook's own ≥58% success criterion is <strong>not met</strong> anywhere, and its printed verdict already anticipates that "TA-125 direction at daily frequency may not be predictable from news sentiment + market features alone."</p>
-<p><strong>Comparison with the literature.</strong> The magnitude of the effect is consistent with the consensus that <strong>news-tone signal for next-day index direction is small and fragile</strong>, and that much of the apparent predictability reported elsewhere stems from evaluation leakage or favorable-period selection. The Buy&amp;Hold benchmark included in the unified grid contextualizes that none of the directional models offers a dependable economic edge over simply holding the index. Notably, the feature-importance breakdown (News ≈ 79% of total importance, §4.2.2) shows the models <em>do</em> lean on the news features — they simply do not convert that into out-of-sample skill.</p>
+<p><strong>Internal comparison across tracks.</strong> The notebook tracks (4.2.1–4.2.5) and the hardened package (4.2.6, 4.2.8) tell a consistent story, but the package numbers are the trustworthy ones. The exploratory notebooks vary their splits and baselines and occasionally show small positive gaps on a single favorable window; the hardened, fixed-window package run flattens these to near-chance. This is exactly the expected effect of removing window-selection freedom and tightening leakage controls — the transformer notebook's own ≥58% success criterion is <strong>not met</strong> anywhere, and its printed verdict already anticipates that "TA-125 direction at daily frequency may not be predictable from news sentiment + market features alone."</p>
+<p><strong>Comparison with the literature.</strong> The magnitude of the effect is consistent with the consensus that <strong>news-tone signal for next-day index direction is small and fragile</strong>, and that much of the apparent predictability reported elsewhere stems from evaluation leakage or favorable-period selection. The Buy&amp;Hold benchmark included in the unified grid contextualizes that none of the directional models offers a dependable economic edge over simply holding the index. Notably, the feature-importance breakdown (News ≈ 79% of total importance, 4.2.2) shows the models <em>do</em> lean on the news features — they simply do not convert that into out-of-sample skill.</p>
 <h3>4.5 Discussion of Findings</h3>
 <p>The honest interpretation is that, <strong>on its own and at daily resolution, the LLM-scored Hebrew-news stream carries little reliable next-day directional signal for the TA-125.</strong> This is not a failure of engineering but a substantive empirical result, and it is credible <em>because</em> of the leakage controls: the pipeline was specifically built to make it hard to fool oneself.</p>
 <p>The project's lasting value is methodological. It delivers (a) a reproducible, auditable, leakage-safe pipeline spanning scraping, LLM scoring, feature engineering, and a tuned model zoo; (b) a uniform, resumable comparison framework; and (c) a quantified, multi-metric baseline against which future richer signals (intraday data, magnitude targets, alternative LLM scoring schemes, longer horizons) can be measured. Limitations include the close-to-close-only target, daily resolution, the all-zero LLM rows, and the mixed scoring-model history — each a concrete lever for future work.</p>
