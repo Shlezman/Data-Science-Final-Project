@@ -280,40 +280,139 @@ function DistributionPanel({ chartId, title, subtitle, items, variant }) {
   );
 }
 
+/**
+ * Prepares a correlation matrix for display: blanks the diagonal and the upper
+ * triangle, and derives a colour range from the data.
+ *
+ * A correlation matrix is symmetric with a constant 1.0 diagonal, so of 36
+ * cells only 15 carry information — the rest are duplicates, and the diagonal
+ * takes the strongest colour in the scale while saying nothing. Fixing the
+ * scale at ±1 compounds it: real inter-category correlations here span roughly
+ * ±0.25, so every meaningful cell lands in the washed-out middle of the ramp
+ * and the whole panel reads as one flat colour.
+ *
+ * @param {{labels: string[], matrix: number[][]}} corr Raw correlation payload.
+ * @returns {{z: (number|null)[][], labels: string[], bound: number,
+ *   strongest: {a: string, b: string, r: number}|null}} Masked matrix, a
+ *   symmetric colour bound fitted to the data, and the strongest pair.
+ */
+function prepareCorrelation(corr) {
+  const labels = corr?.labels || [];
+  const matrix = corr?.matrix || [];
+  let peak = 0;
+  let strongest = null;
+
+  const z = matrix.map((row, i) => row.map((value, j) => {
+    if (j >= i) return null;               // drop diagonal + mirrored half
+    const r = Number(value);
+    if (!Number.isFinite(r)) return null;
+    if (Math.abs(r) > peak) {
+      peak = Math.abs(r);
+      strongest = { a: labels[i], b: labels[j], r };
+    }
+    return r;
+  }));
+
+  // Round the bound up to a clean step so the colourbar ticks read nicely,
+  // with a floor so a near-zero matrix doesn't amplify noise into strong colour.
+  const bound = Math.max(0.1, Math.ceil(peak * 20) / 20);
+  return { z, labels, bound, strongest };
+}
+
+/**
+ * Places the failure rate on a logarithmic quality scale.
+ *
+ * A linear bar is useless here: healthy is ~6 failures per 10,000 and broken is
+ * hundreds, so on a 0–10,000 axis every realistic value sits within a pixel of
+ * zero. Quality metrics that live near 100% only separate on a log axis, where
+ * each decade gets equal room and a tenfold regression is a visible move rather
+ * than an invisible one.
+ *
+ * @param {object} props Component props.
+ * @param {number} props.value Failures per 10,000.
+ * @returns {JSX.Element} The scale.
+ */
+function FailureScale({ value }) {
+  const MIN = 0.1;
+  const MAX = 1000;
+  const span = Math.log10(MAX) - Math.log10(MIN);
+  const pos = (v) => {
+    const clamped = Math.min(MAX, Math.max(MIN, v || MIN));
+    return ((Math.log10(clamped) - Math.log10(MIN)) / span) * 100;
+  };
+  const marker = pos(value);
+  const goodEnd = pos(10);
+  const warnEnd = pos(50);
+
+  return (
+    <div className="ss-failscale">
+      <div className="ss-failscale__track" role="img"
+           aria-label={`${value.toFixed(1)} failures per 10,000 — healthy is under 10`}>
+        <span className="ss-failscale__zone is-good" style={{ left: 0, width: `${goodEnd}%` }} />
+        <span className="ss-failscale__zone is-warn"
+              style={{ left: `${goodEnd}%`, width: `${warnEnd - goodEnd}%` }} />
+        <span className="ss-failscale__zone is-bad"
+              style={{ left: `${warnEnd}%`, width: `${100 - warnEnd}%` }} />
+        <span className="ss-failscale__marker" style={{ left: `${marker}%` }} />
+      </div>
+      <div className="ss-failscale__ticks" aria-hidden="true">
+        {[0.1, 1, 10, 100, 1000].map((t) => (
+          <span key={t} style={{ left: `${pos(t)}%` }}>{t}</span>
+        ))}
+      </div>
+      <div className="ss-failscale__legend">
+        <span><i className="is-good" />Healthy &lt;10</span>
+        <span><i className="is-warn" />Watch 10–50</span>
+        <span><i className="is-bad" />Degraded &gt;50</span>
+      </div>
+    </div>
+  );
+}
+
 function ValidationSummary({ validation }) {
   const passed = Number(validation.passed) || 0;
   const failed = Number(validation.failed) || 0;
   const total = passed + failed;
   const rate = Number(validation.rate) || (total ? passed / total : 0);
+  // Lead with the failure rate per 10k rather than a pass percentage. At this
+  // scale the pass rate is 99.9% and a progress bar of it is visually
+  // indistinguishable from 100% — it has no resolution where the data lives,
+  // whereas "N per 10,000" moves visibly as quality changes.
+  const failPer10k = total ? (failed / total) * 10000 : 0;
   const failedRate = total ? (failed / total) * 100 : 0;
+  const tone = failPer10k <= 10 ? 'is-good' : failPer10k <= 50 ? 'is-warn' : 'is-bad';
 
   return (
     <section className="ss-eda-panel ss-validation-card">
       <header className="ss-eda-panel__head">
         <div>
           <h3>Validation quality</h3>
-          <p>Share of processed headlines that passed validation</p>
+          <p>Headlines the scoring model failed to return a usable vector for</p>
         </div>
+        <span className={`ss-validation-card__badge ${tone}`}>
+          {rate >= 0.999 ? 'Healthy' : rate >= 0.99 ? 'Watch' : 'Degraded'}
+        </span>
       </header>
+
       <div className="ss-validation-card__score">
-        <strong>{(rate * 100).toFixed(1)}%</strong>
-        <span>passed</span>
+        <strong>{failPer10k.toFixed(1)}</strong>
+        <span>failures per 10,000 scored</span>
       </div>
-      <div className="ss-validation-card__track" aria-label={`${(rate * 100).toFixed(1)}% passed`}>
-        <span style={{ width: `${Math.min(100, Math.max(0, rate * 100))}%` }} />
-      </div>
+
+      <FailureScale value={failPer10k} />
+
       <dl className="ss-validation-card__counts">
+        <div>
+          <dt>Failed</dt>
+          <dd>{formatNumber(failed)} <small>({failedRate.toFixed(3)}%)</small></dd>
+        </div>
         <div>
           <dt>Passed</dt>
           <dd>{formatNumber(passed)}</dd>
         </div>
         <div>
-          <dt>Failed</dt>
-          <dd>{formatNumber(failed)} <small>({failedRate.toFixed(2)}%)</small></dd>
-        </div>
-        <div>
-          <dt>Total checked</dt>
-          <dd>{formatNumber(total)}</dd>
+          <dt>Pass rate</dt>
+          <dd>{(rate * 100).toFixed(2)}%</dd>
         </div>
       </dl>
     </section>
@@ -365,6 +464,7 @@ export default function EdaPanels() {
   );
   const sentimentDistribution = useMemo(() => percentHistogram(sentHist), [sentHist]);
   const relevanceDistribution = useMemo(() => percentHistogram(relHist), [relHist]);
+  const correlation = useMemo(() => prepareCorrelation(corr), [corr]);
 
   const totalHeadlines = volume.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
   const latestVolume = Number(volume.at(-1)?.count) || 0;
@@ -579,21 +679,38 @@ export default function EdaPanels() {
             <Panel
               title="Category correlation"
               subtitle="Pairwise relationship between category relevance scores"
+              insight={correlation.strongest
+                ? `Strongest: ${correlation.strongest.a} × ${correlation.strongest.b} (${correlation.strongest.r.toFixed(2)})`
+                : null}
               height={320}
               data={[{
                 type: 'heatmap',
-                z: corr.matrix,
-                x: corr.labels,
-                y: corr.labels,
-                zmin: -1,
-                zmax: 1,
+                z: correlation.z,
+                x: correlation.labels,
+                y: correlation.labels,
+                // Scale fitted to the data instead of a fixed ±1: the real
+                // values span a narrow band, so ±1 would render every cell as
+                // the same pale midtone.
+                zmin: -correlation.bound,
+                zmax: correlation.bound,
                 zmid: 0,
                 colorscale: 'RdBu',
                 reversescale: true,
-                text: corr.matrix?.map((row) => row.map((value) => Number(value).toFixed(2))),
+                xgap: 2,
+                ygap: 2,
+                hoverongaps: false,
+                text: correlation.z.map((row) => row.map((v) => (v === null ? '' : v.toFixed(2)))),
                 texttemplate: '%{text}',
-                textfont: { size: 10 },
+                textfont: { size: 11 },
                 hovertemplate: '%{y} × %{x}<br>Correlation: %{z:.3f}<extra></extra>',
+                colorbar: {
+                  title: { text: 'r', side: 'top' },
+                  thickness: 10,
+                  len: 0.85,
+                  tickvals: [-correlation.bound, 0, correlation.bound],
+                  ticks: 'outside',
+                  ticklen: 3,
+                },
               }]}
               layout={{
                 margin: { l: 88, r: 18, t: 22, b: 72 },
