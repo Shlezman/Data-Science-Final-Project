@@ -20,14 +20,20 @@ export const ACCENT = '#3b82f6';
  * @returns {object} A Plotly layout object.
  */
 export function darkLayout(overrides = {}) {
+  const light = typeof document !== 'undefined'
+    && document.documentElement.dataset.theme === 'light';
+  const axis = {
+    gridcolor: light ? 'rgba(15,23,42,0.10)' : 'rgba(255,255,255,0.08)',
+    zerolinecolor: light ? 'rgba(15,23,42,0.18)' : 'rgba(255,255,255,0.12)',
+  };
   return {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: '#c9d1d9', size: 12 },
+    font: { color: light ? '#334155' : '#c9d1d9', size: 12 },
     margin: { l: 48, r: 16, t: 30, b: 40 },
-    xaxis: { gridcolor: 'rgba(255,255,255,0.08)', zerolinecolor: 'rgba(255,255,255,0.12)' },
-    yaxis: { gridcolor: 'rgba(255,255,255,0.08)', zerolinecolor: 'rgba(255,255,255,0.12)' },
     ...overrides,
+    xaxis: { ...axis, ...(overrides.xaxis || {}) },
+    yaxis: { ...axis, ...(overrides.yaxis || {}) },
   };
 }
 

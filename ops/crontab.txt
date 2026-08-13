@@ -19,6 +19,10 @@ PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 # 1) Daily pipeline: scrape -> score -> embed -> derived -> champion predict.
 30 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance --extra ml python scripts/daily_live.py >> logs/cron_daily.log 2>&1
 
+# Nightly persona simulation (local LLM) — publishes the agent map + report the
+# Simulator tab renders. Runs after the daily pipeline has scored the day's news.
+0 17 * * * cd /tf/Data-Science-Final-Project && uv run python scripts/sim_daily.py --backfill 3 >> logs/sim_daily.log 2>&1
+
 # 2) Settle: backfill model_predictions.actual once the next-day close is known (15 min later).
 45 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance python scripts/settle_predictions.py >> logs/cron_settle.log 2>&1
 

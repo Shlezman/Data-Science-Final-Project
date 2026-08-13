@@ -4,6 +4,7 @@ import Dashboard from './components/Dashboard.jsx';
 import Archive from './components/Archive.jsx';
 import Simulator from './components/Simulator.jsx';
 import Models from './components/Models.jsx';
+import Login from './components/Login.jsx';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -23,12 +24,33 @@ const TABS = [
 export default function App() {
   const [tab, setTab] = useState('dashboard');
   const [champion, setChampion] = useState(null);
+  const [auth, setAuth] = useState(null);   // null = probing; {authed, gated}
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark');
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = nextTheme;
+    try {
+      window.localStorage.setItem('sentisense-theme', nextTheme);
+    } catch {
+      // The visual switch should still work when storage is unavailable.
+    }
+    setTheme(nextTheme);
+  };
 
   useEffect(() => {
-    getJson('/api/health')
-      .then((res) => setChampion(res?.champion ?? null))
-      .catch(() => setChampion(null));
+    getJson('/api/auth')
+      .then((res) => setAuth(res))
+      .catch(() => setAuth({ authed: true, gated: false }));   // gate endpoint down → don't lock out
   }, []);
+
+  useEffect(() => {
+    if (auth && !(auth.gated && !auth.authed)) {
+      getJson('/api/health')
+        .then((res) => setChampion(res?.champion ?? null))
+        .catch(() => setChampion(null));
+    }
+  }, [auth]);
 
   useEffect(() => {
     const onHash = () => {
@@ -39,28 +61,93 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  if (auth === null) {
+    return null;                       // brief blank while probing the gate
+  }
+  if (auth.gated && !auth.authed) {
+    return <Login onOk={() => setAuth({ authed: true, gated: true })} />;
+  }
+
   return (
     <div className="ss-app">
-      <header className="ss-header">
-        <h1 className="ss-title">SentiSense</h1>
-        <span className="ss-champion" onClick={() => setTab('models')}
-              role="button" tabIndex={-1}
-              style={{ cursor: 'default', userSelect: 'none' }}>
-          {champion ? `Serving: ${champion}` : ''}
-        </span>
-      </header>
+      <div className="ss-topbar">
+        <header className="ss-header">
+          <div className="ss-brand">
+            {/* SentiSense mark, dark-surface variant: white swoosh, brand-blue
+                dots. Drawn as vectors so it stays crisp at any size. The swoosh
+                uses currentColor, so it follows the wordmark if the surface ever
+                flips to light. The wordmark itself stays live text — searchable,
+                screen-reader friendly, and sharp at every resolution. */}
+            <svg className="ss-logo" viewBox="0 0 100 150" aria-hidden="true">
+              <path d="M60 20 C80 28 80 56 55 76 C30 96 32 122 58 130"
+                    fill="none" stroke="currentColor" strokeWidth="15" strokeLinecap="round" />
+              <g fill="#7EB2E4">
+                <circle cx="44" cy="11" r="6" />
+                <circle cx="16" cy="17" r="7" />
+                <circle cx="9" cy="45" r="6.5" />
+                <circle cx="31" cy="67" r="6.5" />
+                <circle cx="63" cy="79" r="6" />
+                <circle cx="84" cy="105" r="6.5" />
+                <circle cx="76" cy="137" r="6" />
+              </g>
+            </svg>
+            <div>
+              <h1 className="ss-title">
+                <span className="ss-title__senti">Senti</span>Sense
+              </h1>
+              <p className="ss-tagline">Next-day TA-125 direction from Hebrew news sentiment</p>
+            </div>
+          </div>
 
-      <nav className="ss-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`ss-tab ${tab === t.id ? 'is-active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+          <div className="ss-header-actions">
+            {/* Invisible operator entrance (opens Models) — placed FIRST so it sits
+                where the theme toggle used to be; the visible toggle moved right. */}
+            <span className="ss-champion ss-champion--ghost" onClick={() => setTab('models')}
+                  role="button" tabIndex={-1} aria-hidden="true"
+                  style={{ cursor: 'default', userSelect: 'none' }}>
+              {champion ? (
+                <>
+                  <span className="ss-champion__dot" aria-hidden="true" />
+                  <span className="ss-champion__label">Serving</span>
+                  <span className="ss-champion__value">{champion}</span>
+                </>
+              ) : null}
+            </span>
+
+            <button
+              type="button"
+              className="ss-theme-toggle"
+              onClick={toggleTheme}
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            >
+              {theme === 'dark' ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20.2 15.2A8.5 8.5 0 0 1 8.8 3.8 8.5 8.5 0 1 0 20.2 15.2Z" />
+                </svg>
+              )}
+              <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+            </button>
+          </div>
+        </header>
+
+        <nav className="ss-tabs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`ss-tab ${tab === t.id ? 'is-active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       <main>
         {tab === 'dashboard' ? <Dashboard /> : null}

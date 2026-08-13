@@ -75,6 +75,7 @@ miro = [
 ui = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "pymongo>=4.6",
 ]
 # TimesFM (Google) — 3rd forecaster — is installed MANUALLY (not a uv extra): the 2.5
 # PyTorch line is not on PyPI yet, so a hard dep makes the project unresolvable. Install

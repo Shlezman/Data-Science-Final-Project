@@ -33,6 +33,63 @@ export function direction(value) {
 }
 
 /**
+ * Classifies a direction label into a badge variant for color-coded display.
+ *
+ * @param {boolean|null|undefined} value True=Up, False=Down, null=unknown.
+ * @returns {string} "pos", "neg", or "neutral".
+ */
+export function directionCls(value) {
+  if (value === true) {
+    return 'pos';
+  }
+  if (value === false) {
+    return 'neg';
+  }
+  return 'neutral';
+}
+
+/**
+ * Classifies a Hit/Miss/Pending outcome into a badge variant.
+ *
+ * @param {string} label The result of {@link outcome}.
+ * @returns {string} "pos" for Hit, "neg" for Miss, "neutral" for Pending.
+ */
+export function outcomeCls(label) {
+  if (label === 'Hit') {
+    return 'pos';
+  }
+  if (label === 'Miss') {
+    return 'neg';
+  }
+  return 'neutral';
+}
+
+/**
+ * Classifies a metric value relative to its chance/random-guess baseline, so
+ * UI can give a subtle good/weak visual cue without inventing an arbitrary
+ * threshold for metrics that have no universally agreed "good" cutoff.
+ *
+ * @param {number|null|undefined} value The metric value.
+ * @param {number} chance The value a random/no-skill predictor would score
+ *   (0.5 for accuracy and ROC-AUC, 0 for MCC).
+ * @param {number} [margin] How far above chance counts as clearly "good".
+ * @returns {'pos'|'neg'|null} "pos" if clearly above chance, "neg" if at or
+ *   below chance, or null (no opinion / render neutrally) in the grey zone.
+ */
+export function toneFromChance(value, chance, margin = 0.05) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  if (value >= chance + margin) {
+    return 'pos';
+  }
+  if (value < chance) {
+    return 'neg';
+  }
+  return null;
+}
+
+/**
  * Classifies a global sentiment score into a badge variant.
  *
  * @param {number|null|undefined} sentiment Integer sentiment, -10..+10.

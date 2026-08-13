@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getJson, simRunSocketUrl } from '../lib/api.js';
+import { getJson, postJson, simRunSocketUrl } from '../lib/api.js';
 import CytoscapeGraph from './CytoscapeGraph.jsx';
 import PersonaPanel from './PersonaPanel.jsx';
+import AnalystPanel from './AnalystPanel.jsx';
 
 /**
  * Renders the side panel showing a tapped node's attributes.
@@ -19,11 +20,14 @@ function NodePanel({ node }) {
     );
   }
   const attrs = node.attrs || {};
-  const keys = Object.keys(attrs);
+  const keys = Object.keys(attrs).filter((k) => k !== 'statement');
   return (
     <div className="ss-side-panel">
       <h3>{node.label}</h3>
       <p className="ss-muted">Type: {node.type}</p>
+      {attrs.statement ? (
+        <blockquote className="ss-persona-quote">“{attrs.statement}”</blockquote>
+      ) : null}
       {keys.length === 0 ? (
         <p className="ss-muted">No attributes.</p>
       ) : (
@@ -157,7 +161,7 @@ export default function Simulator() {
 
   const runSimulation = useCallback(() => {
     const targetDate = runDate || date;
-    if (!targetDate || !mode || running || liveDisabled) {
+    if (!targetDate || !mode || running) {
       return;
     }
     setEvents([]);
@@ -203,7 +207,7 @@ export default function Simulator() {
     ws.onclose = () => {
       setRunning(false);
     };
-  }, [runDate, date, mode, running, liveDisabled, loadGraphAndReport]);
+  }, [runDate, date, mode, running, loadGraphAndReport]);
 
   return (
     <div>
@@ -244,10 +248,31 @@ export default function Simulator() {
         {loadError ? <p className="ss-error-text">Error: {loadError}</p> : null}
       </div>
 
+      <AnalystPanel date={date} />
+
       <PersonaPanel date={date} />
 
       <div className="ss-card">
-        <h3>Influence graph</h3>
+        <h3>
+          Agent map
+          {graph?.meta?.lean ? (
+            <span className={`ss-badge ${graph.meta.lean === 'UP' ? 'pos' : graph.meta.lean === 'DOWN' ? 'neg' : 'neutral'}`}
+                  style={{ marginLeft: 8 }}>
+              Lean {graph.meta.lean}
+            </span>
+          ) : null}
+          {graph?.meta?.n_agents ? (
+            <span className="ss-tag">{graph.meta.n_agents} agents</span>
+          ) : null}
+        </h3>
+        <p className="ss-muted">
+          Each node is a news outlet acting as an agent — size = how much it published,
+          color = its stance (green bullish, red bearish, grey neutral); solid green links
+          agree, dashed red links disagree. Tap a node to read its statement.
+        </p>
+        {graph?.meta?.consensus ? (
+          <blockquote className="ss-persona-quote">{graph.meta.consensus}</blockquote>
+        ) : null}
         <div className="ss-graph-wrap">
           <div style={{ flex: '1 1 480px' }}>
             <CytoscapeGraph
@@ -273,16 +298,18 @@ export default function Simulator() {
 
       <div className="ss-card">
         <h3>Run new simulation</h3>
-        <p className="ss-muted">
-          Runs the multi-agent simulation for the chosen day on the MiroFish
-          service — takes several minutes.
-        </p>
         {liveDisabled ? (
           <p className="ss-muted">
-            Live runs unavailable — showing historical (cached) simulations only.
-            {simLive?.reason ? ` (${simLive.reason})` : null}
+            Simulations are generated automatically at the end of each trading day
+            by the nightly pipeline — pick a day above to explore its agent map.
           </p>
-        ) : null}
+        ) : (
+          <p className="ss-muted">
+            Runs the multi-agent simulation for the chosen day on the MiroFish
+            service — takes several minutes.
+          </p>
+        )}
+        {liveDisabled ? null : (
         <div className="ss-controls">
           <label className="ss-field">
             Date
@@ -290,17 +317,17 @@ export default function Simulator() {
               type="date"
               value={runDate}
               onChange={(e) => setRunDate(e.target.value)}
-              disabled={liveDisabled}
             />
           </label>
           <button
             className="ss-btn"
             onClick={runSimulation}
-            disabled={running || liveDisabled || (!runDate && !date) || !mode}
+            disabled={running || (!runDate && !date) || !mode}
           >
             {running ? 'Running…' : 'Run new simulation'}
           </button>
         </div>
+        )}
         {events.length > 0 ? (
           <ul className="ss-events">
             {events.map((ev, i) => (
