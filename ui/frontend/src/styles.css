@@ -33,9 +33,14 @@
   --ss-subtle: rgba(255, 255, 255, 0.025);
   --ss-control: rgba(0, 0, 0, 0.28);
   --ss-border-strong: rgba(255, 255, 255, 0.24);
+  --ss-chart-grid: rgba(255, 255, 255, 0.09);
+  --ss-chart-line: rgba(148, 163, 184, 0.55);
 
   --ss-radius: 10px;
-  --ss-gap: 16px;
+  --ss-gap: clamp(14px, 1.2vw, 20px);
+  --ss-content-max: 1200px;
+  --ss-page-gutter: clamp(16px, 2.2vw, 32px);
+  --ss-page-top: clamp(14px, 1.5vw, 22px);
 }
 
 :root[data-theme="light"] {
@@ -63,10 +68,16 @@
   --ss-subtle: rgba(15, 23, 42, 0.025);
   --ss-control: rgba(15, 23, 42, 0.07);
   --ss-border-strong: rgba(15, 23, 42, 0.24);
+  --ss-chart-grid: rgba(15, 23, 42, 0.10);
+  --ss-chart-line: rgba(71, 85, 105, 0.48);
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  overflow-x: clip;
 }
 
 /* Rubik covers Latin and Hebrew in one family, so the Hebrew headline feed
@@ -74,6 +85,7 @@
    different typeface on every OS, which made the design unreproducible. */
 body {
   margin: 0;
+  overflow-x: clip;
   font-family: Rubik, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
   color: var(--ss-fg);
@@ -88,9 +100,10 @@ body {
 }
 
 .ss-app {
-  max-width: 1100px;
+  width: 100%;
+  max-width: var(--ss-content-max);
   margin: 0 auto;
-  padding: 20px 18px 64px;
+  padding: var(--ss-page-top) var(--ss-page-gutter) 72px;
 }
 
 /* Topbar — brand row and tabs read as one unit, and stay put while the
@@ -100,8 +113,8 @@ body {
   position: sticky;
   top: 0;
   z-index: 20;
-  margin: -20px -18px 20px;
-  padding: 16px 18px 0;
+  margin: calc(var(--ss-page-top) * -1) calc(var(--ss-page-gutter) * -1) 22px;
+  padding: clamp(14px, 1.4vw, 18px) var(--ss-page-gutter) 0;
   background: var(--ss-topbar);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -279,7 +292,7 @@ body {
   background: var(--ss-surface);
   border: 1px solid var(--ss-border);
   border-radius: var(--ss-radius);
-  padding: 16px;
+  padding: clamp(15px, 1.35vw, 22px);
   margin-bottom: var(--ss-gap);
 }
 
@@ -1187,9 +1200,7 @@ input[type='date'] {
  * Dashboard v2 — committed comfortable-dark theme + new panels
  * ============================================================ */
 body {
-  background:
-    radial-gradient(1200px 600px at 82% -12%, rgba(59, 130, 246, 0.10), transparent 60%),
-    linear-gradient(180deg, var(--ss-page) 0%, var(--ss-page-end) 100%);
+  background: linear-gradient(180deg, var(--ss-page) 0%, var(--ss-page-end) 100%);
   background-attachment: fixed;
   min-height: 100vh;
   line-height: 1.5;
@@ -1452,6 +1463,55 @@ body {
 }
 .ss-eda-toolbar strong { display: block; font-size: 12px; }
 .ss-eda-toolbar span { color: var(--ss-fg-muted); font-size: 11px; }
+.ss-trend-section {
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--ss-border);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.08), transparent 28%),
+    var(--ss-subtle);
+}
+.ss-trend-section .ss-eda-toolbar {
+  margin: 0 0 14px;
+  padding: 0 0 13px;
+  border: 0;
+  border-bottom: 1px solid var(--ss-border);
+  border-radius: 0;
+  background: transparent;
+}
+.ss-eda-toolbar .ss-eda-toolbar__eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ss-metric-blue);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ss-eda-grid--trends .ss-eda-panel {
+  background:
+    linear-gradient(155deg, rgba(59, 130, 246, 0.045), transparent 42%),
+    var(--ss-surface-2);
+}
+.ss-eda-subsection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 2px 0 10px;
+  padding: 0 2px;
+}
+.ss-eda-subsection-head strong {
+  display: block;
+  color: var(--ss-fg);
+  font-size: 12px;
+}
+.ss-eda-subsection-head span {
+  display: block;
+  margin-top: 2px;
+  color: var(--ss-fg-muted);
+  font-size: 10px;
+}
 .ss-segmented {
   flex: none;
   display: inline-flex;
@@ -1480,7 +1540,7 @@ body {
 
 .ss-eda-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   gap: var(--ss-gap);
 }
 .ss-eda-panel {
@@ -1490,6 +1550,13 @@ body {
   border-radius: var(--ss-radius);
   padding: 14px 16px 8px;
 }
+.ss-eda-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ss-eda-panel__head > div { min-width: 0; }
 .ss-eda-panel__head h3 {
   margin: 0;
   color: var(--ss-fg);
@@ -1501,6 +1568,163 @@ body {
   margin: 3px 0 0;
   color: var(--ss-fg-muted);
   font-size: 11px;
+}
+.ss-eda-panel__insight {
+  flex: none;
+  padding: 4px 7px;
+  border: 1px solid var(--ss-border);
+  border-radius: 999px;
+  background: var(--ss-subtle);
+  color: var(--ss-fg-muted);
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Bespoke SVG distribution cards. These intentionally depart from Plotly's
+   stock histogram treatment while keeping the same underlying percentages. */
+.ss-distribution-panel {
+  padding: 16px 18px 14px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(59, 130, 246, 0.07), transparent 34%),
+    var(--ss-surface-2);
+}
+.ss-distribution-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 5px;
+}
+.ss-distribution-panel__head h3 {
+  margin: 0;
+  color: var(--ss-fg);
+  font-size: 13px;
+  font-weight: 700;
+}
+.ss-distribution-panel__head p {
+  margin: 3px 0 0;
+  color: var(--ss-fg-muted);
+  font-size: 10px;
+}
+.ss-distribution-panel__peak {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 6px;
+  min-width: 90px;
+  padding: 7px 9px;
+  border: 1px solid var(--ss-border);
+  border-radius: 11px;
+  background: var(--ss-raised);
+  text-align: right;
+}
+.ss-distribution-panel__peak span {
+  grid-column: 1 / -1;
+  color: var(--ss-fg-muted);
+  font-size: 7px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ss-distribution-panel__peak strong {
+  color: var(--ss-fg);
+  font-size: 18px;
+  line-height: 1;
+}
+.ss-distribution-panel__peak small {
+  color: var(--ss-fg-muted);
+  font-size: 9px;
+}
+.ss-distribution-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.ss-distribution-zones rect,
+.ss-distribution-zone-high { rx: 8px; }
+.ss-distribution-zones .is-negative { fill: rgba(248, 113, 113, 0.035); }
+.ss-distribution-zones .is-neutral { fill: rgba(148, 163, 184, 0.08); }
+.ss-distribution-zones .is-positive { fill: rgba(52, 211, 153, 0.035); }
+.ss-distribution-zone-high { fill: rgba(59, 130, 246, 0.045); }
+.ss-distribution-grid line {
+  stroke: var(--ss-chart-grid);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.ss-distribution-grid text,
+.ss-distribution-x-label {
+  fill: var(--ss-fg-muted);
+  font-family: Rubik, system-ui, sans-serif;
+  font-size: 9px;
+}
+.ss-distribution-line {
+  fill: none;
+  stroke: var(--ss-chart-line);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.7;
+}
+.ss-distribution-bars rect {
+  transition: opacity 0.16s ease, filter 0.16s ease;
+}
+.ss-distribution-bars g:hover rect {
+  opacity: 1;
+  filter: brightness(1.08) drop-shadow(0 4px 5px rgba(0, 0, 0, 0.18));
+}
+.ss-distribution-bars g.is-peak rect {
+  stroke: rgba(255, 255, 255, 0.48);
+  stroke-width: 1;
+  filter: drop-shadow(0 4px 7px rgba(59, 130, 246, 0.22));
+}
+:root[data-theme="light"] .ss-distribution-bars g.is-peak rect {
+  stroke: rgba(15, 23, 42, 0.30);
+}
+.ss-distribution-bars g.is-peak circle {
+  fill: var(--ss-fg);
+  stroke: var(--ss-surface);
+  stroke-width: 2px;
+}
+.ss-distribution-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  min-height: 22px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ss-border);
+  color: var(--ss-fg-muted);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ss-distribution-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ss-distribution-legend span > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+.ss-distribution-legend span > i.is-negative { background: #fb7185; }
+.ss-distribution-legend span > i.is-neutral { background: #94a3b8; }
+.ss-distribution-legend span > i.is-positive { background: #34d399; }
+.ss-distribution-legend--scale { gap: 8px; }
+.ss-distribution-legend--scale > i {
+  width: min(180px, 42%);
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(147, 197, 253, 0.55), #3b82f6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ss-distribution-bars rect { transition: none; }
 }
 
 .ss-validation-card {
@@ -1553,15 +1777,20 @@ body {
 
 @media (max-width: 960px) {
   .ss-eda-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ss-eda-kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 @media (max-width: 760px) {
-  .ss-eda-grid { grid-template-columns: 1fr; }
+  .ss-trend-section { padding: 11px; }
   .ss-eda-toolbar { align-items: flex-start; flex-direction: column; }
   .ss-segmented { width: 100%; }
   .ss-segmented button { flex: 1; }
 }
+@media (max-width: 480px) {
+  .ss-eda-panel__head { flex-direction: column; }
+}
 @media (max-width: 520px) {
   .ss-eda-kpis { grid-template-columns: 1fr; }
+  .ss-eda-kpi:last-child:nth-child(odd) { grid-column: auto; }
   .ss-validation-card__counts { grid-template-columns: 1fr; }
 }
 
