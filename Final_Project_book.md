@@ -106,9 +106,8 @@ data.
      - 4.2.4 Transformer model zoo + ablations (`transformer_forecaster.ipynb`)
      - 4.2.5 Sequence-model tuning & robustness (`tuning.ipynb`)
      - 4.2.6 Hardened-package analysis (`sentisense_analysis.ipynb`)
-     - 4.2.7 Foundation-model explainability (`timesfm_explainability.ipynb`)
-     - 4.2.8 Unified out-of-sample grid (`leaderboard.md`)
-     - 4.2.9 Production registry run and the live champion
+     - 4.2.7 Unified out-of-sample grid (`leaderboard.md`)
+     - 4.2.8 Production registry run and the live champion
    - 4.3 Data Analysis and Interpretation
    - 4.4 Comparison with Existing Approaches
    - 4.5 Discussion of Findings
@@ -131,8 +130,8 @@ data.
 - Figure 8: 3-D daily news centroids, colored by KMeans cluster (Section 3.5) *(screenshot placeholder)*
 - Figure 9: Single-day headline cloud in the shared PCA space (Section 3.5) *(screenshot placeholder)*
 - Figure 10: Per-source persona votes vs the model's call (Section 3.5) *(screenshot placeholder)*
-- Figure 11: Unified leaderboard - ROC-AUC vs accuracy scatter (Section 4.2.8) *(placeholder)*
-- Figure 12: Models panel - registry leaderboard with the active champion (Section 4.2.9) *(screenshot placeholder)*
+- Figure 11: Unified leaderboard - ROC-AUC vs accuracy scatter (Section 4.2.7) *(placeholder)*
+- Figure 12: Models panel - registry leaderboard with the active champion (Section 4.2.8) *(screenshot placeholder)*
 
 ## List of Tables
 
@@ -147,9 +146,9 @@ data.
 - Table 8: Transformer zoo final leaderboard vs baselines (Section 4.2.4)
 - Table 9: Sequence-model tuning track - holdout results (Section 4.2.5)
 - Table 10: Hardened-package score-LSTM final holdout (Section 4.2.6)
-- Table 11: Unified out-of-sample leaderboard (Section 4.2.8)
-- Table 12: Registry validation run - tree zoo OOS metrics (Section 4.2.9)
-- Table 13: Active production champion - held-out evaluation (Section 4.2.9)
+- Table 11: Unified out-of-sample leaderboard (Section 4.2.7)
+- Table 12: Registry validation run - tree zoo OOS metrics (Section 4.2.8)
+- Table 13: Active production champion - held-out evaluation (Section 4.2.8)
 
 ---
 
@@ -506,7 +505,7 @@ in the `model_name` column so no row's provenance is ambiguous:
   scored by a **locally hosted Ollama model (`gemma4`)** running on the
   project's own GPU node, **one headline per structured call**, because
   batch-JSON and agentic modes proved unreliable for that backend
-  (Section 4.2.9). Scoring is **gap-only** (`--unscored-any-model`): each
+  (Section 4.2.8). Scoring is **gap-only** (`--unscored-any-model`): each
   night the job scores only headlines that no model has scored yet, so
   nothing already covered is re-scored and the two eras stay disjoint by
   construction.
@@ -769,7 +768,7 @@ numbered SQL migrations (001-007).
 - **Backend-aware scoring.** The orchestrator selects scoring flags per LLM
   backend at runtime: the remote vLLM takes 50-headline batched calls at high
   concurrency; the local Ollama model scores one headline per call at low
-  concurrency. An empirical trial (Section 4.2.9) drove this design.
+  concurrency. An empirical trial (Section 4.2.8) drove this design.
 - **Resumable, cached experimentation.** The comparison driver
   (`scripts/pipeline_compare.py`) writes each finished cell's metrics to
   `leaderboard_cache.json` immediately; sequence-model Optuna studies resume
@@ -860,8 +859,8 @@ reported in full below:
 
 1. **Exploratory notebook tracks** - a sequence of research notebooks
    (`poc.ipynb`, `compare_lstm_features_with_poc.ipynb`,
-   `transformer_forecaster.ipynb`, `tuning.ipynb`, `sentisense_analysis.ipynb`,
-   `timesfm_explainability.ipynb`) that iterate on splits, feature sets, model
+   `transformer_forecaster.ipynb`, `tuning.ipynb`, `sentisense_analysis.ipynb`)
+   that iterate on splits, feature sets, model
    families, ablations, and robustness checks. Their purpose is exploration:
    they deliberately vary their train/test windows, which is itself part of
    the analysis (Section 4.3).
@@ -872,7 +871,7 @@ reported in full below:
 3. **The production registry run** - `scripts/train_registry.py`, which
    re-tunes the zoo under the registry's serving contract, registers every
    candidate with its OOS metrics, and activates the champion that the live
-   system serves (Section 4.2.9). This track produces the headline result.
+   system serves (Section 4.2.8). This track produces the headline result.
 
 **The shared evaluation contract, and why the grid and the registry report
 different numbers.** All three tracks obey the same leakage rules -
@@ -881,12 +880,12 @@ hyper-parameter optimization (HPO) scored on the **validation slice only**,
 and the test tail scored exactly once. But the grid and the registry answer
 different questions and therefore evaluate under different *contracts*:
 
-- The **unified grid (Section 4.2.8)** is a *comparison* surface. It runs
+- The **unified grid (Section 4.2.7)** is a *comparison* surface. It runs
   every model against every data type, forces all of them onto one shared
   out-of-sample window with one shared metric set, and picks each cell's
   decision threshold by Youden's J. Its output is a like-for-like ranking,
   not a deployable model.
-- The **registry run (Section 4.2.9)** is a *selection* surface. It re-tunes
+- The **registry run (Section 4.2.8)** is a *selection* surface. It re-tunes
   each family from scratch under the exact contract the live system serves on
   - fused features only, the full available timeline, its own namespaced
   Optuna studies so search spaces never collide with the grid's - and its
@@ -899,8 +898,10 @@ not the same number: they are answers to different questions, and both are
 reported rather than reconciled away.
 
 **How results are tabulated.** Every model-comparison table in this chapter
-uses the **same five columns, in the same order**: *Model*, *Accuracy*,
-*Baseline*, *Gap*, *ROC-AUC*. *Baseline* is the **fixed long-run 0.5202**
+uses the **same columns, in the same order**: *Model*, *Accuracy*,
+*Baseline*, *Gap*, and *ROC-AUC* where a numeric ROC-AUC was available (the
+column is omitted from tables whose source notebook did not print one).
+*Baseline* is the **fixed long-run 0.5202**
 defined in Section 3.7 - the same value in every table - and *Gap* is simply
 `Accuracy - 0.5202`. Because the benchmark never changes, the *Gap* column is
 directly comparable across every table in the chapter: a positive gap means
@@ -911,8 +912,8 @@ the prose beneath the relevant table rather than left blank inside it.
 
 > **Note on reproduction state.** A number of cells in the saved notebooks
 > were not executed in the committed copy (e.g. the transformer Optuna "tuned
-> leaderboard" cells; the `tuning.ipynb` GRU/TCN, multi-seed, abstention, and
-> final-report cells; and all of `timesfm_explainability.ipynb`). To keep this
+> leaderboard" cells, and the `tuning.ipynb` GRU/TCN, multi-seed, abstention,
+> and final-report cells). To keep this
 > book reproducible, **only metrics that actually rendered in the saved
 > outputs are reported**, and each gap is flagged where it occurs.
 
@@ -935,8 +936,8 @@ Reproducibility is enforced with fixed seeds.
 ### 4.2 Presentation of Results
 
 The results below are organized by source: the exploratory notebook tracks
-first, then the unified package grid (Section 4.2.8), then the production
-registry run and the live champion (Section 4.2.9), which is where the
+first, then the unified package grid (Section 4.2.7), then the production
+registry run and the live champion (Section 4.2.8), which is where the
 system's headline number appears. Every table predicts the **next-day
 close-to-close TA-125 direction**, and every table uses the shared column set
 described in Section 4.1.
@@ -988,9 +989,9 @@ the long-run market up-rate.*
 | PatchTST_DailyMean - transformer zoo (Section 4.2.4) | 0.5370 | 0.5202 | +0.0168 | 0.5185 |
 | Ensemble (soft-vote) - tuning track (Section 4.2.5) | 0.4596 | 0.5202 | -0.0606 | n/a |
 | Score-LSTM - hardened package (Section 4.2.6) | 0.5000 | 0.5202 | -0.0202 | 0.5088 |
-| GRU [scored] - unified grid, best ROC-AUC (Section 4.2.8) | 0.5289 | 0.5202 | +0.0087 | **0.5755** |
-| TFT [cov=none] - unified grid, best accuracy (Section 4.2.8) | **0.5916** | 0.5202 | **+0.0714** | 0.5391 |
-| **PatchTST - production champion (Section 4.2.9)** | **0.5780** | 0.5202 | **+0.0578** | 0.4795 |
+| GRU [scored] - unified grid, best ROC-AUC (Section 4.2.7) | 0.5289 | 0.5202 | +0.0087 | **0.5755** |
+| TFT [cov=none] - unified grid, best accuracy (Section 4.2.7) | **0.5916** | 0.5202 | **+0.0714** | 0.5391 |
+| **PatchTST - production champion (Section 4.2.8)** | **0.5780** | 0.5202 | **+0.0578** | 0.4795 |
 
 *(n/a = ROC-AUC was not printed numerically in that notebook's saved output.)*
 
@@ -1062,7 +1063,8 @@ XGBoost holdout classification report (207-sample split):¹
 | accuracy | | | 0.55 | 207 |
 
 *Reading:* the proof of concept did what a proof of concept should do - it
-showed the trees clearing the baseline on a forward window, on a small
+showed the trees clearing the 0.5202 baseline on a forward window (best
++2.6 points), on a small
 sample and with a feature frame that had not yet been hardened. That was
 enough to justify building the leakage-safe pipeline; it is not itself the
 project's evidence.
@@ -1087,13 +1089,13 @@ Unless noted, the test window is 2024-03-26 to 2026-04-28 (504 rows).
 **Main holdout summary (sorted by accuracy):**
 
 | Model | Accuracy | Baseline | Gap |
-|---|---|---|---|---|
-| LGBM - Top sources + Other | 0.5794 | 0.5202 | +0.0592 | 
-| CatBoost - Baseline wide | 0.5714 | 0.5202 | +0.0512 | 
-| XGBoost - Top sources + Other | 0.5714 | 0.5202 | +0.0512 | 
-| XGBoost - Baseline wide | 0.5694 | 0.5202 | +0.0492 | 
-| LGBM - Baseline wide | 0.5694 | 0.5202 | +0.0492 | 
-| CatBoost - Top sources + Other | 0.5675 | 0.5202 | +0.0473 | 
+|---|---|---|---|
+| LGBM - Top sources + Other | 0.5794 | 0.5202 | +0.0592 |
+| CatBoost - Baseline wide | 0.5714 | 0.5202 | +0.0512 |
+| XGBoost - Top sources + Other | 0.5714 | 0.5202 | +0.0512 |
+| XGBoost - Baseline wide | 0.5694 | 0.5202 | +0.0492 |
+| LGBM - Baseline wide | 0.5694 | 0.5202 | +0.0492 |
+| CatBoost - Top sources + Other | 0.5675 | 0.5202 | +0.0473 |
 
 *Table 5: Per-source feature-set holdout comparison (tree models). Balanced
 accuracy ranges 0.5065 to 0.5230 across these rows.*
@@ -1129,11 +1131,10 @@ up-heavy stretch, which is what makes the majority "Rise" collapse described
 below so easy for the model to fall into.
 
 | Model | Accuracy | Baseline | Gap |
-|---|---|---|---|---|
+|---|---|---|---|
 | LSTM (window 30) | 0.5636 | 0.5202 | +0.0434 |
 
-*Table 7: LSTM base forecaster holdout result. ROC-AUC was rendered only
-inside plot images, so no numeric value is available.*
+*Table 7: LSTM base forecaster holdout result.*
 
 | Class | precision | recall | f1 | support |
 |---|---|---|---|---|
@@ -1199,7 +1200,7 @@ News-only 0.4864.
 accuracy, and MCC. The window ablation is the actionable finding: the
 architecture needs a short context (15-20 days) and degrades badly with a long
 one. Both results carried directly into the production track, where a tuned
-PatchTST on the fused frame became the deployed champion (Section 4.2.9). (The
+PatchTST on the fused frame became the deployed champion (Section 4.2.8). (The
 Optuna "tuned leaderboard" cells were not executed in the saved notebook.)
 
 #### 4.2.5 Sequence-model tuning & robustness (`tuning.ipynb`)
@@ -1212,12 +1213,12 @@ This notebook applies leak-safe TimeSeriesSplit Optuna tuning (target:
 balanced accuracy) and walk-forward backtesting. Corpus: 1,898,499 validated
 rows, 40 sources.
 
-| Model | Accuracy | Baseline | Gap | ROC-AUC |
-|---|---|---|---|---|
-| LightGBM (vanilla holdout) | 0.5257 | 0.5202 | +0.0055 | 
-| XGBoost (vanilla holdout) | 0.5106 | 0.5202 | -0.0096 | 
-| CatBoost (vanilla holdout) | 0.5076 | 0.5202 | -0.0126 | 
-| LSTM (Optuna, tuned threshold) | 0.4553 | 0.5202 | -0.0649 | 
+| Model | Accuracy | Baseline | Gap |
+|---|---|---|---|
+| LightGBM (vanilla holdout) | 0.5257 | 0.5202 | +0.0055 |
+| XGBoost (vanilla holdout) | 0.5106 | 0.5202 | -0.0096 |
+| CatBoost (vanilla holdout) | 0.5076 | 0.5202 | -0.0126 |
+| LSTM (Optuna, tuned threshold) | 0.4553 | 0.5202 | -0.0649 |
 | Ensemble (soft-vote, tuned threshold) | 0.4596 | 0.5202 | -0.0606 |
 
 *Table 9: Sequence-model tuning track - holdout results. ROC-AUC was not
@@ -1231,8 +1232,9 @@ ensemble 0.5712. Walk-forward CatBoost gave mean accuracy 0.5267 +/- 0.0814.
 
 *Reading:* this track is the chapter's cleanest example of validation-to-test
 transfer failure. Every configuration looks reasonable on the validation slice
-and then lands at or below the baseline on the holdout - the tuned LSTM and the
-soft-vote ensemble by roughly 6 points.
+and then collapses on the holdout: only LightGBM stays above the 0.5202
+baseline, and only barely (+0.6 points), while the tuned LSTM falls 6.5 points
+below it and the soft-vote ensemble 6.1.
 The lesson - that a threshold and a hyper-parameter set chosen on one slice
 need re-checking on the slice they will be scored on -
 is why the registry track re-tunes under its own serving contract rather than
@@ -1259,21 +1261,15 @@ Standard deviations across repeats: accuracy 0.0058, ROC-AUC 0.0144, MCC
 
 *Reading:* this is an ablation, and its value is in what it isolates. Stripped
 of market context and run under the full hardened contract, the news scores on
-their own do not carry next-day directional information for a single LSTM
-(LSTM Optuna best value 0.538). Read together with the feature-group
+their own do not carry next-day directional information for a single LSTM: at
+0.5000 the model lands 2.0 points below the 0.5202 baseline (LSTM Optuna best
+value 0.538). Read together with the feature-group
 ablations in Sections 4.2.2 and 4.2.4, it locates where the system's edge
 actually comes from: the *combination* of news features with market context in
 the fused frame, which is exactly the frame the production champion serves on.
 (SHAP outputs exist only as plots in the saved notebook.)
 
-#### 4.2.7 Foundation-model explainability (`timesfm_explainability.ipynb`)
-
-This notebook scaffolds zero-shot and covariate-ablation experiments for
-Google's TimesFM, but **was not executed in the committed copy**, so no
-numeric results are available. It is retained as a wired template for future
-work (Section 5).
-
-#### 4.2.8 Unified out-of-sample grid (`leaderboard.md`)
+#### 4.2.7 Unified out-of-sample grid (`leaderboard.md`)
 
 *Purpose: rank every model against every data type on one shared
 out-of-sample window, so architectures can be compared like for like.*
@@ -1349,7 +1345,7 @@ what the next section does.
 > (y), point shape by model family, with reference lines at ROC-AUC 0.50 and
 > the 0.5202 accuracy baseline.]**
 
-#### 4.2.9 Production registry run and the live champion
+#### 4.2.8 Production registry run and the live champion
 
 *Purpose: select and deploy one model under the exact contract the live system
 serves on. This is the track that produces the project's headline result.*
@@ -1445,9 +1441,9 @@ emerge.
 
 1. **The system's best models beat the long-run 52.02% baseline, consistently
    and by a few points.** The production champion reaches accuracy 0.578 -
-   **+5.8 points over 52.02%** - on 327 held-out days (Section 4.2.9); the
+   **+5.8 points over 52.02%** - on 327 held-out days (Section 4.2.8); the
    unified grid's best cell reaches 0.5916 (**+7.1 points**) with a best
-   ranker at 0.5755 ROC-AUC (Section 4.2.8); the per-source study's best
+   ranker at 0.5755 ROC-AUC (Section 4.2.7); the per-source study's best
    configuration reaches 0.5794 (**+5.9 points**) and holds that margin across
    4 of 5 seeds (Section 4.2.2). Seven of the nine tracks in Table 1 clear the
    long-run line. The margins are in the low-to-mid single-digit range rather
@@ -1496,8 +1492,8 @@ emerge.
 ### 4.4 Comparison with Existing Approaches
 
 **Internal comparison across tracks.** The notebook tracks (Sections
-4.2.1-4.2.5), the hardened package (Sections 4.2.6 and 4.2.8), and the
-production registry (Section 4.2.9) tell a coherent story, and the package and
+4.2.1-4.2.5), the hardened package (Sections 4.2.6 and 4.2.7), and the
+production registry (Section 4.2.8) tell a coherent story, and the package and
 registry numbers are the trustworthy ones. The exploratory notebooks vary
 their splits and baselines and can show larger gaps on a single favorable
 window; the hardened, fixed-window runs are the ones that survive the removal
@@ -1543,7 +1539,7 @@ all-zero LLM rows, and the mixed scoring-model history: the historical corpus
 was scored by `mistral-small-4` and the live era by `gemma4` (Section 3.2), a
 data-provenance boundary whose effect on feature comparability is monitored
 and will be removed when the history is re-standardized onto a single scoring
-model. The accuracy/ROC-AUC tension in champion selection (Section 4.2.9) is a
+model. The accuracy/ROC-AUC tension in champion selection (Section 4.2.8) is a
 further open item. Each is a concrete lever for future work.
 
 ---
@@ -1600,9 +1596,8 @@ settled trading day at a time.
 6. **Robustness and monitoring.** Multi-seed registry evaluations as the
    default, drift monitoring on the live feature distributions, and periodic
    automatic re-training gates tied to the cumulative live record.
-7. **Explainability.** Execute the TimesFM explainability track (Section
-   4.2.7) and add SHAP-based attribution for the served champion to the
-   dashboard.
+7. **Explainability.** Execute the scaffolded TimesFM explainability track and
+   add SHAP-based attribution for the served champion to the dashboard.
 8. **Trading-week migration.** The TASE moved to a Monday-Friday trading week
    on January 5, 2026. The pipeline currently encodes the previous
    Sunday-Thursday week in the `_TASE_TRADING_WEEKDAYS` constant and in the
