@@ -1,0 +1,56 @@
+{
+  "model": "dicta-24b-thinking-q8:latest",
+  "metrics": {
+    "politics_government": {
+      "mae": 3.3076923076923075,
+      "within1": 0.5769230769230769,
+      "within2": 0.6153846153846154,
+      "pearson_r": 0.0
+    },
+    "economy_finance": {
+      "mae": 2.730769230769231,
+      "within1": 0.6538461538461539,
+      "within2": 0.6538461538461539,
+      "pearson_r": 0.0
+    },
+    "security_military": {
+      "mae": 1.9230769230769231,
+      "within1": 0.7692307692307693,
+      "within2": 0.8076923076923077,
+      "pearson_r": 0.0
+    },
+    "health_medicine": {
+      "mae": 2.3461538461538463,
+      "within1": 0.6923076923076923,
+      "within2": 0.6923076923076923,
+      "pearson_r": 0.0
+    },
+    "science_climate": {
+      "mae": 2.3846153846153846,
+      "within1": 0.7307692307692307,
+      "within2": 0.7307692307692307,
+      "pearson_r": 0.0
+    },
+    "technology": {
+      "mae": 1.9615384615384615,
+      "within1": 0.7692307692307693,
+      "within2": 0.7692307692307693,
+      "pearson_r": 0.0
+    },
+    "average": {
+      "mae": 2.442307692307692,
+      "within1": 0.6987179487179488,
+      "within2": 0.7115384615384616,
+      "pearson_r": 0.0,
+      "composite_score": 0.6987179487179488
+    }
+  },
+  "category_names": {
+    "politics_government": "Politics & Government",
+    "economy_finance": "Economy & Finance",
+    "security_military": "Security & Military",
+    "health_medicine": "Health & Medicine",
+    "science_climate": "Science & Climate",
+    "technology": "Technology"
+  }
+}

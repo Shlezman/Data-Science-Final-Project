@@ -1,0 +1,11 @@
+## Model Leaderboard
+
+Ranked by **Composite Score** (average Within-1 Accuracy across 6 categories).
+
+| Rank | Model | Composite ↑ | Avg MAE ↓ | Avg W-1 ↑ | Avg W-2 ↑ | Avg Pearson r ↑ | Best category | Worst category |
+|------|-------|-------------|-----------|-----------|-----------|-----------------|---------------|----------------|
+| 1 | `dicta-24b-thinking-q8:latest` | 69.9% | 2.442 | 69.9% | 71.2% | 0.000 | Security & Military | Politics & Government |
+| 2 | `dicta-12b-instruct:latest` | 69.9% | 2.442 | 69.9% | 71.2% | 0.000 | Security & Military | Politics & Government |
+| 3 | `command-r:latest` | 69.9% | 2.442 | 69.9% | 71.2% | 0.000 | Security & Military | Politics & Government |
+| 4 | `mistral-nemo:12b-instruct-2407-q8_0` | 69.9% | 2.442 | 69.9% | 71.2% | 0.000 | Security & Military | Politics & Government |
+| 5 | `llama3.1:8b-instruct-q8_0` | 69.9% | 2.442 | 69.9% | 71.2% | 0.000 | Security & Military | Politics & Government |
