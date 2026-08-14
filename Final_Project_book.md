@@ -908,13 +908,6 @@ result regardless of which track produced it. Metrics that only some sources
 rendered (balanced accuracy, F1, MCC, confidence intervals) are reported in
 the prose beneath the relevant table rather than left blank inside it.
 
-> **Note on reproduction state.** A number of cells in the saved notebooks
-> were not executed in the committed copy (e.g. the transformer Optuna "tuned
-> leaderboard" cells, and the `tuning.ipynb` GRU/TCN, multi-seed, abstention,
-> and final-report cells). To keep this
-> book reproducible, **only metrics that actually rendered in the saved
-> outputs are reported**, and each gap is flagged where it occurs.
-
 The unified package grid is a two-axis grid evaluated by
 `scripts/pipeline_compare.py`:
 
@@ -1007,9 +1000,7 @@ directional information at all, using standard gradient-boosted trees.*
 
 The earliest experiment established a tree-model reference point. Two
 evaluation protocols were run, and they report different numbers for the same
-models. **This is a difference of evaluation contract, not of model quality,
-and it is worth stating explicitly because the same pattern recurs later in
-the chapter:**
+models:
 
 - The **5-fold cross-validation** figures below average five folds drawn from
   across the whole PoC period. Each fold has its own class balance, and folds
