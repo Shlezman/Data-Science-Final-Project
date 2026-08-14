@@ -1072,9 +1072,17 @@ input[type='date'] {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 12px;
+  margin: 12px 0;
   font-size: 13px;
   color: var(--ss-fg-muted);
+}
+
+/* The pager appears above and below the list; the top copy sits against the
+   count line, so it needs a rule to separate it from the rows beneath. */
+.ss-pager:first-of-type {
+  margin-top: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ss-border);
 }
 
 .ss-muted {
@@ -2021,7 +2029,9 @@ body {
   max-width: 340px;
 }
 
-.ss-archive-filter input[type='text'] {
+/* Matched to the date control beside it. Bound to the field rather than to an
+   input type, so switching between text/search doesn't silently drop it. */
+.ss-archive-filter input {
   font: inherit;
   font-size: 14px;
   padding: 7px 10px;
@@ -2030,6 +2040,18 @@ body {
   background: var(--ss-surface);
   color: var(--ss-fg);
   width: 100%;
+  appearance: none;
+}
+
+.ss-archive-filter input::-webkit-search-cancel-button {
+  filter: invert(0.6);
+  cursor: pointer;
+}
+
+.ss-archive-filter input:focus-visible,
+.ss-controls select:focus-visible {
+  outline: 2px solid var(--ss-accent);
+  outline-offset: 1px;
 }
 
 .ss-archive-legend {
@@ -2042,6 +2064,16 @@ body {
 
 .ss-archive-count {
   margin: 0 0 8px;
+}
+
+/* Keep the previous results visible while a new page or search loads, so the
+   layout doesn't jump on every keystroke. */
+.is-refetching {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-refetching { transition: none; }
 }
 
 /* Ghost button variant */

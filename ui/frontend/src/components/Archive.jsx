@@ -14,11 +14,15 @@ const PAGE_SIZE = 50;
 export default function Archive() {
   const [dates, setDates] = useState([]);
   const [selectedDate, setSelectedDate] = useState('');
-  const [page, setPage] = useState(1);
+  // Zero-based, matching the API's `offset = page * page_size`. It used to
+  // start at 1, so every day's first page silently began at offset 50 and the
+  // 50 most recent headlines of each date were unreachable.
+  const [page, setPage] = useState(0);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     getJson('/api/dates')
@@ -32,7 +36,7 @@ export default function Archive() {
       .catch((err) => setError(err.message));
   }, []);
 
-  const loadHeadlines = useCallback(async (date, pageNum) => {
+  const loadHeadlines = useCallback(async (date, pageNum, search) => {
     if (!date) {
       return;
     }
@@ -43,6 +47,9 @@ export default function Archive() {
         page: String(pageNum),
         page_size: String(PAGE_SIZE),
       });
+      if (search) {
+        params.set('q', search);
+      }
       const res = await getJson(`/api/headlines?${params.toString()}`);
       setData(res);
       setError(null);
@@ -53,30 +60,63 @@ export default function Archive() {
     }
   }, []);
 
+  // Debounce the box so a request goes out once typing settles, not per keystroke.
   useEffect(() => {
-    loadHeadlines(selectedDate, page);
-  }, [selectedDate, page, loadHeadlines]);
+    const id = setTimeout(() => {
+      setQuery((prev) => {
+        const next = filter.trim();
+        if (next !== prev) {
+          setPage(0);
+        }
+        return next;
+      });
+    }, 350);
+    return () => clearTimeout(id);
+  }, [filter]);
+
+  useEffect(() => {
+    loadHeadlines(selectedDate, page, query);
+  }, [selectedDate, page, query, loadHeadlines]);
 
   const onDateChange = (e) => {
-    setPage(1);
+    setPage(0);
     setSelectedDate(e.target.value);
   };
 
   const total = data?.total ?? 0;
   const pageSize = data?.page_size ?? PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  // `total` now reflects the search, so the range and page count describe the
+  // matches rather than the whole day.
+  const visibleHeadlines = data?.headlines || [];
+  const firstOnPage = total === 0 ? 0 : page * pageSize + 1;
+  const lastOnPage = Math.min(total, page * pageSize + visibleHeadlines.length);
+  const searching = Boolean(query);
 
-  // Client-side substring filter over the currently loaded page only
-  // (case-insensitive; plain includes works for Hebrew text too).
-  const pageHeadlines = data?.headlines || [];
-  const needle = filter.trim().toLowerCase();
-  const visibleHeadlines = needle
-    ? pageHeadlines.filter(
-        (h) =>
-          (h.headline || '').toLowerCase().includes(needle) ||
-          (h.source || '').toLowerCase().includes(needle),
-      )
-    : pageHeadlines;
+  // Rendered above AND below the list: a page holds 50 rows, so after reading to
+  // the bottom the controls are in reach, and after changing pages the controls
+  // are still where you left them at the top.
+  const pager = totalPages > 1 ? (
+    <div className="ss-pager">
+      <button
+        className="ss-btn secondary"
+        disabled={page <= 0}
+        onClick={() => setPage((p) => Math.max(0, p - 1))}
+      >
+        Prev
+      </button>
+      <span>
+        Page {page + 1} of {totalPages}
+      </span>
+      <button
+        className="ss-btn secondary"
+        disabled={page >= totalPages - 1}
+        onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+      >
+        Next
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div className="ss-card">
@@ -94,9 +134,9 @@ export default function Archive() {
           </select>
         </label>
         <label className="ss-field ss-archive-filter">
-          Filter this page
+          Search this date
           <input
-            type="text"
+            type="search"
             value={filter}
             placeholder="Headline or source…"
             onChange={(e) => setFilter(e.target.value)}
@@ -116,39 +156,26 @@ export default function Archive() {
       </p>
 
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
-      {loading ? <p className="ss-muted">Loading…</p> : null}
 
       {data ? (
-        <>
+        // Hold the previous result at reduced opacity while refetching rather
+        // than swapping in a "Loading…" line, which shifted the layout on every
+        // keystroke and page change.
+        <div className={loading ? 'is-refetching' : undefined}>
           <p className="ss-muted ss-archive-count">
-            Showing {visibleHeadlines.length} of {pageHeadlines.length} on this
-            page
+            {total === 0
+              ? (searching ? `No headlines match “${query}” on this date.` : 'No headlines for this date.')
+              : (
+                <>
+                  {firstOnPage}–{lastOnPage} of {total}
+                  {searching ? <> matching “{query}” on this date</> : ' headlines'}
+                </>
+              )}
           </p>
-          {needle && visibleHeadlines.length === 0 ? (
-            <p className="ss-muted">No headlines match the filter on this page.</p>
-          ) : (
-            <HeadlineList headlines={visibleHeadlines} />
-          )}
-          <div className="ss-pager">
-            <button
-              className="ss-btn secondary"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </button>
-            <span>
-              Page {data.page ?? page} of {totalPages} · {total} headlines
-            </span>
-            <button
-              className="ss-btn secondary"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </button>
-          </div>
-        </>
+          {pager}
+          <HeadlineList headlines={visibleHeadlines} />
+          {pager}
+        </div>
       ) : null}
     </div>
   );
