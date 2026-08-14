@@ -130,8 +130,7 @@ data.
 - Figure 8: 3-D daily news centroids, colored by KMeans cluster (Section 3.5) *(screenshot placeholder)*
 - Figure 9: Single-day headline cloud in the shared PCA space (Section 3.5) *(screenshot placeholder)*
 - Figure 10: Per-source persona votes vs the model's call (Section 3.5) *(screenshot placeholder)*
-- Figure 11: Unified leaderboard - ROC-AUC vs accuracy scatter (Section 4.2.7) *(placeholder)*
-- Figure 12: Models panel - registry leaderboard with the active champion (Section 4.2.8) *(screenshot placeholder)*
+- Figure 11: Models panel - registry leaderboard with the active champion (Section 4.2.8) *(screenshot placeholder)*
 
 ## List of Tables
 
@@ -984,7 +983,7 @@ the long-run market up-rate.*
 | LGBM "Top sources + Other" - per-source (Section 4.2.2) | 0.5794 | 0.5303 | +0.0491 | 0.5415 |
 | LSTM window 30 - per-source (Section 4.2.3) | 0.5636 | 0.5303 | +0.0333 | n/a |
 | PatchTST_DailyMean - transformer zoo (Section 4.2.4) | 0.5370 | 0.5303 | +0.0067 | 0.5185 |
-| CatBoost (vanilla holdout) - tuning track (Section 4.2.5) | 0.5576 | 0.5303 | +0.0273 | n/a |
+| XGBoost (vanilla holdout) - tuning track (Section 4.2.5) | 0.5406 | 0.5303 | +0.0103 | n/a |
 | Score-LSTM - hardened package (Section 4.2.6) | 0.5000 | 0.5303 | -0.0303 | 0.5088 |
 | GRU [scored] - unified grid, best ROC-AUC (Section 4.2.7) | 0.5289 | 0.5303 | -0.0014 | **0.5755** |
 | TFT [cov=none] - unified grid, best accuracy (Section 4.2.7) | **0.5916** | 0.5303 | **+0.0613** | 0.5391 |
@@ -1195,9 +1194,9 @@ rows, 40 sources.
 
 | Model | Accuracy | Baseline | Gap |
 |---|---|---|---|
-| CatBoost (vanilla holdout) | 0.5576 | 0.5303 | +0.0273 |
-| LGBM (vanilla holdout) | 0.5357 | 0.5303 | +0.0054 |
-| XGBoost (vanilla holdout) | 0.5206 | 0.5303 | -0.0097 |
+| XGBoost (vanilla holdout) | 0.5406 | 0.5303 | +0.0103 |
+| LGBM (vanilla holdout) | 0.5387 | 0.5303 | +0.0084 |
+| CatBoost (vanilla holdout) | 0.5276 | 0.5303 | -0.0027 |
 | Ensemble (soft-vote, tuned threshold) | 0.4596 | 0.5303 | -0.0707 |
 | LSTM (Optuna, tuned threshold) | 0.4553 | 0.5303 | -0.0750 |
 
@@ -1213,22 +1212,15 @@ validation balanced accuracies of 0.5363, 0.5583, and 0.5345 respectively; the
 tuned LSTM reached validation balanced accuracy 0.5611 and the soft-vote
 ensemble 0.5712. Walk-forward CatBoost gave mean accuracy 0.5267 +/- 0.0814.
 
-*Reading:* the contrast inside this track is between the untuned trees and the
-tuned sequence models, and it runs the opposite way to what the tuning effort
-would predict. The three vanilla trees - fitted with default-ish parameters and
-no threshold adjustment - land at 0.5576, 0.5357, and 0.5206, with CatBoost
-clearing the 0.5303 baseline by 2.7 points. The heavily tuned models do worse:
-every configuration looks strong on the validation slice (balanced accuracies
-0.53-0.57) and then falls well below the baseline on the holdout, with the
-tuned LSTM 7.5 points below and the soft-vote ensemble 7.1. This is the
-chapter's cleanest example of validation-to-test transfer failure, and the fact
-that the *untuned* baselines survive it while the tuned models do not is the
-sharpest form of the lesson: a threshold and a hyper-parameter set chosen on
-one slice need re-checking on the slice they will be scored on, and tuning
-against a validation slice can actively cost accuracy on the test slice. This
-is why the registry track re-tunes under its own serving contract rather than
-importing settings from here. (GRU/TCN, multi-seed, abstention, and the final
-`final_results.csv` cells were not executed in the saved notebook.)
+*Reading:* the tuning effort runs backwards here. The three untuned trees - default-ish
+parameters, no threshold adjustment - hold up on the holdout, with XGBoost and
+LightGBM clearing the baseline by 1.0 and 0.8 points and CatBoost missing it by
+0.3. The heavily tuned models look strong on the validation slice (balanced
+accuracy 0.53-0.57) and then land 7.1-7.5 points below the baseline on the
+holdout. That the *untuned* baselines survive the transfer while the tuned ones
+do not is the sharpest form of the lesson: thresholds and hyper-parameters
+chosen on one slice must be re-checked on the slice they are scored on. This is
+why the registry track re-tunes under its own serving contract.
 
 #### 4.2.6 Hardened-package analysis (`sentisense_analysis.ipynb`)
 
@@ -1330,10 +1322,6 @@ table does so by a wide margin. The grid's job, though, is ranking rather than
 deployment: no single cell here is tuned under the serving contract, which is
 what the next section does.
 
-> **[Figure 11 placeholder: scatter of Table 11 - ROC-AUC (x) vs accuracy
-> (y), point shape by model family, with reference lines at ROC-AUC 0.50 and
-> the 0.5303 accuracy baseline.]**
-
 #### 4.2.8 Production registry run and the live champion
 
 *Purpose: select and deploy one model under the exact contract the live system
@@ -1369,7 +1357,7 @@ architecture with 3-seed OOS averaging, plus the foundation-model families)
 populated the registry leaderboard that the dashboard's Models panel displays,
 and produced the champion below.
 
-> **[Table/Figure 12 placeholder: export the full registry leaderboard from
+> **[Table/Figure 11 placeholder: export the full registry leaderboard from
 > the Models panel (version, family, ROC-AUC + CI, MCC, accuracy, n) once the
 > full-budget run's results are final.]**
 
@@ -1420,7 +1408,7 @@ extends the champion's prospective record on the dashboard (eval-seeded
 cumulative accuracy, Section 3.5). This record is the project's strongest
 ongoing evidence, since prospective days cannot be overfit.
 
-> **[Figure 12 placeholder: screenshot of the Models panel with the active
+> **[Figure 11 placeholder: screenshot of the Models panel with the active
 > champion highlighted; optionally a second screenshot of the cumulative
 > live-accuracy panel after a few weeks of operation.]**
 
@@ -1809,7 +1797,3 @@ degrades to an explicit "no data" state rather than an error when its
 producer has not yet run.
 
 ---
-
-*Author name, submission date, screenshots for the figure placeholders, and
-the final full-budget registry leaderboard export (Table/Figure 12) are to be
-completed before submission.*
