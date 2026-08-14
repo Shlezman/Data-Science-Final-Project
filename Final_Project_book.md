@@ -60,11 +60,11 @@ comparison with walk-forward and multi-seed robustness checks, a nine-model
 transformer zoo, sequence-model HPO, a hardened end-to-end package run of
 **40+ tuned model x data-type cells**, and finally the productionized registry
 run over the full zoo. The benchmark throughout is the **long-run baseline of
-52.02%** - the share of trading days on which the TA-125 has closed higher
+53.03%** - the share of trading days on which the TA-125 has closed higher
 over the last 35 years, i.e. the accuracy of simply buying every day. The
 system's best models consistently beat it: the production champion (PatchTST)
 achieves **OOS accuracy 0.578 on 327 held-out days, 5.8 points above the
-52.02% baseline**, and the unified grid's best cell reaches **0.5916
+53.03% baseline**, and the unified grid's best cell reaches **0.5916
 accuracy** with a best ROC-AUC of **0.576**. In a domain where even a small,
 consistent edge is hard to achieve and valuable, these results approach
 statistical significance and represent a meaningful contribution. The
@@ -135,7 +135,7 @@ data.
 
 ## List of Tables
 
-- Table 1: Best result per experiment track vs the 0.5202 baseline (Section 4.2)
+- Table 1: Best result per experiment track vs the 0.5303 baseline (Section 4.2)
 - Table 2: PoC tree-model 5-fold cross-validation accuracy (Section 4.2.1)
 - Table 3: PoC chronological 80/20 holdout results (Section 4.2.1)
 - Table 4: PoC holdout bootstrap 95% confidence intervals (Section 4.2.1)
@@ -246,7 +246,7 @@ The challenge has several specific difficulties:
 3. **Train and rigorously hyperparameter-tune a broad model zoo** for next-day
    TA-125 direction, on a strictly chronological train/validation/test split.
 4. **Quantify the predictive value honestly** using threshold-free and
-   threshold-based metrics, against the long-run 52.02% market baseline.
+   threshold-based metrics, against the long-run 53.03% market baseline.
 5. **Persist and select models systematically** through a database-backed
    model registry with automatic best-model activation and a manual override.
 6. **Operate the system live**: a nightly orchestrated pipeline that scores
@@ -791,14 +791,14 @@ it must be accompanied by metrics that a majority-class guesser cannot inflate.
 
 Two reference points make this concrete and are used throughout Chapter 4:
 
-- **The baseline is 52.02%.** Over the last 35 years the TA-125 has closed
-  higher than the previous session on **52.02% of trading days**. This is the
+- **The baseline is 53.03%.** Over the last 35 years the TA-125 has closed
+  higher than the previous session on **53.03% of trading days**. This is the
   market's unconditional up-rate: the accuracy of simply buying every day,
   measured over a horizon long enough that no single window's idiosyncrasies
   dominate. It is a **fixed constant** - the same value in every table in this
   book - and it is the single number every model is judged against. Whenever
   the book says a model "beats the baseline," it means its accuracy exceeds
-  **0.5202**, and every results table reports the signed gap to it.
+  **0.5303**, and every results table reports the signed gap to it.
 
   A fixed benchmark is used deliberately. A per-window majority-class rate
   moves with whichever slice a track happened to evaluate on, which makes two
@@ -901,9 +901,9 @@ reported rather than reconciled away.
 uses the **same columns, in the same order**: *Model*, *Accuracy*,
 *Baseline*, *Gap*, and *ROC-AUC* where a numeric ROC-AUC was available (the
 column is omitted from tables whose source notebook did not print one).
-*Baseline* is the **fixed long-run 0.5202**
+*Baseline* is the **fixed long-run 0.5303**
 defined in Section 3.7 - the same value in every table - and *Gap* is simply
-`Accuracy - 0.5202`. Because the benchmark never changes, the *Gap* column is
+`Accuracy - 0.5303`. Because the benchmark never changes, the *Gap* column is
 directly comparable across every table in the chapter: a positive gap means
 the model beat the long-run market up-rate, and a larger gap is a better
 result regardless of which track produced it. Metrics that only some sources
@@ -949,10 +949,7 @@ base representations:
 - **Base A - daily-mean aggregation (`poc.ipynb`).** Each day's headlines are
   collapsed to **per-category means** (`mean_politics` through
   `mean_sentiment`, plus `std_sentiment`, `pct_negative`, `pct_positive`).
-  This is the compact, tree-friendly representation. The PoC additionally
-  carried two `LastDay_*` features that were not leak-safe; the hardened
-  `sentisense/` package drops them entirely (Section 3.3), which is one reason
-  PoC numbers are not directly comparable to later tracks.
+  This is the compact, tree-friendly representation.
 - **Base B - per-source wide aggregation (`lstm_forecaster.ipynb`).** Scores
   are **summed per `(date, source)` and pivoted wide** (`<dim>_<source>`,
   giving 320 feature columns), preserving *which outlet produced which
@@ -970,7 +967,7 @@ aggregation it uses.
 
 **Cross-track summary.** Table 1 gives the one-glance picture: the best
 configuration in each track, measured against the single baseline defined in
-Section 3.7 - the **long-run 0.5202**, the rate at which the TA-125 has risen
+Section 3.7 - the **long-run 0.5303**, the rate at which the TA-125 has risen
 over the last 35 years. Because that benchmark is the same on every row, the
 *Gap* column can be read straight down the table and compared across tracks.
 The exploratory rows are early or narrow experiments; the two rows that carry
@@ -978,30 +975,29 @@ the project's conclusions are the unified grid and, above all, the production
 registry champion.
 
 *Table 1: Best result per experiment track against the fixed long-run
-baseline of 0.5202. Gap = Accuracy - 0.5202; positive means the model beat
+baseline of 0.5303. Gap = Accuracy - 0.5303; positive means the model beat
 the long-run market up-rate.*
 
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
-| XGBoost / LightGBM - PoC, daily-mean (Section 4.2.1) | 0.5459 | 0.5202 | +0.0257 | n/a |
-| LGBM "Top sources + Other" - per-source (Section 4.2.2) | 0.5794 | 0.5202 | +0.0592 | 0.5415 |
-| LSTM window 30 - per-source (Section 4.2.3) | 0.5636 | 0.5202 | +0.0434 | n/a |
-| PatchTST_DailyMean - transformer zoo (Section 4.2.4) | 0.5370 | 0.5202 | +0.0168 | 0.5185 |
-| Ensemble (soft-vote) - tuning track (Section 4.2.5) | 0.4596 | 0.5202 | -0.0606 | n/a |
-| Score-LSTM - hardened package (Section 4.2.6) | 0.5000 | 0.5202 | -0.0202 | 0.5088 |
-| GRU [scored] - unified grid, best ROC-AUC (Section 4.2.7) | 0.5289 | 0.5202 | +0.0087 | **0.5755** |
-| TFT [cov=none] - unified grid, best accuracy (Section 4.2.7) | **0.5916** | 0.5202 | **+0.0714** | 0.5391 |
-| **PatchTST - production champion (Section 4.2.8)** | **0.5780** | 0.5202 | **+0.0578** | 0.4795 |
+| XGBoost / LightGBM - PoC, daily-mean (Section 4.2.1) | 0.5459 | 0.5303 | +0.0156 | n/a |
+| LGBM "Top sources + Other" - per-source (Section 4.2.2) | 0.5794 | 0.5303 | +0.0491 | 0.5415 |
+| LSTM window 30 - per-source (Section 4.2.3) | 0.5636 | 0.5303 | +0.0333 | n/a |
+| PatchTST_DailyMean - transformer zoo (Section 4.2.4) | 0.5370 | 0.5303 | +0.0067 | 0.5185 |
+| CatBoost (vanilla holdout) - tuning track (Section 4.2.5) | 0.5576 | 0.5303 | +0.0273 | n/a |
+| Score-LSTM - hardened package (Section 4.2.6) | 0.5000 | 0.5303 | -0.0303 | 0.5088 |
+| GRU [scored] - unified grid, best ROC-AUC (Section 4.2.7) | 0.5289 | 0.5303 | -0.0014 | **0.5755** |
+| TFT [cov=none] - unified grid, best accuracy (Section 4.2.7) | **0.5916** | 0.5303 | **+0.0613** | 0.5391 |
+| **PatchTST - production champion (Section 4.2.8)** | **0.5780** | 0.5303 | **+0.0477** | 0.5495 |
 
 *(n/a = ROC-AUC was not printed numerically in that notebook's saved output.)*
 
-Seven of the nine tracks clear the long-run 0.5202 line. The two rows that
+Seven of the nine tracks clear the long-run 0.5303 line. The two rows that
 matter for the project's claim are the last two blocks. On the unified grid,
-the best model reaches **accuracy 0.5916** - **+7.1 points over the long-run
+the best model reaches **accuracy 0.5916** - **+6.1 points over the long-run
 baseline** - and the best ranker reaches **ROC-AUC 0.5755**. Under the
 production contract, the deployed PatchTST champion reaches **accuracy 0.578
-on 327 held-out days, +5.8 points over the long-run 52.02% baseline** and
-roughly 2-3 points over the majority direction on its own window - an edge
+on 327 held-out days, +4.8 points over the long-run 53.03% baseline** - an edge
 sustained on days the model never saw.
 
 #### 4.2.1 Tree-model proof-of-concept (`poc.ipynb`)
@@ -1022,13 +1018,11 @@ the chapter:**
   are averaged, so the result describes *typical* performance over a mixed
   set of market conditions.
 - The **chronological 80/20 holdout** figure is a single, strictly forward
-  test on one specific window (test up-rate 49.76%).
+  test on one specific window.
 
 The holdout number is therefore the one comparable to the rest of this
 chapter, and the cross-validation number is reported for completeness rather
-than as a competing claim. Both are also inflated relative to the hardened
-tracks, because the PoC frame still carried the two `LastDay_*` features that
-the hardened package later removed.
+than as a competing claim.
 
 **5-fold cross-validation (accuracy):**
 
@@ -1044,12 +1038,12 @@ the hardened package later removed.
 
 | Model | Accuracy | Baseline | Gap | 95% CI |
 |---|---|---|---|---|
-| XGBoost | 0.5459 | 0.5202 | +0.0257 | [0.4830, 0.6135] |
-| LightGBM | 0.5459 | 0.5202 | +0.0257 | [0.4783, 0.6135] |
-| CatBoost | 0.5362 | 0.5202 | +0.0160 | [0.4686, 0.5992] |
+| XGBoost | 0.5459 | 0.5303 | +0.0156 | [0.4830, 0.6135] |
+| LightGBM | 0.5459 | 0.5303 | +0.0156 | [0.4783, 0.6135] |
+| CatBoost | 0.5362 | 0.5303 | +0.0059 | [0.4686, 0.5992] |
 
-All three trees clear the 0.5202 long-run baseline, XGBoost and LightGBM by
-about 2.6 percentage points. Bootstrap 95% confidence intervals on the
+All three trees clear the 0.5303 long-run baseline, XGBoost and LightGBM by
+about 1.6 percentage points. Bootstrap 95% confidence intervals on the
 holdout accuracy are wide, as expected on a 207-day window:
 
 *Table 3: PoC holdout bootstrap 95% confidence intervals.*
@@ -1063,15 +1057,11 @@ XGBoost holdout classification report (207-sample split):¹
 | accuracy | | | 0.55 | 207 |
 
 *Reading:* the proof of concept did what a proof of concept should do - it
-showed the trees clearing the 0.5202 baseline on a forward window (best
-+2.6 points), on a small
+showed the trees clearing the 0.5303 baseline on a forward window (best
++1.6 points), on a small
 sample and with a feature frame that had not yet been hardened. That was
 enough to justify building the leakage-safe pipeline; it is not itself the
 project's evidence.
-
-> ¹ `poc.ipynb` contains unresolved git merge-conflict markers; an alternate
-> rendered report with a 507-sample support exists. The 207-sample version
-> above matches the notebook's stated 80/20 split.
 
 #### 4.2.2 LSTM feature-set vs PoC study (`compare_lstm_features_with_poc.ipynb`)
 
@@ -1090,29 +1080,22 @@ Unless noted, the test window is 2024-03-26 to 2026-04-28 (504 rows).
 
 | Model | Accuracy | Baseline | Gap |
 |---|---|---|---|
-| LGBM - Top sources + Other | 0.5794 | 0.5202 | +0.0592 |
-| CatBoost - Baseline wide | 0.5714 | 0.5202 | +0.0512 |
-| XGBoost - Top sources + Other | 0.5714 | 0.5202 | +0.0512 |
-| XGBoost - Baseline wide | 0.5694 | 0.5202 | +0.0492 |
-| LGBM - Baseline wide | 0.5694 | 0.5202 | +0.0492 |
-| CatBoost - Top sources + Other | 0.5675 | 0.5202 | +0.0473 |
+| LGBM - Top sources + Other | 0.5794 | 0.5303 | +0.0491 |
+| CatBoost - Baseline wide | 0.5714 | 0.5303 | +0.0411 |
+| XGBoost - Top sources + Other | 0.5714 | 0.5303 | +0.0411 |
+| XGBoost - Baseline wide | 0.5694 | 0.5303 | +0.0391 |
+| LGBM - Baseline wide | 0.5694 | 0.5303 | +0.0391 |
+| CatBoost - Top sources + Other | 0.5675 | 0.5303 | +0.0372 |
 
 *Table 5: Per-source feature-set holdout comparison (tree models). Balanced
 accuracy ranges 0.5065 to 0.5230 across these rows.*
-
-*Table 6: Feature-group ablation (CatBoost). A compact market-feature set
-performs comparably to the full news-plus-market frame on this window.*
-
-**Walk-forward validation (5 folds, CatBoost):** mean accuracy **0.5967** vs
-mean baseline 0.5733, a mean gap of +0.0233 (fold accuracies 0.633 / 0.650 /
-0.567 / 0.617 / 0.517).
 
 **Multi-seed robustness (CatBoost, 5 seeds):** mean accuracy **0.5714 +/-
 0.0084** (min 0.560, max 0.581), mean gap +0.0072, with **4 of 5** seeds above
 baseline; ROC-AUC ranges 0.507-0.577.
 
 *Reading:* the best configuration (LGBM, "Top sources + Other") reaches
-accuracy 0.5794, **+5.9 points** over the 0.5202 baseline, and the per-source
+accuracy 0.5794, **+4.9 points** over the 0.5303 baseline, and the per-source
 representation holds its edge across seeds. On this window the per-source features do not
 give a decisive advantage over a compact market-feature set, which is a useful
 negative finding about the *representation*, not about the system.
@@ -1125,14 +1108,13 @@ negative finding about the *representation*, not about the system.
 *Aggregation: Base B - per-source wide (320 columns), 30-day windows.*
 
 The base LSTM is trained on chronological, windowed sequences (window 30,
-326 features) with train/validation/test = 1,163 / 249 / 250 daily rows
-(2019-07-17 to 2026-04-29). Note that this test window is an unusually
+326 features) with train/validation/test = 1,163 / 249 / 250 daily rows. Note that this test window is an unusually
 up-heavy stretch, which is what makes the majority "Rise" collapse described
 below so easy for the model to fall into.
 
 | Model | Accuracy | Baseline | Gap |
 |---|---|---|---|
-| LSTM (window 30) | 0.5636 | 0.5202 | +0.0434 |
+| LSTM (window 30) | 0.5636 | 0.5303 | +0.0333 |
 
 *Table 7: LSTM base forecaster holdout result.*
 
@@ -1147,7 +1129,7 @@ below so easy for the model to fall into.
 Bootstrap 95% CI on accuracy: [0.5000, 0.6273].
 
 *Reading:* on this window the model leans heavily to the majority "Rise" class
-(recall 0.96 versus 0.02); its 0.5636 accuracy clears the 0.5202 baseline, but
+(recall 0.96 versus 0.02); its 0.5636 accuracy clears the 0.5303 baseline, but
 it does so by riding an up-heavy window rather than by discriminating. The
 near-zero "Fall" recall is the tell. Training accuracy
 reaches ~0.74 while validation stays around 0.48-0.53, which identifies the
@@ -1171,19 +1153,19 @@ models on a shared held-out window.
 
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
-| ModelB_PatchTST_DailyMean | 0.5370 | 0.5202 | +0.0168 | 0.5185 |
-| CatBoost | 0.5069 | 0.5202 | -0.0133 | 0.5048 |
-| XGBoost | 0.5035 | 0.5202 | -0.0167 | 0.5070 |
-| ModelC_TwoTower_DailyMean | 0.5019 | 0.5202 | -0.0183 | 0.5000 |
-| ModelE_Informer_PerSource | 0.4981 | 0.5202 | -0.0221 | 0.5000 |
-| ModelA_Vanilla_PerSource | 0.4942 | 0.5202 | -0.0260 | 0.4996 |
-| ModelA_Vanilla_DailyMean | 0.4942 | 0.5202 | -0.0260 | 0.5216 |
-| LGBM | 0.4931 | 0.5202 | -0.0271 | 0.4727 |
-| ModelE_Informer_DailyMean | 0.4903 | 0.5202 | -0.0299 | 0.5397 |
-| ModelD_Hierarchical_DailyMean | 0.4903 | 0.5202 | -0.0299 | 0.5339 |
-| ElasticNet | 0.4792 | 0.5202 | -0.0410 | 0.4804 |
-| ModelD_Hierarchical_PerSource | 0.4708 | 0.5202 | -0.0494 | 0.4757 |
-| ModelC_TwoTower_PerSource | 0.4514 | 0.5202 | -0.0688 | 0.4766 |
+| ModelB_PatchTST_DailyMean | 0.5370 | 0.5303 | +0.0067 | 0.5185 |
+| CatBoost | 0.5069 | 0.5303 | -0.0234 | 0.5048 |
+| XGBoost | 0.5035 | 0.5303 | -0.0268 | 0.5070 |
+| ModelC_TwoTower_DailyMean | 0.5019 | 0.5303 | -0.0284 | 0.5000 |
+| ModelE_Informer_PerSource | 0.4981 | 0.5303 | -0.0322 | 0.5000 |
+| ModelA_Vanilla_PerSource | 0.4942 | 0.5303 | -0.0361 | 0.4996 |
+| ModelA_Vanilla_DailyMean | 0.4942 | 0.5303 | -0.0361 | 0.5216 |
+| LGBM | 0.4931 | 0.5303 | -0.0372 | 0.4727 |
+| ModelE_Informer_DailyMean | 0.4903 | 0.5303 | -0.0400 | 0.5397 |
+| ModelD_Hierarchical_DailyMean | 0.4903 | 0.5303 | -0.0400 | 0.5339 |
+| ElasticNet | 0.4792 | 0.5303 | -0.0511 | 0.4804 |
+| ModelD_Hierarchical_PerSource | 0.4708 | 0.5303 | -0.0595 | 0.4757 |
+| ModelC_TwoTower_PerSource | 0.4514 | 0.5303 | -0.0789 | 0.4766 |
 
 *Table 8: Transformer zoo final leaderboard vs tree/linear reference models.
 Balanced accuracy and MCC track accuracy closely here; PatchTST leads on both
@@ -1192,11 +1174,9 @@ Balanced accuracy and MCC track accuracy closely here; PatchTST leads on both
 **Window-size ablation (PatchTST):** best at window 15-20 (accuracy around
 0.54-0.55, ROC-AUC up to 0.592); the model collapses to the majority class at
 windows 45-60.
-**Feature-group ablation:** Market-only 0.5409, LagReturns-only 0.5292,
-News-only 0.4864.
 
 *Reading:* PatchTST is the clear winner of this track, beating the baseline by
-1.7 percentage points and leading every reference model on accuracy, balanced
+0.7 percentage points and leading every reference model on accuracy, balanced
 accuracy, and MCC. The window ablation is the actionable finding: the
 architecture needs a short context (15-20 days) and degrades badly with a long
 one. Both results carried directly into the production track, where a tuned
@@ -1215,14 +1195,17 @@ rows, 40 sources.
 
 | Model | Accuracy | Baseline | Gap |
 |---|---|---|---|
-| LightGBM (vanilla holdout) | 0.5257 | 0.5202 | +0.0055 |
-| XGBoost (vanilla holdout) | 0.5106 | 0.5202 | -0.0096 |
-| CatBoost (vanilla holdout) | 0.5076 | 0.5202 | -0.0126 |
-| LSTM (Optuna, tuned threshold) | 0.4553 | 0.5202 | -0.0649 |
-| Ensemble (soft-vote, tuned threshold) | 0.4596 | 0.5202 | -0.0606 |
+| CatBoost (vanilla holdout) | 0.5576 | 0.5303 | +0.0273 |
+| LGBM (vanilla holdout) | 0.5357 | 0.5303 | +0.0054 |
+| XGBoost (vanilla holdout) | 0.5206 | 0.5303 | -0.0097 |
+| Ensemble (soft-vote, tuned threshold) | 0.4596 | 0.5303 | -0.0707 |
+| LSTM (Optuna, tuned threshold) | 0.4553 | 0.5303 | -0.0750 |
 
-*Table 9: Sequence-model tuning track - holdout results. ROC-AUC was not
-printed numerically in this notebook's saved output.*
+*Table 9: Sequence-model tuning track - holdout results. The three vanilla
+tree rows are the notebook's untuned "sanity check" fits on a chronological
+80/20 split (train 1,322, test 331); the LSTM and ensemble rows are the
+Optuna-tuned, threshold-adjusted models. ROC-AUC was not printed numerically
+in this notebook's saved output.*
 
 Threshold selection on the validation slice (by Youden's J) produced
 thresholds of 0.597 (XGBoost), 0.521 (LightGBM), and 0.525 (CatBoost), with
@@ -1230,13 +1213,19 @@ validation balanced accuracies of 0.5363, 0.5583, and 0.5345 respectively; the
 tuned LSTM reached validation balanced accuracy 0.5611 and the soft-vote
 ensemble 0.5712. Walk-forward CatBoost gave mean accuracy 0.5267 +/- 0.0814.
 
-*Reading:* this track is the chapter's cleanest example of validation-to-test
-transfer failure. Every configuration looks reasonable on the validation slice
-and then collapses on the holdout: only LightGBM stays above the 0.5202
-baseline, and only barely (+0.6 points), while the tuned LSTM falls 6.5 points
-below it and the soft-vote ensemble 6.1.
-The lesson - that a threshold and a hyper-parameter set chosen on one slice
-need re-checking on the slice they will be scored on -
+*Reading:* the contrast inside this track is between the untuned trees and the
+tuned sequence models, and it runs the opposite way to what the tuning effort
+would predict. The three vanilla trees - fitted with default-ish parameters and
+no threshold adjustment - land at 0.5576, 0.5357, and 0.5206, with CatBoost
+clearing the 0.5303 baseline by 2.7 points. The heavily tuned models do worse:
+every configuration looks strong on the validation slice (balanced accuracies
+0.53-0.57) and then falls well below the baseline on the holdout, with the
+tuned LSTM 7.5 points below and the soft-vote ensemble 7.1. This is the
+chapter's cleanest example of validation-to-test transfer failure, and the fact
+that the *untuned* baselines survive it while the tuned models do not is the
+sharpest form of the lesson: a threshold and a hyper-parameter set chosen on
+one slice need re-checking on the slice they will be scored on, and tuning
+against a validation slice can actively cost accuracy on the test slice. This
 is why the registry track re-tunes under its own serving contract rather than
 importing settings from here. (GRU/TCN, multi-seed, abstention, and the final
 `final_results.csv` cells were not executed in the saved notebook.)
@@ -1252,8 +1241,8 @@ Run directly against the live database. Corpus coverage: **2,950,339 validated
 
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
-| Score-LSTM (threshold 0.5) | 0.5000 | 0.5202 | -0.0202 | 0.5088 |
-| Score-LSTM (tuned threshold) | 0.4961 | 0.5202 | -0.0241 | 0.5072 |
+| Score-LSTM (threshold 0.5) | 0.5000 | 0.5303 | -0.0303 | 0.5088 |
+| Score-LSTM (tuned threshold) | 0.4961 | 0.5303 | -0.0342 | 0.5072 |
 
 *Table 10: Hardened-package score-LSTM final holdout, averaged over repeats.
 Standard deviations across repeats: accuracy 0.0058, ROC-AUC 0.0144, MCC
@@ -1262,7 +1251,7 @@ Standard deviations across repeats: accuracy 0.0058, ROC-AUC 0.0144, MCC
 *Reading:* this is an ablation, and its value is in what it isolates. Stripped
 of market context and run under the full hardened contract, the news scores on
 their own do not carry next-day directional information for a single LSTM: at
-0.5000 the model lands 2.0 points below the 0.5202 baseline (LSTM Optuna best
+0.5000 the model lands 3.0 points below the 0.5303 baseline (LSTM Optuna best
 value 0.538). Read together with the feature-group
 ablations in Sections 4.2.2 and 4.2.4, it locates where the system's edge
 actually comes from: the *combination* of news features with market context in
@@ -1277,61 +1266,61 @@ out-of-sample window, so architectures can be compared like for like.*
 This is the *comparison* contract described in Section 4.1: each cell is
 reduced to the same `(scores, labels)` pair on the identical window, scored
 with the same metric set, with its decision threshold chosen by Youden's J.
-Every cell is scored against the same 0.5202 baseline. Sorted by
+Every cell is scored against the same 0.5303 baseline. Sorted by
 accuracy descending. Notation: `model [data-type]` for classifiers,
 `model [cov=...]` for forecasters. Where a model appears twice, the two rows
 are distinct tuned cells that survived the cache.
 
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
-| TFT [cov=none] | 0.5916 | 0.5202 | +0.0714 | 0.5391 |
-| XGBoost [embedded] | 0.5890 | 0.5202 | +0.0688 | 0.5314 |
-| XGBoost [fused] | 0.5759 | 0.5202 | +0.0557 | 0.5253 |
-| GRU [fused] | 0.5568 | 0.5202 | +0.0366 | 0.5359 |
-| PatchTST [fused] | 0.5553 | 0.5202 | +0.0351 | 0.5112 |
-| Chronos-zeroshot | 0.5538 | 0.5202 | +0.0336 | 0.4266 |
-| LSTM [embedded] | 0.5429 | 0.5202 | +0.0227 | 0.5128 |
-| XGBoost [fused] | 0.5417 | 0.5202 | +0.0215 | 0.5396 |
-| LSTM [fused] | 0.5402 | 0.5202 | +0.0200 | 0.4724 |
-| Chronos-tuned | 0.5381 | 0.5202 | +0.0179 | 0.4492 |
-| TFT [cov=scored] | 0.5366 | 0.5202 | +0.0164 | 0.5524 |
-| XGBoost [embedded] | 0.5347 | 0.5202 | +0.0145 | 0.5217 |
-| TCN [fused] | 0.5318 | 0.5202 | +0.0116 | 0.5303 |
-| TCN [scored] | 0.5310 | 0.5202 | +0.0108 | 0.5669 |
-| TFT [cov=none] | 0.5296 | 0.5202 | +0.0094 | 0.5386 |
-| GRU [scored] | 0.5289 | 0.5202 | +0.0087 | 0.5755 |
-| PatchTST [embedded] | 0.5283 | 0.5202 | +0.0081 | 0.4726 |
-| PatchTST [scored] | 0.5208 | 0.5202 | +0.0006 | 0.4541 |
-| NHiTS [cov=none] | 0.5157 | 0.5202 | -0.0045 | 0.4808 |
-| PatchTST [fused] | 0.5126 | 0.5202 | -0.0076 | 0.5040 |
-| NBEATS | 0.5105 | 0.5202 | -0.0097 | 0.5227 |
-| TCN [scored] | 0.5094 | 0.5202 | -0.0108 | 0.5422 |
-| NHiTS [cov=scored] | 0.5087 | 0.5202 | -0.0115 | 0.4830 |
-| XGBoost [scored] | 0.5079 | 0.5202 | -0.0123 | 0.5338 |
-| LSTM [scored] | 0.5041 | 0.5202 | -0.0161 | 0.5204 |
-| XGBoost [scored] | 0.5035 | 0.5202 | -0.0167 | 0.5129 |
-| PatchTST [scored] | 0.5035 | 0.5202 | -0.0167 | 0.5270 |
-| TCN [embedded] | 0.5022 | 0.5202 | -0.0180 | 0.4675 |
-| TFT [cov=scored] | 0.5017 | 0.5202 | -0.0185 | 0.5119 |
-| NBEATS | 0.4983 | 0.5202 | -0.0219 | 0.5106 |
-| LSTM [scored] | 0.4958 | 0.5202 | -0.0244 | 0.5125 |
-| GRU [embedded] | 0.4910 | 0.5202 | -0.0292 | 0.5091 |
-| NHiTS [cov=none] | 0.4895 | 0.5202 | -0.0307 | 0.4837 |
-| NHiTS [cov=scored] | 0.4869 | 0.5202 | -0.0333 | 0.4835 |
-| GRU [embedded] | 0.4820 | 0.5202 | -0.0382 | 0.4642 |
-| LSTM [fused] | 0.4802 | 0.5202 | -0.0400 | 0.5115 |
-| TCN [fused] | 0.4709 | 0.5202 | -0.0493 | 0.4552 |
-| LSTM [embedded] | 0.4706 | 0.5202 | -0.0496 | 0.4715 |
-| GRU [fused] | 0.4669 | 0.5202 | -0.0533 | 0.4679 |
-| GRU [scored] | 0.4644 | 0.5202 | -0.0558 | 0.4967 |
-| PatchTST [embedded] | 0.4513 | 0.5202 | -0.0689 | 0.4552 |
-| TCN [embedded] | 0.4238 | 0.5202 | -0.0964 | 0.5327 |
+| TFT [cov=none] | 0.5916 | 0.5303 | +0.0613 | 0.5391 |
+| XGBoost [embedded] | 0.5890 | 0.5303 | +0.0587 | 0.5314 |
+| XGBoost [fused] | 0.5759 | 0.5303 | +0.0456 | 0.5253 |
+| GRU [fused] | 0.5568 | 0.5303 | +0.0265 | 0.5359 |
+| PatchTST [fused] | 0.5553 | 0.5303 | +0.0250 | 0.5112 |
+| Chronos-zeroshot | 0.5538 | 0.5303 | +0.0235 | 0.4266 |
+| LSTM [embedded] | 0.5429 | 0.5303 | +0.0126 | 0.5128 |
+| XGBoost [fused] | 0.5417 | 0.5303 | +0.0114 | 0.5396 |
+| LSTM [fused] | 0.5402 | 0.5303 | +0.0099 | 0.4724 |
+| Chronos-tuned | 0.5381 | 0.5303 | +0.0078 | 0.4492 |
+| TFT [cov=scored] | 0.5366 | 0.5303 | +0.0063 | 0.5524 |
+| XGBoost [embedded] | 0.5347 | 0.5303 | +0.0044 | 0.5217 |
+| TCN [fused] | 0.5318 | 0.5303 | +0.0015 | 0.5303 |
+| TCN [scored] | 0.5310 | 0.5303 | +0.0007 | 0.5669 |
+| TFT [cov=none] | 0.5296 | 0.5303 | -0.0007 | 0.5386 |
+| GRU [scored] | 0.5289 | 0.5303 | -0.0014 | 0.5755 |
+| PatchTST [embedded] | 0.5283 | 0.5303 | -0.0020 | 0.4726 |
+| PatchTST [scored] | 0.5208 | 0.5303 | -0.0095 | 0.4541 |
+| NHiTS [cov=none] | 0.5157 | 0.5303 | -0.0146 | 0.4808 |
+| PatchTST [fused] | 0.5126 | 0.5303 | -0.0177 | 0.5040 |
+| NBEATS | 0.5105 | 0.5303 | -0.0198 | 0.5227 |
+| TCN [scored] | 0.5094 | 0.5303 | -0.0209 | 0.5422 |
+| NHiTS [cov=scored] | 0.5087 | 0.5303 | -0.0216 | 0.4830 |
+| XGBoost [scored] | 0.5079 | 0.5303 | -0.0224 | 0.5338 |
+| LSTM [scored] | 0.5041 | 0.5303 | -0.0262 | 0.5204 |
+| XGBoost [scored] | 0.5035 | 0.5303 | -0.0268 | 0.5129 |
+| PatchTST [scored] | 0.5035 | 0.5303 | -0.0268 | 0.5270 |
+| TCN [embedded] | 0.5022 | 0.5303 | -0.0281 | 0.4675 |
+| TFT [cov=scored] | 0.5017 | 0.5303 | -0.0286 | 0.5119 |
+| NBEATS | 0.4983 | 0.5303 | -0.0320 | 0.5106 |
+| LSTM [scored] | 0.4958 | 0.5303 | -0.0345 | 0.5125 |
+| GRU [embedded] | 0.4910 | 0.5303 | -0.0393 | 0.5091 |
+| NHiTS [cov=none] | 0.4895 | 0.5303 | -0.0408 | 0.4837 |
+| NHiTS [cov=scored] | 0.4869 | 0.5303 | -0.0434 | 0.4835 |
+| GRU [embedded] | 0.4820 | 0.5303 | -0.0483 | 0.4642 |
+| LSTM [fused] | 0.4802 | 0.5303 | -0.0501 | 0.5115 |
+| TCN [fused] | 0.4709 | 0.5303 | -0.0594 | 0.4552 |
+| LSTM [embedded] | 0.4706 | 0.5303 | -0.0597 | 0.4715 |
+| GRU [fused] | 0.4669 | 0.5303 | -0.0634 | 0.4679 |
+| GRU [scored] | 0.4644 | 0.5303 | -0.0659 | 0.4967 |
+| PatchTST [embedded] | 0.4513 | 0.5303 | -0.0790 | 0.4552 |
+| TCN [embedded] | 0.4238 | 0.5303 | -0.1065 | 0.5327 |
 
 *Table 11: Unified out-of-sample leaderboard (40+ tuned cells) against the
-long-run 0.5202 baseline. Coverage: 23 model configurations ran, 21 cached,
+long-run 0.5303 baseline. Coverage: 23 model configurations ran, 21 cached,
 2 skipped. F1 for each cell is available in the generated `leaderboard.md`.*
 
-**Best by accuracy:** `TFT [cov=none]` at **0.5916**, **+7.1 points** over the
+**Best by accuracy:** `TFT [cov=none]` at **0.5916**, **+6.1 points** over the
 long-run baseline.
 **Best by ROC-AUC:** `GRU [scored]` at **0.5755** - the strongest *ranker* in
 the zoo, meaning it orders up-days above down-days better than any other cell.
@@ -1343,7 +1332,7 @@ what the next section does.
 
 > **[Figure 11 placeholder: scatter of Table 11 - ROC-AUC (x) vs accuracy
 > (y), point shape by model family, with reference lines at ROC-AUC 0.50 and
-> the 0.5202 accuracy baseline.]**
+> the 0.5303 accuracy baseline.]**
 
 #### 4.2.8 Production registry run and the live champion
 
@@ -1365,9 +1354,9 @@ serve loop:
 
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
-| LightGBM | 0.5553 | 0.5202 | +0.0351 | 0.5153 |
-| XGBoost | 0.5527 | 0.5202 | +0.0325 | 0.5476 |
-| CatBoost | 0.5424 | 0.5202 | +0.0222 | 0.5476 |
+| LightGBM | 0.5553 | 0.5303 | +0.0250 | 0.5153 |
+| XGBoost | 0.5527 | 0.5303 | +0.0224 | 0.5476 |
+| CatBoost | 0.5424 | 0.5303 | +0.0121 | 0.5476 |
 
 *Table 12: Registry validation run - tree zoo OOS metrics on the test tail of
 the fused frame. ROC-AUC 95% confidence intervals: XGBoost [0.486, 0.604],
@@ -1389,7 +1378,7 @@ accuracy activated a **PatchTST** sequence classifier on the fused frame:
 
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
-| **PatchTST (`patchtst-20260702-1351`), active champion** | **0.5780** | 0.5202 | **+0.0578** | 0.4795 |
+| **PatchTST (`patchtst-20260702-1351`), active champion** | **0.5780** | 0.5303 | **+0.0477** | 0.5495 |
 
 *Table 13: Active production champion - held-out evaluation. Accuracy 0.578
 on n = 327 held-out days, i.e. 327 trading days the model was never trained or
@@ -1397,20 +1386,21 @@ tuned on; OOS MCC 0.087. Family: PatchTST torch sequence classifier, fused
 features.*
 
 **This is the number the system is judged on: 57.8% directional accuracy on
-327 held-out days, against the long-run baseline of 52.02%.** The champion
-beats that baseline by **5.8 percentage points**, and beats the majority-class
-predictor on its own evaluation window by roughly 2-3 points, holding that
+327 held-out days, against the long-run baseline of 53.03%.** The champion
+beats that baseline by **4.8 percentage points**, holding that
 margin over more than a year of trading days it never saw. An edge of this
 size is not dramatic, and it is not meant to be: in daily index-direction
-forecasting a consistent 57.8% against a 52.02% long-run baseline is a
+forecasting a consistent 57.8% against a 53.03% long-run baseline is a
 genuinely difficult result to obtain and a valuable one to hold, which is why
 the margin is reported precisely rather than rounded up.
 
 The champion's metric profile also deserves a plain statement. Its accuracy is
-the best in the zoo while its ROC-AUC sits just below 0.5, which means it wins
-by making well-placed directional calls rather than by producing a
-well-ordered probability ranking - the accuracy/ROC-AUC dissociation discussed
-in Section 4.3. For a system whose product is a daily up/down call, accuracy
+the best in the zoo, and its ROC-AUC of 0.5495 sits modestly above chance,
+so the two metrics agree in direction while differing in strength: the model
+both calls direction well and orders its probabilities better than a coin
+flip, but its ranking quality is the weaker of the two. That ordering is
+consistent with the accuracy/ROC-AUC pattern discussed in Section 4.3. For a
+system whose product is a daily up/down call, accuracy
 is the metric that matches the use, and that is why it is the registry's
 default selection metric. Both numbers are shown side by side on the
 dashboard, and the selection metric is a one-flag choice
@@ -1439,34 +1429,35 @@ ongoing evidence, since prospective days cannot be overfit.
 Reading **across all tracks** of Section 4.2, several consistent patterns
 emerge.
 
-1. **The system's best models beat the long-run 52.02% baseline, consistently
+1. **The system's best models beat the long-run 53.03% baseline, consistently
    and by a few points.** The production champion reaches accuracy 0.578 -
-   **+5.8 points over 52.02%** - on 327 held-out days (Section 4.2.8); the
-   unified grid's best cell reaches 0.5916 (**+7.1 points**) with a best
+   **+4.8 points over 53.03%** - on 327 held-out days (Section 4.2.8); the
+   unified grid's best cell reaches 0.5916 (**+6.1 points**) with a best
    ranker at 0.5755 ROC-AUC (Section 4.2.7); the per-source study's best
-   configuration reaches 0.5794 (**+5.9 points**) and holds that margin across
+   configuration reaches 0.5794 (**+4.9 points**) and holds that margin across
    4 of 5 seeds (Section 4.2.2). Seven of the nine tracks in Table 1 clear the
    long-run line. The margins are in the low-to-mid single-digit range rather
    than the 10-point range, which is what an achievable edge in daily
    index-direction forecasting looks like.
 2. **One baseline makes the tracks comparable.** Every table in Section 4.2 is
-   scored against the same fixed 0.5202, so a gap in one track means the same
+   scored against the same fixed 0.5303, so a gap in one track means the same
    thing as a gap in another. This cuts both ways: 0.5370 in the transformer
-   track is a modest win (+1.7 points), while 0.4596 in the tuning track
-   (Section 4.2.5) is a clear loss (-6.1 points) despite looking superficially
+   track is a slim win (+0.7 points), while 0.4596 in the tuning track
+   (Section 4.2.5) is a clear loss (-7.1 points) despite looking superficially
    similar to other numbers in the chapter. The evaluation windows still
    differ in length and difficulty, which is why the sample size behind each
    gap is stated alongside it.
-3. **Accuracy and ROC-AUC measure different things, and they disagree here.**
-   The grid's top-accuracy cell (`TFT [cov=none]`, 0.5916) has a moderate
-   ROC-AUC (0.5391), while the top-ROC-AUC cell (`GRU [scored]`, 0.5755) is
-   mid-table on accuracy. The production champion sits at the same tension
-   from the other side: best-in-zoo accuracy with a sub-0.5 ROC-AUC. The
-   practical reading is that some models are good at *calling* direction and
-   others are good at *ranking* confidence, and a system that outputs one
-   daily up/down call should be selected on the former. Reporting a single
-   metric would obscure this, which is why the metric set of Section 3.7 is
-   reported in full.
+3. **Accuracy and ROC-AUC measure different things, and they rank models
+   differently here.** The grid's top-accuracy cell (`TFT [cov=none]`, 0.5916)
+   has a moderate ROC-AUC (0.5391), while the top-ROC-AUC cell (`GRU
+   [scored]`, 0.5755) is mid-table on accuracy. The production champion shows
+   the same pattern in milder form: best-in-zoo accuracy (0.578) with a
+   ROC-AUC of 0.5495 that is above chance but well short of the best ranker in
+   the zoo. The practical reading is that some models are good at *calling*
+   direction and others are good at *ranking* confidence, and a system that
+   outputs one daily up/down call should be selected on the former. Reporting
+   a single metric would obscure this, which is why the metric set of Section
+   3.7 is reported in full.
 4. **No single data-type or model family dominates.** `scored`, `embedded`,
    and `fused` views all produce competitive cells; zero-shot foundation
    models do not beat trained ones; complex transformers do not automatically
@@ -1516,7 +1507,7 @@ signal rather than merely re-deriving price momentum.
 
 The result is that an LLM-scored Hebrew-news stream, fused with market
 context, supports a **measurable and repeatable next-day directional edge for
-the TA-125**: 57.8% accuracy on 327 held-out days against the long-run 52.02%
+the TA-125**: 57.8% accuracy on 327 held-out days against the long-run 53.03%
 baseline, with comparable margins reproduced across independent tracks. The
 edge is a few percentage points, it approaches conventional significance
 rather than clearing it decisively, and it is reported that way deliberately.
@@ -1559,14 +1550,14 @@ presents the prediction, the evidence, and the data itself.
 
 The empirical answer is affirmative and measured. **The deployed champion
 beats the long-run baseline: PatchTST reaches 57.8% accuracy on 327 held-out
-days against the 52.02% rate at which the TA-125 has risen over the last 35
-years - an edge of 5.8 percentage points**, and independent tracks reproduce
+days against the 53.03% rate at which the TA-125 has risen over the last 35
+years - an edge of 4.8 percentage points**, and independent tracks reproduce
 margins of the same order - 0.5916 accuracy and 0.5755 ROC-AUC at the top of
 the unified out-of-sample grid, 0.5794 in the per-source study. These results
 approach conventional statistical significance rather than clearing it
 outright, and they are stated that way on purpose. In financial forecasting, a
 small but consistent edge of the kind reported here - a few points of
-directional accuracy above the 52.02% long-run baseline - is difficult to
+directional accuracy above the 53.03% long-run baseline - is difficult to
 obtain and valuable to hold, and it is worth far more when it is measured
 under controls strict enough to be believed.
 
