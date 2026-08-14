@@ -136,12 +136,11 @@ data.
 
 - Table 1: Best result per experiment track vs the 0.5303 baseline (Section 4.2)
 - Table 2: PoC tree-model 5-fold cross-validation accuracy (Section 4.2.1)
-- Table 3: PoC chronological 80/20 holdout results (Section 4.2.1)
-- Table 4: PoC holdout bootstrap 95% confidence intervals (Section 4.2.1)
+- Table 3: PoC chronological 80/20 holdout results with bootstrap 95% confidence intervals (Section 4.2.1)
+- Table 4: PoC XGBoost holdout classification report (Section 4.2.1)
 - Table 5: Per-source feature-set holdout comparison (tree models) (Section 4.2.2)
-- Table 6: Feature-group ablation (CatBoost) (Section 4.2.2)
-- Table 7: LSTM base forecaster holdout result (Section 4.2.3)
-- Table 7b: LSTM base forecaster holdout classification report (Section 4.2.3)
+- Table 6: LSTM base forecaster holdout result (Section 4.2.3)
+- Table 7: LSTM base forecaster holdout classification report (Section 4.2.3)
 - Table 8: Transformer zoo final leaderboard vs baselines (Section 4.2.4)
 - Table 9: Sequence-model tuning track - holdout results (Section 4.2.5)
 - Table 10: Hardened-package score-LSTM final holdout (Section 4.2.6)
@@ -1041,11 +1040,12 @@ than as a competing claim.
 | LightGBM | 0.5459 | 0.5303 | +0.0156 | [0.4783, 0.6135] |
 | CatBoost | 0.5362 | 0.5303 | +0.0059 | [0.4686, 0.5992] |
 
-All three trees clear the 0.5303 long-run baseline, XGBoost and LightGBM by
-about 1.6 percentage points. Bootstrap 95% confidence intervals on the
-holdout accuracy are wide, as expected on a 207-day window:
+*Table 3: PoC chronological 80/20 holdout results with bootstrap 95%
+confidence intervals. The intervals are wide, as expected on a 207-day
+window.*
 
-*Table 3: PoC holdout bootstrap 95% confidence intervals.*
+All three trees clear the 0.5303 long-run baseline, XGBoost and LightGBM by
+about 1.6 percentage points.
 
 XGBoost holdout classification report (207-sample split):¹
 
@@ -1054,6 +1054,8 @@ XGBoost holdout classification report (207-sample split):¹
 | 0 (Fall) | 0.56 | 0.45 | 0.50 | 104 |
 | 1 (Rise) | 0.54 | 0.64 | 0.58 | 103 |
 | accuracy | | | 0.55 | 207 |
+
+*Table 4: PoC XGBoost holdout classification report.*
 
 *Reading:* the proof of concept did what a proof of concept should do - it
 showed the trees clearing the 0.5303 baseline on a forward window (best
@@ -1115,7 +1117,7 @@ below so easy for the model to fall into.
 |---|---|---|---|
 | LSTM (window 30) | 0.5636 | 0.5303 | +0.0333 |
 
-*Table 7: LSTM base forecaster holdout result.*
+*Table 6: LSTM base forecaster holdout result.*
 
 | Class | precision | recall | f1 | support |
 |---|---|---|---|---|
@@ -1123,7 +1125,7 @@ below so easy for the model to fall into.
 | Rise | 0.57 | 0.96 | 0.72 | 127 |
 | accuracy | | | 0.56 | 220 |
 
-*Table 7b: LSTM base forecaster holdout classification report.*
+*Table 7: LSTM base forecaster holdout classification report.*
 
 Bootstrap 95% CI on accuracy: [0.5000, 0.6273].
 
