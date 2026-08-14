@@ -516,9 +516,16 @@ def headlines_latest(page: int = Query(0, ge=0), page_size: int = Query(50, ge=1
 
 
 @app.get("/api/headlines")
-def headlines(date: str, page: int = Query(0, ge=0), page_size: int = Query(50, ge=1, le=200)) -> dict:
-    """Paginated headlines for a given date (archive)."""
-    return queries.headlines_for_date(day=date, page=page, page_size=page_size)
+def headlines(date: str, page: int = Query(0, ge=0), page_size: int = Query(50, ge=1, le=200),
+              q: str | None = Query(None, max_length=200)) -> dict:
+    """Paginated headlines for a given date (archive), optionally filtered by ``q``.
+
+    ``q`` searches headline text and source across the entire date server-side.
+    The archive previously filtered only the rows already on screen, which on a
+    ~780-headline day meant a search covered about 6% of it while presenting the
+    result as if it were the whole day.
+    """
+    return queries.headlines_for_date(day=date, page=page, page_size=page_size, search=q)
 
 
 @app.get("/api/dates")

@@ -65,11 +65,18 @@ _HEADLINES_FOR_DATE = text(
         LIMIT 1
     ) nv ON TRUE
     WHERE rh.date = :d
+      AND (CAST(:q AS text) IS NULL OR rh.headline ILIKE :q OR rh.source ILIKE :q)
     ORDER BY rh.hour DESC NULLS LAST, rh.id DESC
     OFFSET :offset LIMIT :limit
     """
 )
-_COUNT_FOR_DATE = text("SELECT COUNT(*) AS n FROM raw_headlines WHERE date = :d")
+_COUNT_FOR_DATE = text(
+    """
+    SELECT COUNT(*) AS n FROM raw_headlines rh
+    WHERE rh.date = :d
+      AND (CAST(:q AS text) IS NULL OR rh.headline ILIKE :q OR rh.source ILIKE :q)
+    """
+)
 _DISTINCT_DATES = text(
     "SELECT DISTINCT date FROM raw_headlines ORDER BY date DESC OFFSET :offset LIMIT :limit"
 )
@@ -91,16 +98,32 @@ def latest_date(engine=None):
         return conn.execute(_LATEST_DATE).scalar()
 
 
-def headlines_for_date(engine=None, *, day, page: int = 0, page_size: int = 50) -> dict:
-    """Paginated headlines for one date (+ total count), with the active model's sentiment."""
+def headlines_for_date(engine=None, *, day, page: int = 0, page_size: int = 50,
+                       search: str | None = None) -> dict:
+    """Paginated headlines for one date (+ total count), with the active model's sentiment.
+
+    ``search`` matches headline text or source, case-insensitively, across the
+    WHOLE date rather than the current page. The same predicate drives the count,
+    so ``total`` and the page arithmetic describe the matches, not the day.
+
+    :param search: Substring to match; ``None``/blank returns the full day.
+    """
     engine = engine or get_engine()
+    needle = (search or "").strip()
+    params = {"d": day, "q": f"%{_escape_like(needle)}%" if needle else None}
     with engine.connect() as conn:
-        total = conn.execute(_COUNT_FOR_DATE, {"d": day}).scalar() or 0
+        total = conn.execute(_COUNT_FOR_DATE, params).scalar() or 0
         rows = conn.execute(_HEADLINES_FOR_DATE, {
-            "model": resolved_model(engine), "d": day, "offset": page * page_size, "limit": page_size,
+            **params, "model": resolved_model(engine),
+            "offset": page * page_size, "limit": page_size,
         }).mappings().all()
     return {"date": str(day), "page": page, "page_size": page_size, "total": int(total),
-            "headlines": [dict(r) for r in rows]}
+            "search": needle or None, "headlines": [dict(r) for r in rows]}
+
+
+def _escape_like(value: str) -> str:
+    """Neutralises LIKE wildcards so a literal % or _ in a query matches itself."""
+    return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
 def available_dates(engine=None, *, page: int = 0, page_size: int = 60) -> list[str]:
