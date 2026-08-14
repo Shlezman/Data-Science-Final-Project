@@ -1,9 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const devSessionCookie = process.env.SENTISENSE_DEV_SESSION_COOKIE;
+const devAuthHeaders = devSessionCookie ? { Cookie: devSessionCookie } : undefined;
+
 // base: './' keeps asset URLs relative so the bundle works when FastAPI
 // serves it from '/'. The dev proxy lets `npm run dev` talk to the live
-// backend on port 3000 (same contract as production same-origin).
+// backend over its TLS endpoint (same contract as production same-origin).
 export default defineConfig({
   plugins: [react()],
   base: './',
@@ -14,12 +17,14 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'https://sentisens.cs.colman.ac.il',
         changeOrigin: true,
+        headers: devAuthHeaders,
       },
       '/ws': {
-        target: 'http://localhost:3000',
+        target: 'https://sentisens.cs.colman.ac.il',
         changeOrigin: true,
+        headers: devAuthHeaders,
         ws: true,
       },
     },
