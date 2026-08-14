@@ -831,10 +831,10 @@ The reported metric set (`sentisense/models/metrics.py`) is computed on the
 Threshold-carrying models (the tuned forecasters) are scored **at their
 validation-tuned threshold**, not a hard-coded 0.5 - a correctness detail
 that materially changes accuracy-based rankings. Where a threshold has to be
-chosen from a probability output, the project uses **Youden's J**: for each
-candidate threshold, J is the true-positive rate minus the false-positive
-rate, and the threshold maximizing J is selected. Youden's J is a
-threshold-selection utility, not a reported result.
+chosen from a probability output, it is the threshold maximizing
+true-positive rate minus false-positive rate on the validation slice
+(Youden's J). This is a threshold-selection utility, never a reported
+result, and it is always fit on validation - never on the test tail.
 
 Three complementary evaluation surfaces exist in production: (a) the
 **registry OOS metrics** (held-out test tail, computed once at training
@@ -882,8 +882,8 @@ different questions and therefore evaluate under different *contracts*:
 - The **unified grid (Section 4.2.7)** is a *comparison* surface. It runs
   every model against every data type, forces all of them onto one shared
   out-of-sample window with one shared metric set, and picks each cell's
-  decision threshold by Youden's J. Its output is a like-for-like ranking,
-  not a deployable model.
+  decision threshold on the validation slice. Its output is a like-for-like
+  ranking, not a deployable model.
 - The **registry run (Section 4.2.8)** is a *selection* surface. It re-tunes
   each family from scratch under the exact contract the live system serves on
   - fused features only, the full available timeline, its own namespaced
@@ -1153,13 +1153,10 @@ models on a shared held-out window.
 | Model | Accuracy | Baseline | Gap | ROC-AUC |
 |---|---|---|---|---|
 | ModelB_PatchTST_DailyMean | 0.5370 | 0.5303 | +0.0067 | 0.5185 |
-| CatBoost | 0.5069 | 0.5303 | -0.0234 | 0.5048 |
-| XGBoost | 0.5035 | 0.5303 | -0.0268 | 0.5070 |
 | ModelC_TwoTower_DailyMean | 0.5019 | 0.5303 | -0.0284 | 0.5000 |
 | ModelE_Informer_PerSource | 0.4981 | 0.5303 | -0.0322 | 0.5000 |
 | ModelA_Vanilla_PerSource | 0.4942 | 0.5303 | -0.0361 | 0.4996 |
 | ModelA_Vanilla_DailyMean | 0.4942 | 0.5303 | -0.0361 | 0.5216 |
-| LGBM | 0.4931 | 0.5303 | -0.0372 | 0.4727 |
 | ModelE_Informer_DailyMean | 0.4903 | 0.5303 | -0.0400 | 0.5397 |
 | ModelD_Hierarchical_DailyMean | 0.4903 | 0.5303 | -0.0400 | 0.5339 |
 | ElasticNet | 0.4792 | 0.5303 | -0.0511 | 0.4804 |
@@ -1206,21 +1203,22 @@ tree rows are the notebook's untuned "sanity check" fits on a chronological
 Optuna-tuned, threshold-adjusted models. ROC-AUC was not printed numerically
 in this notebook's saved output.*
 
-Threshold selection on the validation slice (by Youden's J) produced
-thresholds of 0.597 (XGBoost), 0.521 (LightGBM), and 0.525 (CatBoost), with
-validation balanced accuracies of 0.5363, 0.5583, and 0.5345 respectively; the
+Threshold selection on the validation slice produced thresholds of 0.597
+(XGBoost), 0.521 (LightGBM), and 0.525 (CatBoost), with validation
+balanced accuracies of 0.5363, 0.5583, and 0.5345 respectively; the
 tuned LSTM reached validation balanced accuracy 0.5611 and the soft-vote
 ensemble 0.5712. Walk-forward CatBoost gave mean accuracy 0.5267 +/- 0.0814.
 
-*Reading:* the tuning effort runs backwards here. The three untuned trees - default-ish
-parameters, no threshold adjustment - hold up on the holdout, with XGBoost and
-LightGBM clearing the baseline by 1.0 and 0.8 points and CatBoost missing it by
-0.3. The heavily tuned models look strong on the validation slice (balanced
-accuracy 0.53-0.57) and then land 7.1-7.5 points below the baseline on the
-holdout. That the *untuned* baselines survive the transfer while the tuned ones
-do not is the sharpest form of the lesson: thresholds and hyper-parameters
-chosen on one slice must be re-checked on the slice they are scored on. This is
-why the registry track re-tunes under its own serving contract.
+*Reading:* the tuning effort runs backwards here. The three untuned trees -
+default-ish parameters, no threshold adjustment - hold up on the holdout, with
+XGBoost and LightGBM clearing the baseline by 1.0 and 0.8 points and CatBoost
+missing it by 0.3. The heavily tuned models look strong on the validation slice
+(balanced accuracy 0.53-0.57) and then land 7.1-7.5 points below the
+baseline on the holdout. That the *untuned* baselines survive the transfer
+while the tuned ones do not is the sharpest form of the lesson: thresholds and
+hyper-parameters chosen on one slice must be re-checked on the slice they are
+scored on. This is why the registry track re-tunes under its own serving
+contract.
 
 #### 4.2.6 Hardened-package analysis (`sentisense_analysis.ipynb`)
 
@@ -1257,9 +1255,9 @@ out-of-sample window, so architectures can be compared like for like.*
 
 This is the *comparison* contract described in Section 4.1: each cell is
 reduced to the same `(scores, labels)` pair on the identical window, scored
-with the same metric set, with its decision threshold chosen by Youden's J.
-Every cell is scored against the same 0.5303 baseline. Sorted by
-accuracy descending. Notation: `model [data-type]` for classifiers,
+with the same metric set, with its decision threshold chosen on the
+validation slice. Every cell is scored against the same 0.5303 baseline.
+Sorted by accuracy descending. Notation: `model [data-type]` for classifiers,
 `model [cov=...]` for forecasters. Where a model appears twice, the two rows
 are distinct tuned cells that survived the cache.
 
@@ -1331,10 +1329,10 @@ serves on. This is the track that produces the project's headline result.*
 fused features, the full available timeline, chronological 70/15/15,
 per-family Optuna studies in registry-namespaced storage - and registers each
 candidate with its held-out metrics. As explained in Section 4.1, this is a
-different evaluation contract from the unified grid (all data types, Youden
-thresholds, comparison-only), which is why the same architecture scores
-differently in Table 11 and Table 13. Both numbers are real; they measure
-different things.
+different evaluation contract from the unified grid (all data types,
+validation-tuned thresholds, comparison-only), which is why the same
+architecture scores differently in Table 11 and Table 13. Both numbers are
+real; they measure different things.
 
 **Registry validation run (tree zoo, low trial budget).** A smoke-budget run
 (5 trials per model) validated the end-to-end train, register, select, and
