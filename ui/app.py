@@ -517,15 +517,35 @@ def headlines_latest(page: int = Query(0, ge=0), page_size: int = Query(50, ge=1
 
 @app.get("/api/headlines")
 def headlines(date: str, page: int = Query(0, ge=0), page_size: int = Query(50, ge=1, le=200),
-              q: str | None = Query(None, max_length=200)) -> dict:
-    """Paginated headlines for a given date (archive), optionally filtered by ``q``.
+              q: str | None = Query(None, max_length=200),
+              sort: str = Query("time"), order: str = Query("desc"),
+              sentiment_min: int | None = Query(None, ge=-10, le=10),
+              sentiment_max: int | None = Query(None, ge=-10, le=10),
+              category: str | None = Query(None),
+              category_min: int | None = Query(None, ge=0, le=10)) -> dict:
+    """Paginated headlines for a given date (archive), searchable, filterable and sortable.
 
     ``q`` searches headline text and source across the entire date server-side.
     The archive previously filtered only the rows already on screen, which on a
     ~780-headline day meant a search covered about 6% of it while presenting the
     result as if it were the whole day.
+
+    ``sort``/``order`` and the score filters work over the whole date for the same
+    reason: the scores were rendered on every row but could not be queried, so
+    "the most negative headlines that day" or "security only" had no answer.
     """
-    return queries.headlines_for_date(day=date, page=page, page_size=page_size, search=q)
+    if sort not in queries.SORT_KEYS:
+        return JSONResponse({"error": f"sort must be one of {list(queries.SORT_KEYS)}"},
+                            status_code=400)
+    if order not in ("asc", "desc"):
+        return JSONResponse({"error": "order must be 'asc' or 'desc'"}, status_code=400)
+    if category is not None and category not in queries.CATEGORY_KEYS:
+        return JSONResponse({"error": f"category must be one of {list(queries.CATEGORY_KEYS)}"},
+                            status_code=400)
+    return queries.headlines_for_date(
+        day=date, page=page, page_size=page_size, search=q, sort=sort, order=order,
+        sentiment_min=sentiment_min, sentiment_max=sentiment_max,
+        category=category, category_min=category_min)
 
 
 @app.get("/api/dates")

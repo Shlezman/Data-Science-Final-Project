@@ -45,16 +45,24 @@ def resolved_model(engine=None) -> str:
 
 _LATEST_DATE = text("SELECT MAX(date) AS d FROM raw_headlines")
 
+# The seven score columns the archive can sort and filter on, keyed by the name the
+# API accepts. Nothing outside this mapping is ever interpolated into SQL, so the
+# dict doubles as the allowlist that keeps the dynamic ORDER BY / WHERE injection-safe.
+_SCORE_COLUMNS = {
+    "sentiment": "nv.global_sentiment",
+    "politics": "nv.relevance_politics",
+    "economy": "nv.relevance_economy",
+    "security": "nv.relevance_security",
+    "health": "nv.relevance_health",
+    "science": "nv.relevance_science",
+    "technology": "nv.relevance_technology",
+}
+SORT_KEYS = ("time", *_SCORE_COLUMNS)
+CATEGORY_KEYS = tuple(k for k in _SCORE_COLUMNS if k != "sentiment")
+
 # The dataset spans two scoring eras (mistral history, gemma going forward), so day-scoped
 # views take ONE validated row per headline from ANY model, preferring the active one.
-_HEADLINES_FOR_DATE = text(
-    """
-    SELECT rh.id, rh.date, rh.source, rh.hour, rh.headline,
-           nv.global_sentiment, nv.validation_passed,
-           nv.relevance_politics, nv.relevance_economy, nv.relevance_security,
-           nv.relevance_health, nv.relevance_science, nv.relevance_technology,
-           (nv.headline_id IS NOT NULL) AS scored
-    FROM raw_headlines rh
+_SCORES_LATERAL = """
     LEFT JOIN LATERAL (
         SELECT v.headline_id, v.global_sentiment, v.validation_passed,
                v.relevance_politics, v.relevance_economy, v.relevance_security,
@@ -64,19 +72,19 @@ _HEADLINES_FOR_DATE = text(
         ORDER BY (v.model_name = :model) DESC, v.id DESC
         LIMIT 1
     ) nv ON TRUE
-    WHERE rh.date = :d
-      AND (CAST(:q AS text) IS NULL OR rh.headline ILIKE :q OR rh.source ILIKE :q)
-    ORDER BY rh.hour DESC NULLS LAST, rh.id DESC
-    OFFSET :offset LIMIT :limit
-    """
+"""
+_DAY_WHERE = (
+    "rh.date = :d",
+    "(CAST(:q AS text) IS NULL OR rh.headline ILIKE :q OR rh.source ILIKE :q)",
 )
-_COUNT_FOR_DATE = text(
-    """
-    SELECT COUNT(*) AS n FROM raw_headlines rh
-    WHERE rh.date = :d
-      AND (CAST(:q AS text) IS NULL OR rh.headline ILIKE :q OR rh.source ILIKE :q)
-    """
-)
+_HEADLINE_SELECT = """
+    SELECT rh.id, rh.date, rh.source, rh.hour, rh.headline,
+           nv.global_sentiment, nv.validation_passed,
+           nv.relevance_politics, nv.relevance_economy, nv.relevance_security,
+           nv.relevance_health, nv.relevance_science, nv.relevance_technology,
+           (nv.headline_id IS NOT NULL) AS scored
+    FROM raw_headlines rh
+"""
 _DISTINCT_DATES = text(
     "SELECT DISTINCT date FROM raw_headlines ORDER BY date DESC OFFSET :offset LIMIT :limit"
 )
@@ -99,26 +107,104 @@ def latest_date(engine=None):
 
 
 def headlines_for_date(engine=None, *, day, page: int = 0, page_size: int = 50,
-                       search: str | None = None) -> dict:
+                       search: str | None = None, sort: str = "time", order: str = "desc",
+                       sentiment_min: int | None = None, sentiment_max: int | None = None,
+                       category: str | None = None, category_min: int | None = None) -> dict:
     """Paginated headlines for one date (+ total count), with the active model's sentiment.
 
     ``search`` matches headline text or source, case-insensitively, across the
     WHOLE date rather than the current page. The same predicate drives the count,
     so ``total`` and the page arithmetic describe the matches, not the day.
 
+    The score controls work the same way — over the whole date, not the loaded page —
+    so "the most negative headlines of the day" is a real answer rather than the most
+    negative of the 50 rows that happened to be on screen.
+
     :param search: Substring to match; ``None``/blank returns the full day.
+    :param sort: ``"time"`` or one of :data:`SORT_KEYS`' score names.
+    :param order: ``"desc"`` (default) or ``"asc"``.
+    :param sentiment_min: Keep rows scoring at least this (-10..10).
+    :param sentiment_max: Keep rows scoring at most this (-10..10).
+    :param category: One of :data:`CATEGORY_KEYS` to filter on that category's relevance.
+    :param category_min: Minimum relevance for ``category`` (0..10, default 1).
+    :raises ValueError: on an unknown ``sort``, ``order`` or ``category``.
     """
+    if sort not in SORT_KEYS:
+        raise ValueError(f"unknown sort '{sort}'")
+    if order not in ("asc", "desc"):
+        raise ValueError(f"unknown order '{order}'")
+    if category is not None and category not in CATEGORY_KEYS:
+        raise ValueError(f"unknown category '{category}'")
+
     engine = engine or get_engine()
     needle = (search or "").strip()
     params = {"d": day, "q": f"%{_escape_like(needle)}%" if needle else None}
+
+    score_where, score_params = _score_filters(
+        sentiment_min=sentiment_min, sentiment_max=sentiment_max,
+        category=category, category_min=category_min)
+    where = " AND ".join((*_DAY_WHERE, *score_where))
+    model = resolved_model(engine)
+
+    # The count only needs the scores lateral when a score filter narrows the set;
+    # without one it stays the plain per-date count it has always been.
+    count_sql = text(f"SELECT COUNT(*) AS n FROM raw_headlines rh"
+                     f"{_SCORES_LATERAL if score_where else ''} WHERE {where}")
+    rows_sql = text(f"{_HEADLINE_SELECT}{_SCORES_LATERAL} WHERE {where} "
+                    f"{_order_by(sort, order)} OFFSET :offset LIMIT :limit")
+
     with engine.connect() as conn:
-        total = conn.execute(_COUNT_FOR_DATE, params).scalar() or 0
-        rows = conn.execute(_HEADLINES_FOR_DATE, {
-            **params, "model": resolved_model(engine),
+        total = conn.execute(count_sql, {
+            **params, **score_params, **({"model": model} if score_where else {}),
+        }).scalar() or 0
+        rows = conn.execute(rows_sql, {
+            **params, **score_params, "model": model,
             "offset": page * page_size, "limit": page_size,
         }).mappings().all()
+
     return {"date": str(day), "page": page, "page_size": page_size, "total": int(total),
-            "search": needle or None, "headlines": [dict(r) for r in rows]}
+            "search": needle or None, "sort": sort, "order": order,
+            "sentiment_min": sentiment_min, "sentiment_max": sentiment_max,
+            "category": category,
+            "category_min": (None if category is None
+                             else (1 if category_min is None else int(category_min))),
+            "headlines": [dict(r) for r in rows]}
+
+
+def _score_filters(*, sentiment_min, sentiment_max, category, category_min):
+    """WHERE fragments + bind params for the score filters (both empty when unfiltered).
+
+    Every fragment reads a column of the scores lateral, so a filtered query
+    implicitly drops unscored headlines — NULL fails each comparison.
+    """
+    where, params = [], {}
+    if sentiment_min is not None:
+        where.append("nv.global_sentiment >= :sent_min")
+        params["sent_min"] = int(sentiment_min)
+    if sentiment_max is not None:
+        where.append("nv.global_sentiment <= :sent_max")
+        params["sent_max"] = int(sentiment_max)
+    if category is not None:
+        # Selecting a category means "relevant to it", so the floor defaults to 1
+        # rather than 0 — a 0 filter would keep the whole day and read as a no-op.
+        where.append(f"{_SCORE_COLUMNS[category]} >= :cat_min")
+        params["cat_min"] = 1 if category_min is None else int(category_min)
+    return where, params
+
+
+def _order_by(sort: str, order: str) -> str:
+    """ORDER BY for a validated (sort, order) pair, always fully deterministic.
+
+    Unscored rows sort last in BOTH directions (NULLS LAST), so ascending
+    sentiment surfaces the most negative headlines rather than a wall of blanks.
+    hour/id break ties, without which equal scores could shuffle between pages
+    and drop or repeat rows as you page through.
+    """
+    direction = "ASC" if order == "asc" else "DESC"
+    if sort == "time":
+        return f"ORDER BY rh.hour {direction} NULLS LAST, rh.id {direction}"
+    return (f"ORDER BY {_SCORE_COLUMNS[sort]} {direction} NULLS LAST, "
+            "rh.hour DESC NULLS LAST, rh.id DESC")
 
 
 def _escape_like(value: str) -> str:
