@@ -62,6 +62,9 @@ export default function Archive() {
   const [order, setOrder] = useState('desc');
   // Set when a picked day had no headlines and the nearest one was used instead.
   const [dateNote, setDateNote] = useState(null);
+  // Mirrors `page` so the jump box can be typed into freely; it commits only on
+  // Enter or blur, so a half-typed "1" on the way to "12" doesn't fire a request.
+  const [pageInput, setPageInput] = useState('1');
   const [sentimentFilter, setSentimentFilter] = useState('any');
   const [category, setCategory] = useState('');
   const [categoryMin, setCategoryMin] = useState('1');
@@ -133,6 +136,12 @@ export default function Archive() {
     });
   }, [selectedDate, page, query, sort, order, sentimentMin, sentimentMax, category,
       categoryMin, loadHeadlines]);
+
+  // Keep the jump box in step with pages changed by any other control (Prev/Next,
+  // First/Last, or a filter resetting to page 1).
+  useEffect(() => {
+    setPageInput(String(page + 1));
+  }, [page]);
 
   // `dates` arrives newest-first. Used only to resolve a date that isn't in the list;
   // stepping between dates lives in DatePicker.
@@ -219,11 +228,34 @@ export default function Archive() {
   }
   if (sentimentFilter !== 'any') criteria.push(`${activeSentiment.label.split(' (')[0].toLowerCase()} sentiment`);
 
+  const commitPageInput = () => {
+    const parsed = Number.parseInt(pageInput, 10);
+    if (!Number.isFinite(parsed)) {
+      setPageInput(String(page + 1));
+      return;
+    }
+    const clamped = Math.min(Math.max(parsed, 1), totalPages);
+    setPageInput(String(clamped));
+    setPage(clamped - 1);
+  };
+
   // Rendered above AND below the list: a page holds 50 rows, so after reading to
   // the bottom the controls are in reach, and after changing pages the controls
   // are still where you left them at the top.
+  //
+  // First/Last and the jump box matter because an unfiltered day runs to 16 pages;
+  // reaching the oldest headline of a date used to cost 15 clicks on Next.
   const pager = totalPages > 1 ? (
     <div className="ss-pager">
+      <button
+        className="ss-btn secondary"
+        disabled={page <= 0}
+        onClick={() => setPage(0)}
+        aria-label="First page"
+        title="First page"
+      >
+        «
+      </button>
       <button
         className="ss-btn secondary"
         disabled={page <= 0}
@@ -231,8 +263,24 @@ export default function Archive() {
       >
         Prev
       </button>
-      <span>
-        Page {page + 1} of {totalPages}
+      <span className="ss-pager__jump">
+        Page
+        <input
+          type="number"
+          min="1"
+          max={totalPages}
+          value={pageInput}
+          onChange={(e) => setPageInput(e.target.value)}
+          onBlur={commitPageInput}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitPageInput();
+            }
+          }}
+          aria-label={`Page number, 1 to ${totalPages}`}
+        />
+        of {totalPages}
       </span>
       <button
         className="ss-btn secondary"
@@ -240,6 +288,15 @@ export default function Archive() {
         onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
       >
         Next
+      </button>
+      <button
+        className="ss-btn secondary"
+        disabled={page >= totalPages - 1}
+        onClick={() => setPage(totalPages - 1)}
+        aria-label="Last page"
+        title="Last page"
+      >
+        »
       </button>
     </div>
   ) : null;
@@ -345,6 +402,30 @@ export default function Archive() {
         </div>
       </div>
 
+      {/* An actual key — swatch plus one word per term — rendered once. It replaced a
+          sentence passed as a tooltip onto the "Sentiment" label of all 50 cards on
+          the page. When score filters are on, "unscored" is struck through rather
+          than explained in an extra clause. */}
+      <dl className="ss-legend" aria-label="Sentiment badge key">
+        <dt className="ss-legend__term">Sentiment</dt>
+        <dd className="ss-legend__scale">−10…+10</dd>
+        <dd className="ss-legend__item">
+          <span className="ss-badge pos">+3</span> positive
+        </dd>
+        <dd className="ss-legend__item">
+          <span className="ss-badge neutral">0</span> neutral
+        </dd>
+        <dd className="ss-legend__item">
+          <span className="ss-badge neg">−2</span> negative
+        </dd>
+        <dd
+          className={`ss-legend__item${scoresFiltered ? ' is-excluded' : ''}`}
+          title={scoresFiltered ? 'Excluded by the active score filters' : undefined}
+        >
+          <span className="ss-badge neutral">n/a</span> unscored
+        </dd>
+      </dl>
+
       {dateNote ? <p className="ss-muted ss-archive-datenote">{dateNote}</p> : null}
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
       {data ? (
@@ -374,9 +455,6 @@ export default function Archive() {
           <HeadlineList
             headlines={visibleHeadlines}
             highlight={sort === 'time' ? null : sort}
-            sentimentHelp={`Scores range from −10 (negative) to +10 (positive). Gray n/a means unscored.${
-              scoresFiltered ? ' Score filters exclude unscored headlines.' : ''
-            }`}
           />
           {pager}
         </div>

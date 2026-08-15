@@ -41,23 +41,10 @@ function ScoreChips({ scores }) {
   );
 }
 
-function Fact({ label, children, className = '', help }) {
+function Fact({ label, children, className = '' }) {
   return (
     <span className={`ss-headline-fact ${className}`}>
-      <small>
-        {label}
-        {help ? (
-          <span
-            className="ss-metric-info"
-            role="img"
-            tabIndex="0"
-            aria-label={help}
-            title={help}
-          >
-            i
-          </span>
-        ) : null}
-      </small>
+      <small>{label}</small>
       <span>{children}</span>
     </span>
   );
@@ -70,11 +57,9 @@ function Fact({ label, children, className = '', help }) {
  * @param {string|null} [highlight] Score dimension the caller sorted by —
  *   ``'sentiment'`` or a category name such as ``'security'``. That score is
  *   always shown and visually pinned, so the ordering is legible on every row.
- * @param {string|null} [sentimentHelp] Optional accessible tooltip for the
- *   sentiment badge label.
  */
 export default function HeadlineList({
-  headlines, initialVisible, total, highlight, sentimentHelp,
+  headlines, initialVisible, total, highlight,
 }) {
   const [visibleCount, setVisibleCount] = useState(initialVisible || headlines?.length || 0);
 
@@ -105,11 +90,7 @@ export default function HeadlineList({
               <div className="ss-headline-facts">
                 <Fact label="Source">{h.source}</Fact>
                 <Fact label="Published">{h.hour || '—'}</Fact>
-                <Fact
-                  label="Sentiment"
-                  className={sentimentSorted ? 'is-highlight' : ''}
-                  help={sentimentHelp}
-                >
+                <Fact label="Sentiment" className={sentimentSorted ? 'is-highlight' : ''}>
                   <span className={`ss-badge ${badge.cls}`}>{badge.text}</span>
                 </Fact>
                 <Fact label="Category relevance" className="ss-headline-fact--categories">
