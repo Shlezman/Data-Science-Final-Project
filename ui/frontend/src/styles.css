@@ -2054,35 +2054,110 @@ body {
   outline-offset: 1px;
 }
 
-/* Second controls row: sort + score filters. Set apart from the date/search row
-   above it so the two groups don't read as one long undifferentiated strip. */
-.ss-archive-scorebar {
-  padding: 12px;
+/* Archive toolbar: date + search on the first row, sort + score filters on the
+   second, both inside ONE panel. Previously the first row sat bare on the card
+   and only the second was boxed, so the same toolbar wore two skins. */
+.ss-archive-toolbar {
   border: 1px solid var(--ss-border);
   border-radius: 12px;
   background: var(--ss-surface-2);
-  align-items: flex-end;
+  margin-bottom: var(--ss-gap);
+  overflow: hidden;
 }
 
-/* A label over a pair of selects — the two sentiment bounds, or category + floor. */
-.ss-archive-range-row {
+.ss-archive-toolbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px;
+}
+
+/* Hairline divider rather than a gap: the rows are one control surface. */
+.ss-archive-toolbar__row--scores {
+  border-top: 1px solid var(--ss-border);
+}
+
+/* One control height across the toolbar. select and input[type=search] resolve
+   different intrinsic heights from identical padding (35px vs 37px), which left
+   the search box sitting 2px proud of the date select right beside it. */
+.ss-archive-toolbar .ss-field > select,
+.ss-archive-toolbar .ss-archive-filter input,
+.ss-archive-toolbar .ss-input-group {
+  height: 36px;
+}
+
+.ss-input-group select { height: 100%; }
+
+/* Fixed widths so the labels above the controls line up into columns instead of
+   landing wherever each control's longest option happened to end. */
+.ss-archive-toolbar .ss-field--date select { width: 150px; }
+.ss-archive-toolbar .ss-field--sort select { width: 172px; }
+.ss-archive-toolbar .ss-field { flex: 0 0 auto; }
+/* Overrides the standalone filter's 340px cap: inside the panel it should run to
+   the edge rather than stopping short and leaving a gap on the right. */
+.ss-archive-toolbar .ss-archive-filter { flex: 1 1 220px; max-width: none; }
+
+/* Two selects that express ONE bound (a range, or a category + its floor) share a
+   single bordered shell, so they read as one control instead of two loose
+   dropdowns joined by a stray dash. */
+.ss-input-group {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--ss-border);
+  border-radius: 8px;
+  background: var(--ss-surface);
+  overflow: hidden;
+}
+
+.ss-input-group select {
+  border: none;
+  background: transparent;
+  color: var(--ss-fg);
+  padding: 7px 8px;
+  border-radius: 0;
+}
+
+.ss-input-group__narrow { width: 82px; }
+.ss-input-group__wide { width: 140px; }
+
+.ss-input-group__sep {
   display: flex;
   align-items: center;
-  gap: 6px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--ss-fg-muted);
+  border-left: 1px solid var(--ss-border);
+  border-right: 1px solid var(--ss-border);
 }
 
-.ss-archive-range-row select {
-  min-width: 0;
-}
-
-.ss-archive-range-row select:disabled {
-  opacity: 0.5;
+.ss-input-group select:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.ss-archive-scorebar select:focus-visible {
+/* Focus lands on the shell, not the seam, so the group highlights as one unit. */
+.ss-input-group:focus-within {
   outline: 2px solid var(--ss-accent);
   outline-offset: 1px;
+}
+
+.ss-input-group select:focus-visible { outline: none; }
+
+.ss-archive-toolbar select:focus-visible {
+  outline: 2px solid var(--ss-accent);
+  outline-offset: 1px;
+}
+
+/* Pushed to the far right of the row, filling the dead space the controls left. */
+.ss-archive-reset {
+  margin-left: auto;
+  align-self: flex-end;
+}
+
+.ss-archive-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .ss-archive-legend {
