@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
 import HeadlineList from './HeadlineList.jsx';
 
@@ -59,6 +59,8 @@ export default function Archive() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('time');
   const [order, setOrder] = useState('desc');
+  // Set when a picked day had no headlines and the nearest one was used instead.
+  const [dateNote, setDateNote] = useState(null);
   const [sentimentFilter, setSentimentFilter] = useState('any');
   const [category, setCategory] = useState('');
   const [categoryMin, setCategoryMin] = useState('1');
@@ -131,9 +133,48 @@ export default function Archive() {
   }, [selectedDate, page, query, sort, order, sentimentMin, sentimentMax, category,
       categoryMin, loadHeadlines]);
 
+  // `dates` arrives newest-first, so index 0 is the latest and the last entry is the
+  // oldest. Both lookups below work off that ordering.
+  const dateIndex = useMemo(() => new Map(dates.map((d, i) => [d, i])), [dates]);
+  const currentIndex = dateIndex.get(selectedDate);
+  const hasOlder = currentIndex !== undefined && currentIndex < dates.length - 1;
+  const hasNewer = currentIndex !== undefined && currentIndex > 0;
+
+  // A date field accepts any day in range, including the gaps and any day the
+  // scraper missed. Rather than showing an empty page, fall back to the newest date
+  // at or before the pick and say so. The whole list is already in memory, so this
+  // needs no extra request.
   const onDateChange = (e) => {
+    const picked = e.target.value;
+    if (!picked) {
+      return;
+    }
     setPage(0);
-    setSelectedDate(e.target.value);
+    if (dateIndex.has(picked)) {
+      setDateNote(null);
+      setSelectedDate(picked);
+      return;
+    }
+    const snapped = dates.find((d) => d <= picked) || dates[dates.length - 1];
+    if (!snapped) {
+      return;
+    }
+    setSelectedDate(snapped);
+    setDateNote(`No headlines on ${picked} — showing ${snapped}.`);
+  };
+
+  // +1 steps to an older date, -1 to a newer one, skipping days with no headlines
+  // because the list only contains dates that have them.
+  const stepDate = (delta) => {
+    if (currentIndex === undefined) {
+      return;
+    }
+    const next = dates[currentIndex + delta];
+    if (next) {
+      setPage(0);
+      setDateNote(null);
+      setSelectedDate(next);
+    }
   };
 
   // Every score control changes which rows match, so the current page number is
@@ -236,17 +277,42 @@ export default function Archive() {
           into columns instead of landing wherever the content ended. */}
       <div className="ss-archive-toolbar">
         <div className="ss-archive-toolbar__row">
-          <label className="ss-field ss-field--date">
+          {/* A date field rather than a <select>: the picker now covers every date on
+              record, and 5,800+ options is a list you scroll, not one you use. Typing
+              or opening the browser's calendar reaches any year directly. */}
+          <div className="ss-field ss-field--date">
             Date
-            <select value={selectedDate} onChange={onDateChange}>
-              {dates.length === 0 ? <option value="">No dates</option> : null}
-              {dates.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="ss-input-group">
+              <button
+                type="button"
+                className="ss-step-btn"
+                onClick={() => stepDate(1)}
+                disabled={!hasOlder}
+                aria-label="Previous date with headlines"
+                title="Previous date with headlines"
+              >
+                ‹
+              </button>
+              <input
+                type="date"
+                value={selectedDate}
+                min={dates.length ? dates[dates.length - 1] : undefined}
+                max={dates.length ? dates[0] : undefined}
+                onChange={onDateChange}
+                aria-label="Date"
+              />
+              <button
+                type="button"
+                className="ss-step-btn"
+                onClick={() => stepDate(-1)}
+                disabled={!hasNewer}
+                aria-label="Next date with headlines"
+                title="Next date with headlines"
+              >
+                ›
+              </button>
+            </div>
+          </div>
           <label className="ss-field ss-archive-filter">
             Search this date
             <input
@@ -326,6 +392,7 @@ export default function Archive() {
         </div>
       </div>
 
+      {dateNote ? <p className="ss-muted ss-archive-datenote">{dateNote}</p> : null}
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
       {data ? (
         // Hold the previous result at reduced opacity while refetching rather

@@ -2208,7 +2208,50 @@ body {
 
 /* Fixed widths so the labels above the controls line up into columns instead of
    landing wherever each control's longest option happened to end. */
-.ss-archive-toolbar .ss-field--date select { width: 150px; }
+/* The date field is an input group (‹ | date | ›), so it sizes itself. */
+
+/* Day-stepper arrows, sharing the group's shell with the date input so the three
+   read as one control. */
+.ss-step-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ss-fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.ss-step-btn:hover:not(:disabled) {
+  color: var(--ss-fg);
+  background: var(--ss-surface-2);
+}
+
+.ss-step-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ss-input-group input[type='date'] {
+  border: none;
+  border-left: 1px solid var(--ss-border);
+  border-right: 1px solid var(--ss-border);
+  background: transparent;
+  color: var(--ss-fg);
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  padding: 7px 10px;
+  min-width: 138px;
+  height: 100%;
+}
+
+.ss-input-group input[type='date']:focus-visible { outline: none; }
+
+.ss-archive-datenote {
+  margin: 0 0 8px;
+}
 .ss-archive-toolbar .ss-field--sort select { width: 172px; }
 .ss-archive-toolbar .ss-field--sentiment select { width: 180px; }
 .ss-archive-toolbar .ss-field { flex: 0 0 auto; }
