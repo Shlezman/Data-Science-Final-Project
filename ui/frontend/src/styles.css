@@ -1864,6 +1864,11 @@ body {
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(147, 197, 253, 0.55), #3b82f6);
 }
+/* The pale end of the ramp all but vanishes on the light card, same reason the
+   low-score bars needed a raised opacity floor. */
+:root[data-theme="light"] .ss-distribution-legend--scale > i {
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.85), #2563eb);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .ss-distribution-bars rect { transition: none; }
