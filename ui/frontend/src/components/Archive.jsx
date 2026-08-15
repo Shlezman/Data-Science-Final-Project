@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
+import DatePicker from './DatePicker.jsx';
 import HeadlineList from './HeadlineList.jsx';
 
 const PAGE_SIZE = 50;
@@ -140,12 +141,10 @@ export default function Archive() {
   const hasOlder = currentIndex !== undefined && currentIndex < dates.length - 1;
   const hasNewer = currentIndex !== undefined && currentIndex > 0;
 
-  // A date field accepts any day in range, including the gaps and any day the
-  // scraper missed. Rather than showing an empty page, fall back to the newest date
-  // at or before the pick and say so. The whole list is already in memory, so this
-  // needs no extra request.
-  const onDateChange = (e) => {
-    const picked = e.target.value;
+  // The calendar disables days with no headlines, so a pick normally lands on real
+  // data. The fallback stays for safety: anything unknown resolves to the newest
+  // date before it rather than rendering an empty page.
+  const onDatePicked = (picked) => {
     if (!picked) {
       return;
     }
@@ -293,14 +292,7 @@ export default function Archive() {
               >
                 ‹
               </button>
-              <input
-                type="date"
-                value={selectedDate}
-                min={dates.length ? dates[dates.length - 1] : undefined}
-                max={dates.length ? dates[0] : undefined}
-                onChange={onDateChange}
-                aria-label="Date"
-              />
+              <DatePicker dates={dates} value={selectedDate} onChange={onDatePicked} />
               <button
                 type="button"
                 className="ss-step-btn"

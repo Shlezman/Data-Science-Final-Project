@@ -2233,7 +2233,11 @@ body {
   cursor: default;
 }
 
-.ss-input-group input[type='date'] {
+/* Calendar trigger, sitting between the ‹ › day steppers inside the group. */
+.ss-datepicker { position: relative; display: flex; }
+
+.ss-datepicker__trigger {
+  appearance: none;
   border: none;
   border-left: 1px solid var(--ss-border);
   border-right: 1px solid var(--ss-border);
@@ -2242,12 +2246,92 @@ body {
   font: inherit;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
-  padding: 7px 10px;
+  padding: 7px 12px;
   min-width: 138px;
-  height: 100%;
+  cursor: pointer;
 }
 
-.ss-input-group input[type='date']:focus-visible { outline: none; }
+.ss-datepicker__trigger:hover { background: var(--ss-surface-2); }
+
+.ss-datepicker__trigger:focus-visible {
+  outline: 2px solid var(--ss-accent);
+  outline-offset: -2px;
+}
+
+.ss-calendar {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: 272px;
+  padding: 10px;
+  border: 1px solid var(--ss-border);
+  border-radius: 12px;
+  /* Must be the OPAQUE surface — --ss-surface and --ss-raised are translucent, so
+     the headlines underneath would show through a floating panel. */
+  background: var(--ss-drawer);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.ss-calendar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.ss-calendar__pickers { display: flex; gap: 4px; }
+
+.ss-calendar__pickers select {
+  padding: 4px 6px;
+  border: 1px solid var(--ss-border);
+  border-radius: 6px;
+  background: var(--ss-surface);
+  color: var(--ss-fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.ss-calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.ss-calendar__weekday {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ss-fg-muted);
+  padding-bottom: 4px;
+}
+
+.ss-calendar__pad { height: 30px; }
+
+.ss-calendar__day {
+  appearance: none;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ss-fg);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ss-calendar__day:hover:not(:disabled) { border-color: var(--ss-accent); }
+
+.ss-calendar__day:disabled { opacity: 0.25; cursor: default; }
+
+.ss-calendar__day.is-selected {
+  background: var(--ss-accent);
+  border-color: var(--ss-accent);
+  color: #fff;
+  font-weight: 600;
+}
 
 .ss-archive-datenote {
   margin: 0 0 8px;
