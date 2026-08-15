@@ -495,18 +495,8 @@ export default function EdaPanels() {
 
   return (
     <div className="ss-card ss-eda-card">
-      <button
-        className="ss-collapse-head ss-collapse-button ss-dashboard-section-head ss-dashboard-section-head--interactive"
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="ss-dashboard-section-head__copy">
-          <span className="ss-dashboard-section-head__eyebrow">Data intelligence</span>
-          <span className="ss-dashboard-section-head__title">Exploratory data analysis</span>
-          <span className="ss-dashboard-section-head__description">
-            Corpus trends, sentiment structure and validation quality.
-          </span>
-        </span>
+      <button className="ss-collapse-head ss-collapse-button" type="button" onClick={() => setOpen((v) => !v)}>
+        <span>Exploratory data analysis</span>
         <span className="ss-tag">{open ? 'hide' : 'show'}</span>
       </button>
       {!open ? null : !hasData ? (

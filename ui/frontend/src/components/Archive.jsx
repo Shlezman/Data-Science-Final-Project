@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
+import { signedScore } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 
 const PAGE_SIZE = 50;
@@ -27,12 +28,7 @@ const CATEGORIES = [
   ['technology', 'Technology'],
 ];
 
-const SENTIMENT_FILTERS = [
-  { value: 'any', label: 'Any sentiment', min: '', max: '' },
-  { value: 'positive', label: 'Positive (+1 to +10)', min: '1', max: '10' },
-  { value: 'neutral', label: 'Neutral (0)', min: '0', max: '0' },
-  { value: 'negative', label: 'Negative (−10 to −1)', min: '-10', max: '-1' },
-];
+const SENTIMENT_LEVELS = Array.from({ length: 21 }, (_, i) => 10 - i); // +10 → −10
 const RELEVANCE_LEVELS = Array.from({ length: 10 }, (_, i) => i + 1); // 1 → 10
 
 /**
@@ -59,13 +55,12 @@ export default function Archive() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('time');
   const [order, setOrder] = useState('desc');
-  const [sentimentFilter, setSentimentFilter] = useState('any');
+  // '' means "no bound". Selects rather than number inputs: the scales are short
+  // and closed, so this applies instantly and cannot produce an invalid value.
+  const [sentimentMin, setSentimentMin] = useState('');
+  const [sentimentMax, setSentimentMax] = useState('');
   const [category, setCategory] = useState('');
   const [categoryMin, setCategoryMin] = useState('1');
-  const activeSentiment = SENTIMENT_FILTERS.find(({ value }) => value === sentimentFilter)
-    || SENTIMENT_FILTERS[0];
-  const sentimentMin = activeSentiment.min;
-  const sentimentMax = activeSentiment.max;
 
   useEffect(() => {
     getJson('/api/dates')
@@ -146,9 +141,13 @@ export default function Archive() {
     setPage(0);
     setOrder(e.target.value);
   };
-  const onSentimentChange = (e) => {
+  const onSentimentMinChange = (e) => {
     setPage(0);
-    setSentimentFilter(e.target.value);
+    setSentimentMin(e.target.value);
+  };
+  const onSentimentMaxChange = (e) => {
+    setPage(0);
+    setSentimentMax(e.target.value);
   };
   const onCategoryChange = (e) => {
     setPage(0);
@@ -166,15 +165,20 @@ export default function Archive() {
     setFilter('');
     setSort('time');
     setOrder('desc');
-    setSentimentFilter('any');
+    setSentimentMin('');
+    setSentimentMax('');
     setCategory('');
     setCategoryMin('1');
   };
 
   const activeSort = SORTS.find((s) => s.key === sort) || SORTS[0];
-  const scoresFiltered = sentimentFilter !== 'any' || Boolean(category);
+  const scoresFiltered = sentimentMin !== '' || sentimentMax !== '' || Boolean(category);
   const scoresTouched = scoresFiltered || sort !== 'time' || order !== 'desc';
   const anyActive = scoresTouched || filter !== '';
+  // A sentiment window with the bounds crossed can never match; say so rather than
+  // letting an empty result read as "this day has no negative news".
+  const impossibleRange = sentimentMin !== '' && sentimentMax !== ''
+    && Number(sentimentMin) > Number(sentimentMax);
 
   const total = data?.total ?? 0;
   const pageSize = data?.page_size ?? PAGE_SIZE;
@@ -194,7 +198,13 @@ export default function Archive() {
     const name = (CATEGORIES.find(([k]) => k === category) || [, category])[1];
     criteria.push(`${name.toLowerCase()} relevance ≥ ${categoryMin}`);
   }
-  if (sentimentFilter !== 'any') criteria.push(`${activeSentiment.label.split(' (')[0].toLowerCase()} sentiment`);
+  if (sentimentMin !== '' && sentimentMax !== '') {
+    criteria.push(`sentiment ${signedScore(Number(sentimentMin))}…${signedScore(Number(sentimentMax))}`);
+  } else if (sentimentMin !== '') {
+    criteria.push(`sentiment ≥ ${signedScore(Number(sentimentMin))}`);
+  } else if (sentimentMax !== '') {
+    criteria.push(`sentiment ≤ ${signedScore(Number(sentimentMax))}`);
+  }
 
   // Rendered above AND below the list: a page holds 50 rows, so after reading to
   // the bottom the controls are in reach, and after changing pages the controls
@@ -223,13 +233,7 @@ export default function Archive() {
 
   return (
     <div className="ss-card">
-      <div className="ss-dashboard-section-head">
-        <div className="ss-dashboard-section-head__copy">
-          <span className="ss-dashboard-section-head__eyebrow">Historical headlines</span>
-          <h2>Archive</h2>
-          <p>Search and filter scored news by date, sentiment and category relevance.</p>
-        </div>
-      </div>
+      <h2>Archive</h2>
       {/* One panel for every control. Date/search used to float bare on the card
           while the score controls sat in a box, so two halves of the same toolbar
           wore different skins. Widths are fixed per field so the labels line up
@@ -275,18 +279,28 @@ export default function Archive() {
             </select>
           </label>
 
-          <label className="ss-field ss-field--sentiment">
-            Sentiment
-            <select
-              value={sentimentFilter}
-              onChange={onSentimentChange}
-              aria-label="Sentiment"
-            >
-              {SENTIMENT_FILTERS.map(({ value, label }) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-          </label>
+          {/* Paired selects share one bordered shell so a two-part bound reads as
+              a single control rather than two loose dropdowns with a stray dash. */}
+          <div className="ss-field">
+            Sentiment between
+            <div className="ss-input-group">
+              <select value={sentimentMin} onChange={onSentimentMinChange}
+                      className="ss-input-group__narrow" aria-label="Minimum sentiment">
+                <option value="">Any</option>
+                {SENTIMENT_LEVELS.map((n) => (
+                  <option key={n} value={n}>{signedScore(n)}</option>
+                ))}
+              </select>
+              <span className="ss-input-group__sep" aria-hidden="true">to</span>
+              <select value={sentimentMax} onChange={onSentimentMaxChange}
+                      className="ss-input-group__narrow" aria-label="Maximum sentiment">
+                <option value="">Any</option>
+                {SENTIMENT_LEVELS.map((n) => (
+                  <option key={n} value={n}>{signedScore(n)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           <div className="ss-field">
             Category relevance
@@ -326,7 +340,21 @@ export default function Archive() {
         </div>
       </div>
 
+      <p className="ss-muted ss-archive-legend">
+        Sentiment badges: <span className="ss-badge pos">+3</span> positive ·{' '}
+        <span className="ss-badge neg">−2</span> negative ·{' '}
+        <span className="ss-badge neutral">n/a</span> gray = unscored
+        {scoresFiltered ? ' · score filters exclude unscored headlines' : ''}
+      </p>
+
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
+      {impossibleRange ? (
+        <p className="ss-error-text">
+          The sentiment range is inverted ({signedScore(Number(sentimentMin))} is above{' '}
+          {signedScore(Number(sentimentMax))}), so nothing can match.
+        </p>
+      ) : null}
+
       {data ? (
         // Hold the previous result at reduced opacity while refetching rather
         // than swapping in a "Loading…" line, which shifted the layout on every
@@ -351,13 +379,7 @@ export default function Archive() {
               )}
           </p>
           {pager}
-          <HeadlineList
-            headlines={visibleHeadlines}
-            highlight={sort === 'time' ? null : sort}
-            sentimentHelp={`Scores range from −10 (negative) to +10 (positive). Gray n/a means unscored.${
-              scoresFiltered ? ' Score filters exclude unscored headlines.' : ''
-            }`}
-          />
+          <HeadlineList headlines={visibleHeadlines} highlight={sort === 'time' ? null : sort} />
           {pager}
         </div>
       ) : null}

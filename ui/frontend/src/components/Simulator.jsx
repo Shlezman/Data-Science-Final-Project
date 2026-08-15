@@ -212,16 +212,12 @@ export default function Simulator() {
   return (
     <div>
       <div className="ss-card">
-        <div className="ss-dashboard-section-head">
-          <div className="ss-dashboard-section-head__copy">
-            <span className="ss-dashboard-section-head__eyebrow">Narrative simulation</span>
-            <h2>Simulator</h2>
-            <p>
-              Agent personas discuss the day&apos;s news, revealing influence paths
-              and the resulting narrative summary.
-            </p>
-          </div>
-        </div>
+        <h2>Simulator</h2>
+        <p className="ss-muted">
+          Daily narrative simulation — agent personas discuss the day&apos;s
+          news; the graph shows who influenced whom, and the report is the
+          narrative summary.
+        </p>
         <div className="ss-controls">
           <label className="ss-field">
             Simulation mode
@@ -257,26 +253,23 @@ export default function Simulator() {
       <PersonaPanel date={date} />
 
       <div className="ss-card">
-        <div className="ss-dashboard-section-head ss-dashboard-section-head--subsection">
-          <div className="ss-dashboard-section-head__copy">
-            <span className="ss-dashboard-section-head__eyebrow">Influence network</span>
-            <h3>Agent map</h3>
-            <p>
-              Node size reflects publishing volume, color shows stance and links show
-              agreement or disagreement. Tap a node to inspect its statement.
-            </p>
-          </div>
-          <div className="ss-dashboard-section-head__meta">
-            {graph?.meta?.lean ? (
-              <span className={`ss-badge ${graph.meta.lean === 'UP' ? 'pos' : graph.meta.lean === 'DOWN' ? 'neg' : 'neutral'}`}>
-                Lean {graph.meta.lean}
-              </span>
-            ) : null}
-            {graph?.meta?.n_agents ? (
-              <span className="ss-tag">{graph.meta.n_agents} agents</span>
-            ) : null}
-          </div>
-        </div>
+        <h3>
+          Agent map
+          {graph?.meta?.lean ? (
+            <span className={`ss-badge ${graph.meta.lean === 'UP' ? 'pos' : graph.meta.lean === 'DOWN' ? 'neg' : 'neutral'}`}
+                  style={{ marginLeft: 8 }}>
+              Lean {graph.meta.lean}
+            </span>
+          ) : null}
+          {graph?.meta?.n_agents ? (
+            <span className="ss-tag">{graph.meta.n_agents} agents</span>
+          ) : null}
+        </h3>
+        <p className="ss-muted">
+          Each node is a news outlet acting as an agent — size = how much it published,
+          color = its stance (green bullish, red bearish, grey neutral); solid green links
+          agree, dashed red links disagree. Tap a node to read its statement.
+        </p>
         {graph?.meta?.consensus ? (
           <blockquote className="ss-persona-quote">{graph.meta.consensus}</blockquote>
         ) : null}
@@ -295,13 +288,7 @@ export default function Simulator() {
       </div>
 
       <div className="ss-card">
-        <div className="ss-dashboard-section-head ss-dashboard-section-head--subsection">
-          <div className="ss-dashboard-section-head__copy">
-            <span className="ss-dashboard-section-head__eyebrow">Narrative output</span>
-            <h3>Report</h3>
-            <p>Generated synthesis for the selected day and simulation mode.</p>
-          </div>
-        </div>
+        <h3>Report</h3>
         {report?.report_md ? (
           <pre className="ss-report">{report.report_md}</pre>
         ) : (
@@ -310,17 +297,18 @@ export default function Simulator() {
       </div>
 
       <div className="ss-card">
-        <div className="ss-dashboard-section-head ss-dashboard-section-head--subsection">
-          <div className="ss-dashboard-section-head__copy">
-            <span className="ss-dashboard-section-head__eyebrow">Simulation control</span>
-            <h3>Run new simulation</h3>
-            <p>
-              {liveDisabled
-                ? 'Generated automatically after each trading day; select a cached day above to explore it.'
-                : 'Runs the multi-agent simulation for the selected day on the MiroFish service.'}
-            </p>
-          </div>
-        </div>
+        <h3>Run new simulation</h3>
+        {liveDisabled ? (
+          <p className="ss-muted">
+            Simulations are generated automatically at the end of each trading day
+            by the nightly pipeline — pick a day above to explore its agent map.
+          </p>
+        ) : (
+          <p className="ss-muted">
+            Runs the multi-agent simulation for the chosen day on the MiroFish
+            service — takes several minutes.
+          </p>
+        )}
         {liveDisabled ? null : (
         <div className="ss-controls">
           <label className="ss-field">
