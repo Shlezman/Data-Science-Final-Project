@@ -151,11 +151,16 @@ export default function PersonaPanel({ date }) {
 
   return (
     <div className="ss-card">
-      <h3>Who says what?</h3>
-      <p className="ss-muted">
-        Each news provider is treated as a persona; its stance is the mean LLM
-        sentiment of its headlines that day (≥ +0.5 bullish, ≤ −0.5 bearish).
-      </p>
+      <div className="ss-dashboard-section-head ss-dashboard-section-head--subsection">
+        <div className="ss-dashboard-section-head__copy">
+          <span className="ss-dashboard-section-head__eyebrow">Source personas</span>
+          <h3>Who says what?</h3>
+          <p>
+            Each provider becomes a persona whose stance reflects the mean LLM
+            sentiment of its headlines that day.
+          </p>
+        </div>
+      </div>
 
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
       {loading ? <p className="ss-muted">Loading personas…</p> : null}

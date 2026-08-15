@@ -301,8 +301,9 @@ export default function Dashboard() {
       <LastRunBanner lastRun={health?.last_run} />
 
       <div className="ss-card ss-performance-card">
-        <div className="ss-performance-head">
-          <div>
+        <div className="ss-performance-head ss-dashboard-section-head">
+          <div className="ss-dashboard-section-head__copy">
+            <span className="ss-dashboard-section-head__eyebrow">Model evaluation</span>
             <h2>
               Model performance
               {perf?.model_type ? <span className="ss-tag">{perf.model_type}</span> : null}
@@ -385,7 +386,13 @@ export default function Dashboard() {
       <EdaPanels />
 
       <div className="ss-card">
-        <h2>Recent predictions</h2>
+        <div className="ss-dashboard-section-head">
+          <div className="ss-dashboard-section-head__copy">
+            <span className="ss-dashboard-section-head__eyebrow">Prediction history</span>
+            <h2>Recent predictions</h2>
+            <p>Latest model forecasts compared with observed market direction.</p>
+          </div>
+        </div>
         {recent.length === 0 ? (
           <p className="ss-muted">No predictions yet.</p>
         ) : (
@@ -428,13 +435,19 @@ export default function Dashboard() {
       </div>
 
       <div className="ss-card">
-        <h2>
-          Live headlines (last day)
-          {latest.date ? <span className="ss-tag">{latest.date}</span> : null}
-          {typeof latest.total === 'number' ? (
-            <span className="ss-tag">{latest.total} total</span>
-          ) : null}
-        </h2>
+        <div className="ss-dashboard-section-head">
+          <div className="ss-dashboard-section-head__copy">
+            <span className="ss-dashboard-section-head__eyebrow">News signal</span>
+            <h2>Live headlines</h2>
+            <p>Scored headlines from the latest available news day.</p>
+          </div>
+          <div className="ss-dashboard-section-head__meta">
+            {latest.date ? <span className="ss-tag">{latest.date}</span> : null}
+            {typeof latest.total === 'number' ? (
+              <span className="ss-tag">{latest.total} total</span>
+            ) : null}
+          </div>
+        </div>
         <HeadlineList headlines={latest.headlines} initialVisible={24} total={latest.total} />
       </div>
     </div>

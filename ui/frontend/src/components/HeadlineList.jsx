@@ -41,10 +41,23 @@ function ScoreChips({ scores }) {
   );
 }
 
-function Fact({ label, children, className = '' }) {
+function Fact({ label, children, className = '', help }) {
   return (
     <span className={`ss-headline-fact ${className}`}>
-      <small>{label}</small>
+      <small>
+        {label}
+        {help ? (
+          <span
+            className="ss-metric-info"
+            role="img"
+            tabIndex="0"
+            aria-label={help}
+            title={help}
+          >
+            i
+          </span>
+        ) : null}
+      </small>
       <span>{children}</span>
     </span>
   );
@@ -57,8 +70,12 @@ function Fact({ label, children, className = '' }) {
  * @param {string|null} [highlight] Score dimension the caller sorted by —
  *   ``'sentiment'`` or a category name such as ``'security'``. That score is
  *   always shown and visually pinned, so the ordering is legible on every row.
+ * @param {string|null} [sentimentHelp] Optional accessible tooltip for the
+ *   sentiment badge label.
  */
-export default function HeadlineList({ headlines, initialVisible, total, highlight }) {
+export default function HeadlineList({
+  headlines, initialVisible, total, highlight, sentimentHelp,
+}) {
   const [visibleCount, setVisibleCount] = useState(initialVisible || headlines?.length || 0);
 
   useEffect(() => {
@@ -83,12 +100,16 @@ export default function HeadlineList({ headlines, initialVisible, total, highlig
 
           return (
             <li key={h.id} className="ss-headline-card">
-              <p className="ss-headline-text" dir="rtl" title={h.headline}>{h.headline}</p>
+              <p className="ss-headline-text" dir="rtl">{h.headline}</p>
 
               <div className="ss-headline-facts">
                 <Fact label="Source">{h.source}</Fact>
                 <Fact label="Published">{h.hour || '—'}</Fact>
-                <Fact label="Sentiment" className={sentimentSorted ? 'is-highlight' : ''}>
+                <Fact
+                  label="Sentiment"
+                  className={sentimentSorted ? 'is-highlight' : ''}
+                  help={sentimentHelp}
+                >
                   <span className={`ss-badge ${badge.cls}`}>{badge.text}</span>
                 </Fact>
                 <Fact label="Category relevance" className="ss-headline-fact--categories">
