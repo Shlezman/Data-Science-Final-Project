@@ -5,6 +5,7 @@ import Archive from './components/Archive.jsx';
 import Simulator from './components/Simulator.jsx';
 import Models from './components/Models.jsx';
 import Login from './components/Login.jsx';
+import Centroids3D from './components/Centroids3D.jsx';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -19,6 +20,10 @@ const TABS = [
  * The Models panel is an OPERATOR view: it has no nav tab, but stays reachable
  * by clicking the "Serving: …" text in the header or by navigating to #models.
  *
+ * The 3D-centroids drawer is opened from the header and mounted here rather than
+ * inside the Dashboard, so it is reachable from every tab instead of floating over
+ * the dashboard content in the bottom-right corner.
+ *
  * @returns {JSX.Element} The full single-page app.
  */
 export default function App() {
@@ -26,6 +31,7 @@ export default function App() {
   const [champion, setChampion] = useState(null);
   const [auth, setAuth] = useState(null);   // null = probing; {authed, gated}
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark');
+  const [centroidsOpen, setCentroidsOpen] = useState(false);
 
   const toggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -114,6 +120,21 @@ export default function App() {
               ) : null}
             </span>
 
+            {/* Was a fixed pill floating over the dashboard's bottom-right corner,
+                where it overlapped content and only existed on that one tab. */}
+            <button
+              type="button"
+              className="ss-theme-toggle ss-centroids-toggle"
+              onClick={() => setCentroidsOpen(true)}
+              title="Daily news centroids (3D)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2.6 20.5 7v10L12 21.4 3.5 17V7Z" />
+                <path d="M3.5 7 12 11.6 20.5 7M12 11.6v9.8" />
+              </svg>
+              <span>3D centroids</span>
+            </button>
+
             <button
               type="button"
               className="ss-theme-toggle"
@@ -155,6 +176,8 @@ export default function App() {
         {tab === 'simulator' ? <Simulator /> : null}
         {tab === 'models' ? <Models /> : null}
       </main>
+
+      <Centroids3D open={centroidsOpen} onClose={() => setCentroidsOpen(false)} />
     </div>
   );
 }
