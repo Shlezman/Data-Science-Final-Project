@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getJson } from '../lib/api.js';
-import { Plot, darkLayout, PLOT_CONFIG, UP, ACCENT } from '../lib/plotly.js';
+import { Plot, darkLayout, chartTheme, PLOT_CONFIG, UP, ACCENT } from '../lib/plotly.js';
 
 const CLUSTER_COLORS = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24',
                         '#a78bfa', '#f87171', '#2dd4bf', '#fb923c'];
@@ -58,9 +58,12 @@ function project3(traces, azDeg, elDeg) {
  *
  * @param {Array} centers Projected centers [{id, v: [n_pca]}].
  * @param {number[]} axes The [x,y,z] component indices.
+ * @param {string} textColor Label colour for the active theme. Passed in rather than
+ *   read here, because this runs inside a useMemo that would otherwise cache the
+ *   colour from whichever theme was active when the traces were first built.
  * @returns {object|null} A Plotly trace, or null when no centers stored.
  */
-function centersTrace(centers, axes = [0, 1, 2]) {
+function centersTrace(centers, axes = [0, 1, 2], textColor = '#c9d1d9') {
   if (!centers.length) return null;
   const [ax, ay, az] = axes;
   return {
@@ -68,7 +71,8 @@ function centersTrace(centers, axes = [0, 1, 2]) {
     x: centers.map((c) => c.v[ax]), y: centers.map((c) => c.v[ay]), z: centers.map((c) => c.v[az]),
     text: centers.map((c) => `K${c.id}`),
     textposition: 'top center',
-    textfont: { size: 11, color: '#e6edf3' },
+    // Was a fixed near-white, which vanished against the light card.
+    textfont: { size: 11, color: textColor },
     hovertemplate: 'KMeans center %{text}<extra></extra>',
     marker: {
       size: 12, symbol: 'diamond-open', opacity: 1,
@@ -105,9 +109,10 @@ function daysTrace(pts) {
  * @param {object} day The /api/centroids/day payload.
  * @param {number[]} axes The [x,y,z] component indices.
  * @param {Array} centers Projected cluster centers.
+ * @param {string} textColor Label colour for the active theme.
  * @returns {Array} Plotly traces.
  */
-function headlineTraces(day, axes, centers = []) {
+function headlineTraces(day, axes, centers = [], textColor) {
   const [ax, ay, az] = axes;
   const pts = day.points || [];
   const traces = [];
@@ -129,7 +134,7 @@ function headlineTraces(day, axes, centers = []) {
       marker: { size: 10, color: ACCENT, symbol: 'diamond', opacity: 1 },
     });
   }
-  const kc = centersTrace(centers, axes);
+  const kc = centersTrace(centers, axes, textColor);
   if (kc) traces.push(kc);
   return traces;
 }
@@ -191,14 +196,20 @@ export default function Centroids3D({ open, onClose }) {
       .finally(() => setDayLoading(false));
   }, [view, dayDate]);
 
+  // Gridlines were fixed white — invisible on the light card. The 3D scene axes are
+  // outside darkLayout's xaxis/yaxis merge, so they need the palette explicitly.
+  const ct = chartTheme();
+
   const shown = useMemo(() => points.slice(0, upto + 1), [points, upto]);
+  // ct.text is a dependency: without it the memo served traces carrying the label
+  // colour of whichever theme was active when they were first built.
   const allTraces = useMemo(
-    () => [daysTrace(shown), centersTrace(clusters)].filter(Boolean),
-    [shown, clusters],
+    () => [daysTrace(shown), centersTrace(clusters, [0, 1, 2], ct.text)].filter(Boolean),
+    [shown, clusters, ct.text],
   );
 
   const nPca = day?.n_pca || 16;
-  const sceneAxis = (title) => ({ title, gridcolor: 'rgba(255,255,255,0.1)' });
+  const sceneAxis = (title) => ({ title, gridcolor: ct.grid, color: ct.text });
   const axisTitles = view === 'all'
     ? ['pca-0', 'pca-1', 'pca-2']
     : [`pca-${axes[0]}`, `pca-${axes[1]}`, `pca-${axes[2]}`];
@@ -213,9 +224,8 @@ export default function Centroids3D({ open, onClose }) {
     : {
       showlegend: true,
       legend: { orientation: 'h', y: -0.12 },
-      xaxis: { title: '', gridcolor: 'rgba(255,255,255,0.08)', zeroline: false },
-      yaxis: { title: '', gridcolor: 'rgba(255,255,255,0.08)', zeroline: false,
-               scaleanchor: 'x' },
+      xaxis: { title: '', gridcolor: ct.grid, zeroline: false },
+      yaxis: { title: '', gridcolor: ct.grid, zeroline: false, scaleanchor: 'x' },
       margin: { l: 36, r: 12, t: 10, b: 30 },
     });
   const asPlot = (traces) => (webgl ? traces : project3(traces, rot[0], rot[1]));
@@ -324,7 +334,7 @@ export default function Centroids3D({ open, onClose }) {
             ) : (
               <>
                 {rotationControls}
-                <Plot data={asPlot(headlineTraces(day, axes, clusters))} layout={layout} config={PLOT_CONFIG}
+                <Plot data={asPlot(headlineTraces(day, axes, clusters, ct.text))} layout={layout} config={PLOT_CONFIG}
                       style={{ width: '100%', height: '62vh' }} useResizeHandler />
                 <p className="ss-muted" style={{ margin: '6px 2px 0' }}>
                   {day.points.length} headlines · hover a point for its text and source.

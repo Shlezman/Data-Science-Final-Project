@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getJson } from '../lib/api.js';
-import { Plot, darkLayout, PLOT_CONFIG, ACCENT } from '../lib/plotly.js';
+import { Plot, darkLayout, chartTheme, PLOT_CONFIG, ACCENT } from '../lib/plotly.js';
 
 const AXIS = {
   automargin: true,
@@ -465,6 +465,9 @@ export default function EdaPanels() {
   const sentimentDistribution = useMemo(() => percentHistogram(sentHist), [sentHist]);
   const relevanceDistribution = useMemo(() => percentHistogram(relHist), [relHist]);
   const correlation = useMemo(() => prepareCorrelation(corr), [corr]);
+  // Read per render, not memoised: the whole tree re-renders on a theme switch and
+  // the charts need the new palette on that same pass.
+  const ct = chartTheme();
 
   const totalHeadlines = volume.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
   const latestVolume = Number(volume.at(-1)?.count) || 0;
@@ -587,7 +590,7 @@ export default function EdaPanels() {
                     mode: 'markers',
                     x: latestVolumePoint ? [latestVolumePoint.date] : [],
                     y: latestVolumePoint ? [latestVolumePoint.value] : [],
-                    marker: { color: ACCENT, size: 9, line: { color: '#dbeafe', width: 2 } },
+                    marker: { color: ACCENT, size: 9, line: { color: ct.halo || '#dbeafe', width: 2 } },
                     hovertemplate: '%{y:,.0f} headlines<extra>Latest</extra>',
                     showlegend: false,
                   },
@@ -601,7 +604,7 @@ export default function EdaPanels() {
                     { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: volumeAverage, y1: volumeAverage, line: { color: 'rgba(148,163,184,0.48)', width: 1, dash: 'dot' }, layer: 'below' },
                   ],
                   annotations: [
-                    { xref: 'paper', x: 1, xanchor: 'right', y: volumeAverage, yanchor: 'bottom', text: `Period avg ${formatNumber(volumeAverage)}`, showarrow: false, font: { size: 9, color: '#94a3b8' }, bgcolor: 'rgba(15,23,42,0.72)', borderpad: 2 },
+                    { xref: 'paper', x: 1, xanchor: 'right', y: volumeAverage, yanchor: 'bottom', text: `Period avg ${formatNumber(volumeAverage)}`, showarrow: false, font: { size: 9, color: ct.muted }, bgcolor: ct.annotationBg, borderpad: 2 },
                   ],
                   xaxis: { ...AXIS, type: 'date', showgrid: false, zeroline: false },
                   yaxis: { ...AXIS, type: 'linear', rangemode: 'tozero', nticks: 5, tickformat: '~s', zeroline: false },
@@ -639,7 +642,7 @@ export default function EdaPanels() {
                     mode: 'markers',
                     x: latestSentimentPoint ? [latestSentimentPoint.date] : [],
                     y: latestSentimentPoint ? [latestSentimentPoint.value] : [],
-                    marker: { color: '#f59e0b', size: 9, line: { color: '#fef3c7', width: 2 } },
+                    marker: { color: '#f59e0b', size: 9, line: { color: ct.halo || '#fef3c7', width: 2 } },
                     hovertemplate: '%{y:.2f}<extra>Latest</extra>',
                     showlegend: false,
                   },
@@ -655,7 +658,7 @@ export default function EdaPanels() {
                     { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: sentimentAverage, y1: sentimentAverage, line: { color: 'rgba(148,163,184,0.48)', width: 1, dash: 'dot' }, layer: 'below' },
                   ],
                   annotations: [
-                    { xref: 'paper', x: 1, xanchor: 'right', y: sentimentAverage, yanchor: 'bottom', text: `Period avg ${sentimentAverage.toFixed(2)}`, showarrow: false, font: { size: 9, color: '#94a3b8' }, bgcolor: 'rgba(15,23,42,0.72)', borderpad: 2 },
+                    { xref: 'paper', x: 1, xanchor: 'right', y: sentimentAverage, yanchor: 'bottom', text: `Period avg ${sentimentAverage.toFixed(2)}`, showarrow: false, font: { size: 9, color: ct.muted }, bgcolor: ct.annotationBg, borderpad: 2 },
                   ],
                   xaxis: { ...AXIS, type: 'date', showgrid: false, zeroline: false },
                   yaxis: { ...AXIS, type: 'linear', range: sentimentRange, nticks: 5, zeroline: true, zerolinewidth: 1.5 },
