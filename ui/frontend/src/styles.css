@@ -1194,7 +1194,10 @@ select optgroup {
 .ss-pager {
   display: flex;
   align-items: center;
-  gap: 12px;
+  /* Wraps because First/Last/jump made the row wider than a phone: without this the
+     outer buttons run past the card's right edge at 375px. */
+  flex-wrap: wrap;
+  gap: 8px 12px;
   margin: 12px 0;
   font-size: 13px;
   color: var(--ss-fg-muted);
@@ -2342,6 +2345,68 @@ body {
 
 .ss-archive-datenote {
   margin: 0 0 8px;
+}
+
+/* A key, not a sentence: each term is a swatch plus one word, so it scans at a
+   glance instead of being read left to right. */
+.ss-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--ss-fg-muted);
+}
+
+.ss-legend__term {
+  font-weight: 600;
+  color: var(--ss-fg);
+}
+
+.ss-legend__scale {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.ss-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+
+/* Score filters drop unscored rows entirely, so the term is struck through rather
+   than explained in an extra sentence appended to the legend. */
+.ss-legend__item.is-excluded {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+/* Jump-to-page box inside the pager. */
+.ss-pager__jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ss-pager__jump input {
+  width: 64px;
+  padding: 5px 6px;
+  border: 1px solid var(--ss-border);
+  border-radius: 6px;
+  background: var(--ss-surface);
+  color: var(--ss-fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.ss-pager__jump input:focus-visible {
+  outline: 2px solid var(--ss-accent);
+  outline-offset: 1px;
 }
 .ss-archive-toolbar .ss-field--sort select { width: 172px; }
 .ss-archive-toolbar .ss-field--sentiment select { width: 180px; }
