@@ -24,10 +24,10 @@ function monthOf(isoDate) {
 /**
  * Calendar date picker for the archive.
  *
- * Chrome's native date-input calendar cannot be scrolled between months and offers
- * no way to jump a year, which over a 16-year archive means clicking its month arrow
- * a hundred times. This one navigates by mouse wheel, by month/year dropdown, and by
- * arrow buttons.
+ * Chrome's native date-input calendar offers no way to jump a year, which over a
+ * 16-year archive means clicking its month arrow a hundred times. This one navigates
+ * by month/year dropdown and by arrow buttons. The wheel is deliberately NOT bound:
+ * capturing it stopped the page scrolling whenever the pointer crossed the panel.
  *
  * Availability comes from the caller's already-loaded date list, so days with no
  * scraped headlines are greyed out without any extra request or API change.
@@ -152,20 +152,7 @@ export default function DatePicker({ dates, value, onChange }) {
       </div>
 
       {open ? (
-        <div
-          className="ss-calendar"
-          role="dialog"
-          aria-label="Choose a date"
-          // The whole point: a wheel over the calendar moves months. Chrome's native
-          // picker ignores the wheel entirely, which is what sent us here.
-          onWheel={(e) => {
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? 1 : -1;
-            if ((delta > 0 && canGoForward) || (delta < 0 && canGoBack)) {
-              shiftMonth(delta);
-            }
-          }}
-        >
+        <div className="ss-calendar" role="dialog" aria-label="Choose a date">
           <div className="ss-calendar__head">
             <button
               type="button"
