@@ -139,6 +139,11 @@ function Panel({ title, subtitle, insight, data, layout = {}, className = '', he
 }
 
 function DistributionPanel({ chartId, title, subtitle, items, variant }) {
+  // The relevance bars encode score as opacity. A 48% pale blue reads clearly as
+  // light-on-dark, but on the near-white card the low bins wash out to almost
+  // nothing, so the ramp keeps its full span in dark and compresses into a legible
+  // band in light. Either way the intensity still rises with the score.
+  const opacityFloor = chartTheme().light ? 0.72 : 0.48;
   const peak = histogramPeak(items);
   const scale = percentScale(items);
   const box = { width: 640, height: 238, left: 42, right: 14, top: 18, bottom: 32 };
@@ -242,7 +247,9 @@ function DistributionPanel({ chartId, title, subtitle, items, variant }) {
                 : bin > 0
                   ? `url(#${chartId}-positive)`
                   : `url(#${chartId}-neutral)`;
-            const opacity = variant === 'relevance' ? 0.48 + (Math.max(0, bin) / 10) * 0.52 : 1;
+            const opacity = variant === 'relevance'
+              ? opacityFloor + (Math.max(0, bin) / 10) * (1 - opacityFloor)
+              : 1;
             const showLabel = variant === 'relevance' || index % 2 === 0;
             return (
               <g key={item.bin} className={isPeak ? 'is-peak' : ''}>
