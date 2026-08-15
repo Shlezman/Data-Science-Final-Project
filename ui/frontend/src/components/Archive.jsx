@@ -158,8 +158,11 @@ export default function Archive() {
     setCategoryMin(e.target.value);
   };
 
-  const resetScores = () => {
+  // Clears the search too, so one button empties the whole toolbar rather than
+  // leaving a search the user has to hunt down separately.
+  const resetAll = () => {
     setPage(0);
+    setFilter('');
     setSort('time');
     setOrder('desc');
     setSentimentMin('');
@@ -171,6 +174,7 @@ export default function Archive() {
   const activeSort = SORTS.find((s) => s.key === sort) || SORTS[0];
   const scoresFiltered = sentimentMin !== '' || sentimentMax !== '' || Boolean(category);
   const scoresTouched = scoresFiltered || sort !== 'time' || order !== 'desc';
+  const anyActive = scoresTouched || filter !== '';
   // A sentiment window with the bounds crossed can never match; say so rather than
   // letting an empty result read as "this day has no negative news".
   const impossibleRange = sentimentMin !== '' && sentimentMax !== ''
@@ -230,97 +234,110 @@ export default function Archive() {
   return (
     <div className="ss-card">
       <h2>Archive</h2>
-      <div className="ss-controls">
-        <label className="ss-field">
-          Date
-          <select value={selectedDate} onChange={onDateChange}>
-            {dates.length === 0 ? <option value="">No dates</option> : null}
-            {dates.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="ss-field ss-archive-filter">
-          Search this date
-          <input
-            type="search"
-            value={filter}
-            placeholder="Headline or source…"
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </label>
-        {filter ? (
-          <button className="ss-btn ss-btn--ghost" onClick={() => setFilter('')}>
-            Clear
-          </button>
-        ) : null}
-      </div>
-
-      <div className="ss-controls ss-archive-scorebar">
-        <label className="ss-field">
-          Sort by
-          <select value={sort} onChange={onSortChange}>
-            {SORTS.map((s) => (
-              <option key={s.key} value={s.key}>{s.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="ss-field">
-          Direction
-          <select value={order} onChange={onOrderChange}>
-            <option value="desc">{activeSort.desc}</option>
-            <option value="asc">{activeSort.asc}</option>
-          </select>
-        </label>
-
-        <div className="ss-field ss-archive-range">
-          Sentiment between
-          <div className="ss-archive-range-row">
-            <select value={sentimentMin} onChange={onSentimentMinChange} aria-label="Minimum sentiment">
-              <option value="">Any</option>
-              {SENTIMENT_LEVELS.map((n) => (
-                <option key={n} value={n}>{signedScore(n)}</option>
+      {/* One panel for every control. Date/search used to float bare on the card
+          while the score controls sat in a box, so two halves of the same toolbar
+          wore different skins. Widths are fixed per field so the labels line up
+          into columns instead of landing wherever the content ended. */}
+      <div className="ss-archive-toolbar">
+        <div className="ss-archive-toolbar__row">
+          <label className="ss-field ss-field--date">
+            Date
+            <select value={selectedDate} onChange={onDateChange}>
+              {dates.length === 0 ? <option value="">No dates</option> : null}
+              {dates.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
               ))}
             </select>
-            <span aria-hidden="true">–</span>
-            <select value={sentimentMax} onChange={onSentimentMaxChange} aria-label="Maximum sentiment">
-              <option value="">Any</option>
-              {SENTIMENT_LEVELS.map((n) => (
-                <option key={n} value={n}>{signedScore(n)}</option>
-              ))}
-            </select>
-          </div>
+          </label>
+          <label className="ss-field ss-archive-filter">
+            Search this date
+            <input
+              type="search"
+              value={filter}
+              placeholder="Headline or source…"
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </label>
         </div>
 
-        <div className="ss-field ss-archive-range">
-          Category relevance
-          <div className="ss-archive-range-row">
-            <select value={category} onChange={onCategoryChange} aria-label="Category">
-              <option value="">Any category</option>
-              {CATEGORIES.map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
+        <div className="ss-archive-toolbar__row ss-archive-toolbar__row--scores">
+          <label className="ss-field ss-field--sort">
+            Sort by
+            <select value={sort} onChange={onSortChange}>
+              {SORTS.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
               ))}
             </select>
-            <select
-              value={categoryMin}
-              onChange={onCategoryMinChange}
-              disabled={!category}
-              aria-label="Minimum relevance"
-            >
-              {RELEVANCE_LEVELS.map((n) => (
-                <option key={n} value={n}>≥ {n}</option>
-              ))}
+          </label>
+          <label className="ss-field ss-field--sort">
+            Direction
+            <select value={order} onChange={onOrderChange}>
+              <option value="desc">{activeSort.desc}</option>
+              <option value="asc">{activeSort.asc}</option>
             </select>
-          </div>
-        </div>
+          </label>
 
-        {scoresTouched ? (
-          <button className="ss-btn ss-btn--ghost" onClick={resetScores}>
-            Reset scores
+          {/* Paired selects share one bordered shell so a two-part bound reads as
+              a single control rather than two loose dropdowns with a stray dash. */}
+          <div className="ss-field">
+            Sentiment between
+            <div className="ss-input-group">
+              <select value={sentimentMin} onChange={onSentimentMinChange}
+                      className="ss-input-group__narrow" aria-label="Minimum sentiment">
+                <option value="">Any</option>
+                {SENTIMENT_LEVELS.map((n) => (
+                  <option key={n} value={n}>{signedScore(n)}</option>
+                ))}
+              </select>
+              <span className="ss-input-group__sep" aria-hidden="true">to</span>
+              <select value={sentimentMax} onChange={onSentimentMaxChange}
+                      className="ss-input-group__narrow" aria-label="Maximum sentiment">
+                <option value="">Any</option>
+                {SENTIMENT_LEVELS.map((n) => (
+                  <option key={n} value={n}>{signedScore(n)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="ss-field">
+            Category relevance
+            <div className="ss-input-group">
+              <select value={category} onChange={onCategoryChange}
+                      className="ss-input-group__wide" aria-label="Category">
+                <option value="">Any category</option>
+                {CATEGORIES.map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+              <select
+                value={categoryMin}
+                onChange={onCategoryMinChange}
+                className="ss-input-group__narrow"
+                disabled={!category}
+                title={category ? undefined : 'Pick a category first'}
+                aria-label="Minimum relevance"
+              >
+                {RELEVANCE_LEVELS.map((n) => (
+                  <option key={n} value={n}>≥ {n}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Always rendered, disabled when there is nothing to clear. The two
+              buttons this replaces appeared only once a control was touched, so
+              the row jumped sideways mid-use. */}
+          <button
+            className="ss-btn ss-btn--ghost ss-archive-reset"
+            onClick={resetAll}
+            disabled={!anyActive}
+          >
+            Reset filters
           </button>
-        ) : null}
+        </div>
       </div>
 
       <p className="ss-muted ss-archive-legend">
