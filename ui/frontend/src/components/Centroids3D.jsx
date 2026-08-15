@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getJson } from '../lib/api.js';
 import { Plot, darkLayout, PLOT_CONFIG, UP, ACCENT } from '../lib/plotly.js';
 
@@ -144,11 +144,15 @@ function headlineTraces(day, axes, centers = []) {
  *    three as axes), with the day centroid and the cluster centers marked.
  * Falls back to a rotatable software-3D projection when WebGL is disabled.
  *
- * @returns {JSX.Element} The toggle button + drawer.
+ * Controlled by the caller: the trigger lives in the app header, so the drawer
+ * is reachable from every tab rather than only from the Dashboard.
+ *
+ * @param {boolean} open Whether the drawer is showing.
+ * @param {Function} onClose Called when the drawer asks to close.
+ * @returns {JSX.Element} The drawer.
  */
-export default function Centroids3D() {
+export default function Centroids3D({ open, onClose }) {
   const [points, setPoints] = useState([]);
-  const [open, setOpen] = useState(false);
   const [upto, setUpto] = useState(0);
   const [view, setView] = useState('all');
   const [dayDate, setDayDate] = useState('');
@@ -158,8 +162,14 @@ export default function Centroids3D() {
   const [clusters, setClusters] = useState([]);
   const [rot, setRot] = useState([35, 55]);        // [azimuth°, elevation°] for software 3D
   const webgl = useMemo(detectWebGL, []);
+  const fetched = useRef(false);
 
+  // Loaded on FIRST open, not on mount. The drawer now mounts with the app shell
+  // rather than with the Dashboard, so an eager fetch would put a centroid request
+  // on every page load for a panel most visits never open.
   useEffect(() => {
+    if (!open || fetched.current) return;
+    fetched.current = true;
     getJson('/api/centroids')
       .then((d) => {
         const pts = d?.points || [];
@@ -170,7 +180,7 @@ export default function Centroids3D() {
       })
       .catch(() => setPoints([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (view !== 'day' || !dayDate) return;
@@ -230,10 +240,7 @@ export default function Centroids3D() {
 
   return (
     <>
-      <button className="ss-drawer__toggle" onClick={() => setOpen(true)}>
-        3D centroids
-      </button>
-      <div className={`ss-drawer ${open ? 'is-open' : ''}`}>
+      <div className={`ss-drawer ${open ? 'is-open' : ''}`} aria-hidden={!open}>
         <div className="ss-drawer__head">
           <span>Daily news centroids (3D)</span>
           <span style={{ display: 'flex', gap: 6 }}>
@@ -241,7 +248,7 @@ export default function Centroids3D() {
                     onClick={() => setView('all')}>All days</button>
             <button className={`ss-btn ${view === 'day' ? '' : 'ss-btn--ghost'}`}
                     onClick={() => setView('day')}>Single day</button>
-            <button className="ss-drawer__close" onClick={() => setOpen(false)}>×</button>
+            <button className="ss-drawer__close" onClick={onClose} aria-label="Close">×</button>
           </span>
         </div>
 

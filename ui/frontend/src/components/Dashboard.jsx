@@ -4,7 +4,6 @@ import { pct, direction, directionCls, outcome, outcomeCls } from '../lib/format
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
 import EdaPanels from './EdaPanels.jsx';
-import Centroids3D from './Centroids3D.jsx';
 
 const REFRESH_MS = 60_000;
 
@@ -384,7 +383,6 @@ export default function Dashboard() {
       </div>
 
       <EdaPanels />
-      <Centroids3D />
 
       <div className="ss-card">
         <h2>Recent predictions</h2>

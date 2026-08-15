@@ -90,6 +90,25 @@ export function toneFromChance(value, chance, margin = 0.05) {
 }
 
 /**
+ * Renders a signed score with an explicit sign and a typographic minus (U+2212),
+ * which lines up with the digits instead of sitting high and short like the ASCII
+ * hyphen. The single source of this convention: badges and the archive's score
+ * filters sit next to each other, so spelling −5 two different ways shows.
+ *
+ * @param {number} value Integer score.
+ * @returns {string} e.g. "+3", "−2", "0".
+ */
+export function signedScore(value) {
+  if (value > 0) {
+    return `+${value}`;
+  }
+  if (value < 0) {
+    return `−${Math.abs(value)}`;
+  }
+  return '0';
+}
+
+/**
  * Classifies a global sentiment score into a badge variant.
  *
  * @param {number|null|undefined} sentiment Integer sentiment, -10..+10.
@@ -100,10 +119,10 @@ export function sentimentBadge(sentiment) {
     return { cls: 'neutral', text: 'n/a' };
   }
   if (sentiment > 0) {
-    return { cls: 'pos', text: `+${sentiment}` };
+    return { cls: 'pos', text: signedScore(sentiment) };
   }
   if (sentiment < 0) {
-    return { cls: 'neg', text: `${sentiment}` };
+    return { cls: 'neg', text: signedScore(sentiment) };
   }
   return { cls: 'neutral', text: '0' };
 }

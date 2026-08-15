@@ -176,6 +176,20 @@ body {
   stroke-linejoin: round;
 }
 
+/* Header trigger for the 3D-centroids drawer. Borrows .ss-theme-toggle's geometry
+   and tints it with the accent, so it reads as an action rather than a second
+   theme switch sitting next to the first. */
+.ss-centroids-toggle {
+  border-color: var(--ss-accent);
+  color: var(--ss-accent);
+}
+
+.ss-centroids-toggle:hover {
+  border-color: var(--ss-accent);
+  background: var(--ss-accent);
+  color: #fff;
+}
+
 .ss-brand {
   display: flex;
   align-items: center;
@@ -1863,23 +1877,9 @@ body {
   .ss-validation-card__counts { grid-template-columns: 1fr; }
 }
 
-/* 3D centroid drawer */
-.ss-drawer__toggle {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 40;
-  appearance: none;
-  border: 1px solid var(--ss-border);
-  background: var(--ss-accent);
-  color: #fff;
-  font: inherit;
-  font-weight: 600;
-  padding: 10px 16px;
-  border-radius: 999px;
-  cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-}
+/* 3D centroid drawer. Its trigger lives in the header (see .ss-centroids-toggle),
+   sharing the theme toggle's shape — it used to be a fixed pill in the
+   bottom-right corner, overlapping the dashboard it sat on top of. */
 .ss-drawer {
   position: fixed;
   top: 0;
@@ -2054,6 +2054,37 @@ body {
   outline-offset: 1px;
 }
 
+/* Second controls row: sort + score filters. Set apart from the date/search row
+   above it so the two groups don't read as one long undifferentiated strip. */
+.ss-archive-scorebar {
+  padding: 12px;
+  border: 1px solid var(--ss-border);
+  border-radius: 12px;
+  background: var(--ss-surface-2);
+  align-items: flex-end;
+}
+
+/* A label over a pair of selects — the two sentiment bounds, or category + floor. */
+.ss-archive-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ss-archive-range-row select {
+  min-width: 0;
+}
+
+.ss-archive-range-row select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ss-archive-scorebar select:focus-visible {
+  outline: 2px solid var(--ss-accent);
+  outline-offset: 1px;
+}
+
 .ss-archive-legend {
   margin: 0 0 10px;
 }
@@ -2099,6 +2130,18 @@ body {
   background: var(--ss-surface-2);
   color: var(--ss-fg-muted);
   white-space: nowrap;
+}
+
+/* The dimension the archive is currently sorted by, on every card. Without it a
+   sort by e.g. Health looks arbitrary on the rows that score 0 for it. */
+.ss-score-chip.is-highlight,
+.ss-headline-fact.is-highlight > small {
+  border-color: var(--ss-accent);
+  color: var(--ss-accent);
+}
+
+.ss-score-chip.is-highlight {
+  font-weight: 600;
 }
 
 .ss-headline-card {
