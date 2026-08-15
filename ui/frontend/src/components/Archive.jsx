@@ -134,12 +134,9 @@ export default function Archive() {
   }, [selectedDate, page, query, sort, order, sentimentMin, sentimentMax, category,
       categoryMin, loadHeadlines]);
 
-  // `dates` arrives newest-first, so index 0 is the latest and the last entry is the
-  // oldest. Both lookups below work off that ordering.
+  // `dates` arrives newest-first. Used only to resolve a date that isn't in the list;
+  // stepping between dates lives in DatePicker.
   const dateIndex = useMemo(() => new Map(dates.map((d, i) => [d, i])), [dates]);
-  const currentIndex = dateIndex.get(selectedDate);
-  const hasOlder = currentIndex !== undefined && currentIndex < dates.length - 1;
-  const hasNewer = currentIndex !== undefined && currentIndex > 0;
 
   // The calendar disables days with no headlines, so a pick normally lands on real
   // data. The fallback stays for safety: anything unknown resolves to the newest
@@ -160,20 +157,6 @@ export default function Archive() {
     }
     setSelectedDate(snapped);
     setDateNote(`No headlines on ${picked} — showing ${snapped}.`);
-  };
-
-  // +1 steps to an older date, -1 to a newer one, skipping days with no headlines
-  // because the list only contains dates that have them.
-  const stepDate = (delta) => {
-    if (currentIndex === undefined) {
-      return;
-    }
-    const next = dates[currentIndex + delta];
-    if (next) {
-      setPage(0);
-      setDateNote(null);
-      setSelectedDate(next);
-    }
   };
 
   // Every score control changes which rows match, so the current page number is
@@ -281,29 +264,7 @@ export default function Archive() {
               or opening the browser's calendar reaches any year directly. */}
           <div className="ss-field ss-field--date">
             Date
-            <div className="ss-input-group">
-              <button
-                type="button"
-                className="ss-step-btn"
-                onClick={() => stepDate(1)}
-                disabled={!hasOlder}
-                aria-label="Previous date with headlines"
-                title="Previous date with headlines"
-              >
-                ‹
-              </button>
-              <DatePicker dates={dates} value={selectedDate} onChange={onDatePicked} />
-              <button
-                type="button"
-                className="ss-step-btn"
-                onClick={() => stepDate(-1)}
-                disabled={!hasNewer}
-                aria-label="Next date with headlines"
-                title="Next date with headlines"
-              >
-                ›
-              </button>
-            </div>
+            <DatePicker dates={dates} value={selectedDate} onChange={onDatePicked} />
           </div>
           <label className="ss-field ss-archive-filter">
             Search this date

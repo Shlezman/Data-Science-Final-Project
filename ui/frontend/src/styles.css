@@ -2179,7 +2179,9 @@ body {
   border-radius: 12px;
   background: var(--ss-surface-2);
   margin-bottom: var(--ss-gap);
-  overflow: hidden;
+  /* Deliberately NOT overflow:hidden — that clipped the calendar popover to nothing.
+     The only thing it protected was the row divider, which sits mid-panel far from
+     the rounded corners, so nothing needs clipping here. */
 }
 
 .ss-archive-toolbar__row {
@@ -2233,8 +2235,10 @@ body {
   cursor: default;
 }
 
-/* Calendar trigger, sitting between the ‹ › day steppers inside the group. */
-.ss-datepicker { position: relative; display: flex; }
+/* Owns the whole date control: the ‹ trigger › group plus the popover. The popover
+   is a SIBLING of the group, because the group is overflow:hidden for its rounded
+   corners and would otherwise clip the panel away. */
+.ss-datepicker { position: relative; }
 
 .ss-datepicker__trigger {
   appearance: none;
@@ -2258,6 +2262,9 @@ body {
   outline-offset: -2px;
 }
 
+/* Absolute against .ss-datepicker, so it tracks the field through normal layout and
+   needs no scroll listener — this page fires no scroll events on window, so a
+   JS-positioned panel detached from its field as soon as you scrolled. */
 .ss-calendar {
   position: absolute;
   top: calc(100% + 6px);

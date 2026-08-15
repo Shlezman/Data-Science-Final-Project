@@ -59,7 +59,9 @@ export default function DatePicker({ dates, value, onChange }) {
     }
   }, [value]);
 
-  // Close on outside click or Escape so the popover never traps the page.
+  // Close on outside click or Escape so the popover never traps the page. Position
+  // needs no JS: the panel is absolutely positioned against this component, so it
+  // tracks the trigger through ordinary layout — no scroll listener to miss.
   useEffect(() => {
     if (!open) {
       return undefined;
@@ -102,17 +104,52 @@ export default function DatePicker({ dates, value, onChange }) {
   const canGoBack = !oldest || monthStart > oldest;
   const canGoForward = !newest || monthEnd < newest;
 
+  // Day stepping lives here too, so the whole control is one component and the
+  // popover can be a SIBLING of the (overflow:hidden) input group rather than a
+  // child of it.
+  const index = dates.indexOf(value);
+  const hasOlder = index >= 0 && index < dates.length - 1;
+  const hasNewer = index > 0;
+  const step = (delta) => {
+    const next = dates[index + delta];
+    if (next) {
+      onChange(next);
+    }
+  };
+
   return (
     <div className="ss-datepicker" ref={rootRef}>
-      <button
-        type="button"
-        className="ss-datepicker__trigger"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-      >
-        {value || 'Pick a date'}
-      </button>
+      <div className="ss-input-group">
+        <button
+          type="button"
+          className="ss-step-btn"
+          onClick={() => step(1)}
+          disabled={!hasOlder}
+          aria-label="Previous date with headlines"
+          title="Previous date with headlines"
+        >
+          ‹
+        </button>
+        <button
+          type="button"
+          className="ss-datepicker__trigger"
+          onClick={() => setOpen((o) => !o)}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+        >
+          {value || 'Pick a date'}
+        </button>
+        <button
+          type="button"
+          className="ss-step-btn"
+          onClick={() => step(-1)}
+          disabled={!hasNewer}
+          aria-label="Next date with headlines"
+          title="Next date with headlines"
+        >
+          ›
+        </button>
+      </div>
 
       {open ? (
         <div
