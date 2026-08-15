@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
+import { signedScore } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 
 const PAGE_SIZE = 50;
@@ -29,11 +30,6 @@ const CATEGORIES = [
 
 const SENTIMENT_LEVELS = Array.from({ length: 21 }, (_, i) => 10 - i); // +10 → −10
 const RELEVANCE_LEVELS = Array.from({ length: 10 }, (_, i) => i + 1); // 1 → 10
-
-/** −3 → "−3" with a real minus sign, matching the sentiment badges. */
-function signed(n) {
-  return n < 0 ? `−${Math.abs(n)}` : `+${n}`;
-}
 
 /**
  * Archive view: pick a date from /api/dates, then page through that date's
@@ -199,11 +195,11 @@ export default function Archive() {
     criteria.push(`${name.toLowerCase()} relevance ≥ ${categoryMin}`);
   }
   if (sentimentMin !== '' && sentimentMax !== '') {
-    criteria.push(`sentiment ${signed(Number(sentimentMin))}…${signed(Number(sentimentMax))}`);
+    criteria.push(`sentiment ${signedScore(Number(sentimentMin))}…${signedScore(Number(sentimentMax))}`);
   } else if (sentimentMin !== '') {
-    criteria.push(`sentiment ≥ ${signed(Number(sentimentMin))}`);
+    criteria.push(`sentiment ≥ ${signedScore(Number(sentimentMin))}`);
   } else if (sentimentMax !== '') {
-    criteria.push(`sentiment ≤ ${signed(Number(sentimentMax))}`);
+    criteria.push(`sentiment ≤ ${signedScore(Number(sentimentMax))}`);
   }
 
   // Rendered above AND below the list: a page holds 50 rows, so after reading to
@@ -285,14 +281,14 @@ export default function Archive() {
             <select value={sentimentMin} onChange={onSentimentMinChange} aria-label="Minimum sentiment">
               <option value="">Any</option>
               {SENTIMENT_LEVELS.map((n) => (
-                <option key={n} value={n}>{signed(n)}</option>
+                <option key={n} value={n}>{signedScore(n)}</option>
               ))}
             </select>
             <span aria-hidden="true">–</span>
             <select value={sentimentMax} onChange={onSentimentMaxChange} aria-label="Maximum sentiment">
               <option value="">Any</option>
               {SENTIMENT_LEVELS.map((n) => (
-                <option key={n} value={n}>{signed(n)}</option>
+                <option key={n} value={n}>{signedScore(n)}</option>
               ))}
             </select>
           </div>
@@ -337,8 +333,8 @@ export default function Archive() {
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
       {impossibleRange ? (
         <p className="ss-error-text">
-          The sentiment range is inverted ({signed(Number(sentimentMin))} is above{' '}
-          {signed(Number(sentimentMax))}), so nothing can match.
+          The sentiment range is inverted ({signedScore(Number(sentimentMin))} is above{' '}
+          {signedScore(Number(sentimentMax))}), so nothing can match.
         </p>
       ) : null}
 
