@@ -67,11 +67,16 @@ export default function AnalystPanel({ date }) {
 
   return (
     <div className="ss-card">
-      <h3>Ask the analyst (LLM)</h3>
-      <p className="ss-muted">
-        The local language model reads the selected day&apos;s headlines and answers live.
-        Narrate summarizes the day&apos;s narratives with an UP/DOWN lean; or ask your own question.
-      </p>
+      <div className="ss-dashboard-section-head ss-dashboard-section-head--subsection">
+        <div className="ss-dashboard-section-head__copy">
+          <span className="ss-dashboard-section-head__eyebrow">AI analysis</span>
+          <h3>Ask the analyst (LLM)</h3>
+          <p>
+            The local language model reads the selected day&apos;s headlines and answers live.
+            Narrate summarizes the narratives with an UP/DOWN lean.
+          </p>
+        </div>
+      </div>
       <div className="ss-controls">
         <button className="ss-btn" onClick={() => submit('narrate')}
                 disabled={!date || state === 'waiting'}>
