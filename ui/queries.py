@@ -85,6 +85,9 @@ _HEADLINE_SELECT = """
            (nv.headline_id IS NOT NULL) AS scored
     FROM raw_headlines rh
 """
+_DISTINCT_DATES_ALL = text(
+    "SELECT DISTINCT date FROM raw_headlines ORDER BY date DESC"
+)
 _DISTINCT_DATES = text(
     "SELECT DISTINCT date FROM raw_headlines ORDER BY date DESC OFFSET :offset LIMIT :limit"
 )
@@ -212,11 +215,22 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
 
 
-def available_dates(engine=None, *, page: int = 0, page_size: int = 60) -> list[str]:
-    """Distinct headline dates, newest first (for the archive date picker)."""
+def available_dates(engine=None, *, page: int = 0, page_size: int | None = None) -> list[str]:
+    """Distinct headline dates, newest first (for the archive date picker).
+
+    ``page_size=None`` (the default) returns EVERY date. It used to default to 60 while
+    the archive requested page 0 once and never asked for a second page, so the picker
+    offered 60 of the 5,800+ dates on record — about 1% — even though the EDA charts
+    cover the full span back to 2010. Paging is still available for any caller that
+    passes an explicit ``page_size``.
+    """
     engine = engine or get_engine()
     with engine.connect() as conn:
-        rows = conn.execute(_DISTINCT_DATES, {"offset": page * page_size, "limit": page_size}).all()
+        if page_size is None:
+            rows = conn.execute(_DISTINCT_DATES_ALL).all()
+        else:
+            rows = conn.execute(_DISTINCT_DATES,
+                                {"offset": page * page_size, "limit": page_size}).all()
     return [str(r[0]) for r in rows]
 
 

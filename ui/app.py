@@ -549,8 +549,14 @@ def headlines(date: str, page: int = Query(0, ge=0), page_size: int = Query(50, 
 
 
 @app.get("/api/dates")
-def dates(page: int = Query(0, ge=0), page_size: int = Query(60, ge=1, le=400)) -> dict:
-    """Distinct headline dates, newest first (archive date list)."""
+def dates(page: int = Query(0, ge=0),
+          page_size: int | None = Query(None, ge=1, le=10000)) -> dict:
+    """Distinct headline dates, newest first (archive date list).
+
+    Returns EVERY date unless ``page_size`` is given. It used to cap at 60, and the
+    archive only ever asked for the first page, so the date picker reached about 1%
+    of the dates on record. The response shape is unchanged.
+    """
     return {"dates": queries.available_dates(page=page, page_size=page_size)}
 
 

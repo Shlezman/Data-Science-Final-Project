@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
+import DatePicker from './DatePicker.jsx';
 import HeadlineList from './HeadlineList.jsx';
 
 const PAGE_SIZE = 50;
@@ -59,6 +60,8 @@ export default function Archive() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('time');
   const [order, setOrder] = useState('desc');
+  // Set when a picked day had no headlines and the nearest one was used instead.
+  const [dateNote, setDateNote] = useState(null);
   const [sentimentFilter, setSentimentFilter] = useState('any');
   const [category, setCategory] = useState('');
   const [categoryMin, setCategoryMin] = useState('1');
@@ -131,9 +134,29 @@ export default function Archive() {
   }, [selectedDate, page, query, sort, order, sentimentMin, sentimentMax, category,
       categoryMin, loadHeadlines]);
 
-  const onDateChange = (e) => {
+  // `dates` arrives newest-first. Used only to resolve a date that isn't in the list;
+  // stepping between dates lives in DatePicker.
+  const dateIndex = useMemo(() => new Map(dates.map((d, i) => [d, i])), [dates]);
+
+  // The calendar disables days with no headlines, so a pick normally lands on real
+  // data. The fallback stays for safety: anything unknown resolves to the newest
+  // date before it rather than rendering an empty page.
+  const onDatePicked = (picked) => {
+    if (!picked) {
+      return;
+    }
     setPage(0);
-    setSelectedDate(e.target.value);
+    if (dateIndex.has(picked)) {
+      setDateNote(null);
+      setSelectedDate(picked);
+      return;
+    }
+    const snapped = dates.find((d) => d <= picked) || dates[dates.length - 1];
+    if (!snapped) {
+      return;
+    }
+    setSelectedDate(snapped);
+    setDateNote(`No headlines on ${picked} — showing ${snapped}.`);
   };
 
   // Every score control changes which rows match, so the current page number is
@@ -236,17 +259,13 @@ export default function Archive() {
           into columns instead of landing wherever the content ended. */}
       <div className="ss-archive-toolbar">
         <div className="ss-archive-toolbar__row">
-          <label className="ss-field ss-field--date">
+          {/* A date field rather than a <select>: the picker now covers every date on
+              record, and 5,800+ options is a list you scroll, not one you use. Typing
+              or opening the browser's calendar reaches any year directly. */}
+          <div className="ss-field ss-field--date">
             Date
-            <select value={selectedDate} onChange={onDateChange}>
-              {dates.length === 0 ? <option value="">No dates</option> : null}
-              {dates.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </label>
+            <DatePicker dates={dates} value={selectedDate} onChange={onDatePicked} />
+          </div>
           <label className="ss-field ss-archive-filter">
             Search this date
             <input
@@ -326,6 +345,7 @@ export default function Archive() {
         </div>
       </div>
 
+      {dateNote ? <p className="ss-muted ss-archive-datenote">{dateNote}</p> : null}
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
       {data ? (
         // Hold the previous result at reduced opacity while refetching rather
