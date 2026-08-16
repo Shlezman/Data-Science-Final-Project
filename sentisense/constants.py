@@ -125,8 +125,20 @@ SENTIMENT_MIN, SENTIMENT_MAX = -10, 10
 # Repo paths. This file is sentisense/constants.py → repo root is two levels up.
 # ─────────────────────────────────────────────────────────────────────
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
-TA125_CSV: Path = REPO_ROOT / "TA 125 Historical Data.csv"
-VTA35_CSV: Path = REPO_ROOT / "Tel Aviv Volatility Index VTA35 Historical Data.csv"
+
+
+def _first_existing(*candidates: Path) -> Path:
+    """First existing path; falls back to the first candidate so error messages name it."""
+    return next((p for p in candidates if p.exists()), candidates[0])
+
+
+# The 2026-08 re-org moved the finance CSVs under evaluation/; keep the old root-level
+# location as a fallback so pre-re-org checkouts (live servers mid-migration) still work.
+TA125_CSV: Path = _first_existing(REPO_ROOT / "evaluation" / "TA 125 Historical Data.csv",
+                                  REPO_ROOT / "TA 125 Historical Data.csv")
+VTA35_CSV: Path = _first_existing(
+    REPO_ROOT / "evaluation" / "Tel Aviv Volatility Index VTA35 Historical Data.csv",
+    REPO_ROOT / "Tel Aviv Volatility Index VTA35 Historical Data.csv")
 REPORTS_DIR: Path = REPO_ROOT / "sentisense_reports"
 
 # VTA-35 (Israeli volatility index) inception — earlier values must be NaN-masked.
