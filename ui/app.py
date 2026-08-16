@@ -260,7 +260,6 @@ def _build_performance() -> dict:
     ev_n = ev.get("n") or 0
     n_all = ev_n + live_n
     acc = (((ev.get("accuracy") or 0) * ev_n + live_ok) / n_all) if n_all else cm.get("accuracy")
-    mcc = cm_active["mcc"] if (cm_active and live_n > 0) else ev.get("mcc")
 
     def pctf(v):
         return f"{v * 100:.1f}%" if isinstance(v, (int, float)) else "—"
@@ -282,24 +281,31 @@ def _build_performance() -> dict:
              "comparison": "Higher is better",
              "info": "How well the model separates up days from down days across decision thresholds. "
                      "Baseline 0.521 — the naive-predictor reference on this data."},
-            {"label": "MCC", "value": (round(mcc, 4) if isinstance(mcc, (int, float)) else None),
-             "kind": "mcc", "baseline": 0, "domain": [-1, 1],
-             "scope": ("Live" if live_n > 0 else "Evaluation"),
-             "comparison": (f"Eval {ev.get('mcc')}" if live_n > 0 and ev.get("mcc") is not None
-                            else "Range −1 to +1"),
-             "info": "A balanced correlation score from −1 to +1; zero means no predictive relationship."},
         ],
-        "classification_tag": (f"Live monitoring · {live_n} days" if live_n > 0 else None),
+        # Classification metrics come from the champion's held-out (train/test) evaluation —
+        # the same sacred test tail behind oos_accuracy (backfilled by
+        # scripts/backfill_oos_classification.py). Live confusion-matrix numbers remain the
+        # fallback while a model has no stored eval metrics yet.
+        "classification_tag": (f"Held-out evaluation · {ev_n} days" if ev.get("f1") is not None
+                               else (f"Live monitoring · {live_n} days" if live_n > 0 else None)),
         "classification": [
-            {"label": "Precision", "value": (cm_active["precision"] if live_n > 0 else None),
+            {"label": "Precision",
+             "value": (ev.get("precision") if ev.get("precision") is not None
+                       else (cm_active["precision"] if live_n > 0 else None)),
              "accent": "#2dd4bf",
-             "info": "Of the predicted positive days, the share that were actually positive."},
-            {"label": "Recall", "value": (cm_active["recall"] if live_n > 0 else None),
+             "info": "Of the predicted up days, the share that were actually up "
+                     "(held-out test evaluation)."},
+            {"label": "Recall",
+             "value": (ev.get("recall") if ev.get("recall") is not None
+                       else (cm_active["recall"] if live_n > 0 else None)),
              "accent": "#a78bfa",
-             "info": "Of the actual positive days, the share the model identified."},
-            {"label": "F1", "value": (cm_active["f1"] if live_n > 0 else None),
+             "info": "Of the actual up days, the share the model identified "
+                     "(held-out test evaluation)."},
+            {"label": "F1",
+             "value": (ev.get("f1") if ev.get("f1") is not None
+                       else (cm_active["f1"] if live_n > 0 else None)),
              "accent": "#fbbf24",
-             "info": "The harmonic mean of precision and recall."},
+             "info": "The harmonic mean of precision and recall (held-out test evaluation)."},
         ],
         "sample": {"total": n_all or cm.get("n", 0), "eval": ev_n, "live": live_n,
                    "pending": cm.get("pending", 0)},

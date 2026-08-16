@@ -392,7 +392,17 @@ def eda_aggregates(engine=None) -> dict:
 
 _ACTIVE_METRICS = text(
     """
-    SELECT version, model_type, oos_accuracy, oos_mcc, oos_roc_auc, oos_n
+    SELECT version, model_type, oos_accuracy, oos_mcc, oos_roc_auc, oos_n,
+           oos_precision, oos_recall, oos_f1
+    FROM model_registry WHERE is_active LIMIT 1
+    """
+)
+
+# Pre-migration-009 databases lack the classification columns — same row, no extras.
+_ACTIVE_METRICS_LEGACY = text(
+    """
+    SELECT version, model_type, oos_accuracy, oos_mcc, oos_roc_auc, oos_n,
+           NULL AS oos_precision, NULL AS oos_recall, NULL AS oos_f1
     FROM model_registry WHERE is_active LIMIT 1
     """
 )
@@ -409,14 +419,21 @@ def active_model_metrics(engine=None) -> dict | None:
     try:
         with engine.connect() as conn:
             row = conn.execute(_ACTIVE_METRICS).mappings().first()
-    except Exception:  # noqa: BLE001 — registry not deployed on this DB yet
-        return None
+    except Exception:  # noqa: BLE001 — classification columns may predate migration 009
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(_ACTIVE_METRICS_LEGACY).mappings().first()
+        except Exception:  # noqa: BLE001 — registry not deployed on this DB yet
+            return None
     if not row:
         return None
+
+    def _f(key: str) -> float | None:
+        return None if row[key] is None else round(float(row[key]), 4)
+
     return {"version": row["version"], "model_type": row["model_type"],
-            "accuracy": (None if row["oos_accuracy"] is None else round(float(row["oos_accuracy"]), 4)),
-            "mcc": (None if row["oos_mcc"] is None else round(float(row["oos_mcc"]), 4)),
-            "roc_auc": (None if row["oos_roc_auc"] is None else round(float(row["oos_roc_auc"]), 4)),
+            "accuracy": _f("oos_accuracy"), "mcc": _f("oos_mcc"), "roc_auc": _f("oos_roc_auc"),
+            "precision": _f("oos_precision"), "recall": _f("oos_recall"), "f1": _f("oos_f1"),
             "n": (None if row["oos_n"] is None else int(row["oos_n"]))}
 
 
