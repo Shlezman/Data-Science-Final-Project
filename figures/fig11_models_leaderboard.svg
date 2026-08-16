@@ -50,23 +50,23 @@
   <text x="690" y="175" class="tr">2026-07-02</text>
   <line x1="0" y1="190" x2="780" y2="190" stroke="#e2e8f0" stroke-width="1"/>
 
-  <!-- row 4: CatBoost -->
-  <text x="20" y="214" class="name">CatBoost</text>
+  <!-- row 4: Ensemble -->
+  <text x="20" y="214" class="name">Ensemble</text>
   <rect x="150" y="202" width="66" height="17" rx="4" fill="#e2e8f0"/>
-  <text x="158" y="214" class="chip">catboost</text>
-  <text x="20" y="227" class="sub">joblib</text>
-  <text x="470" y="217" class="val">0.5682</text>
-  <text x="590" y="217" class="val">0.563</text>
+  <text x="158" y="214" class="chip">ensemble</text>
+  <text x="20" y="227" class="sub">soft-vote top-3</text>
+  <text x="470" y="217" class="val">0.5513</text>
+  <text x="590" y="217" class="val">0.512</text>
   <text x="690" y="217" class="tr">2026-07-02</text>
   <line x1="0" y1="232" x2="780" y2="232" stroke="#e2e8f0" stroke-width="1"/>
 
-  <!-- row 5: Ensemble -->
-  <text x="20" y="256" class="name">Ensemble</text>
-  <rect x="150" y="244" width="66" height="17" rx="4" fill="#e2e8f0"/>
-  <text x="158" y="256" class="chip">ensemble</text>
-  <text x="20" y="269" class="sub">soft-vote top-3</text>
-  <text x="470" y="259" class="val">0.5513</text>
-  <text x="590" y="259" class="val">0.512</text>
+  <!-- row 5: XGBoost -->
+  <text x="20" y="256" class="name">XGBoost</text>
+  <rect x="150" y="244" width="62" height="17" rx="4" fill="#e2e8f0"/>
+  <text x="158" y="256" class="chip">xgboost</text>
+  <text x="20" y="269" class="sub">joblib</text>
+  <text x="470" y="259" class="val">0.5476</text>
+  <text x="590" y="259" class="val">0.553</text>
   <text x="690" y="259" class="tr">2026-07-02</text>
   <line x1="0" y1="274" x2="780" y2="274" stroke="#cbd3dd" stroke-width="1"/>
 </svg>
