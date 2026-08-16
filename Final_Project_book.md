@@ -320,27 +320,8 @@ The project follows a staged, gate-driven methodology:
   schema, and reproduction commands; **Appendix B** summarizes the live
   deployment runbook.
 
-```
- ┌──────────────────┐  headlines  ┌────────────────────┐  7 scores  ┌──────────────┐
- │ mivzakim_scraper │ ──────────▶ │  processing_engine │ ─────────▶ │  PostgreSQL  │
- │  Playwright/FF   │             │  LLM scoring       │ /headline  │ raw_headlines│
- │  mivzakim.net    │             │  (fast / 7-agent)  │            │ nlp_vectors  │
- └──────────────────┘             └────────────────────┘            └──────┬───────┘
-        ┌──────────────────────────────────────────────────────────────────┘
-        ▼
- ┌────────────────────────────┐  features  ┌──────────────────────────────┐
- │  sentisense/ (features)    │ ─────────▶ │  Model zoo + Optuna HPO      │
- │ scores·embed·PCA·cluster   │            │ trees/LSTM/GRU/TCN/PatchTST/ │
- │ leakage-safe splits        │            │ TFT/N-HiTS/Chronos/TimesFM   │
- └────────────────────────────┘            └──────────────┬───────────────┘
-                                                          │ weights + OOS metrics
-                                                          ▼
- ┌────────────────────────────┐   serve    ┌──────────────────────────────┐
- │  Live dashboard (FastAPI + │ ◀───────── │  Model registry (Postgres)   │
- │  React SPA): hero, metrics,│  active    │  auto-best + manual override │
- │  EDA, 3-D centroids, sim   │  champion  │  daily predict + settle      │
- └────────────────────────────┘            └──────────────────────────────┘
-```
+![Figure 1](figures/fig1_pipeline.svg)
+
 *Figure 1: SentiSense end-to-end pipeline.*
 
 ---
