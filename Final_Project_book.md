@@ -712,19 +712,19 @@ views:
 *Figure 6: Prediction hero and model performance.*
 
 ![Figure 7](figures/fig7_eda_panels1.png)
-![Figure 8](figures/fig7_eda_panels2.png)
+![Figure 7](figures/fig7_eda_panels2.png)
 
 *Figure 7: Exploratory data-analysis panels.*
 
-![Figure 9](figures/fig9_centroids_all_days.png)
+![Figure 8](figures/fig9_centroids_all_days.png)
 
 *Figure 8: Daily news centroids (3-D).*
 
-![Figure 10](figures/fig10_day_headline_cloud.png)
+![Figure 9](figures/fig10_day_headline_cloud.png)
 
 *Figure 9: Single-day headline cloud.*
 
-![Figure 11](figures/fig11_persona_votes.png)
+![Figure 10](figures/fig11_persona_votes.png)
 
 *Figure 10: Persona votes vs the model's call.*
 
@@ -1392,7 +1392,7 @@ extends the champion's prospective record on the dashboard (eval-seeded
 cumulative accuracy, Section 3.5). This record is the project's strongest
 ongoing evidence, since prospective days cannot be overfit.
 
-![Figure 11](figures/fig11_models_leaderboard.png)
+![Figure 11](figures/fig11_models_leaderboard.svg)
 
 *Figure 11: Models panel with the active champion.*
 
