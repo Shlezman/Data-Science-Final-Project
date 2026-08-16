@@ -3,9 +3,7 @@ import { getJson } from '../lib/api.js';
 
 /**
  * Big current-day up/down hero. Reads /api/prediction/today and shows a large
- * green ▲ UP or red ▼ DOWN with the predicted-direction confidence, date, and
- * served-model version. Confidence is the probability of the PREDICTED class
- * (up-prob if up, else 1 − up-prob).
+ * green ▲ UP or red ▼ DOWN with the trading date and served-model version.
  *
  * @param {object} props Component props.
  * @param {object} [props.lastRun] The `/api/health` `last_run` payload. Its
@@ -38,13 +36,6 @@ export default function Hero({ lastRun }) {
   }
 
   const up = pred.up;
-  const raw = typeof pred.confidence === 'number' ? pred.confidence : 0.5;
-  const dirConf = Math.round((up ? raw : 1 - raw) * 100);
-  const confidenceLabel = dirConf < 55
-    ? 'Low confidence'
-    : dirConf < 65
-      ? 'Moderate confidence'
-      : 'High confidence';
 
   return (
     <div className={`ss-hero ${up ? 'is-up' : 'is-down'}`}>
@@ -63,22 +54,6 @@ export default function Hero({ lastRun }) {
           <p className="ss-hero__summary">
             TA-125 is expected to close {up ? 'higher' : 'lower'} based on today&apos;s news sentiment
           </p>
-          <div className="ss-hero__meter">
-            <div className="ss-hero__meter-head">
-              <span>Model confidence</span>
-              <strong>{dirConf}% · {confidenceLabel}</strong>
-            </div>
-            <div
-              className="ss-hero__track"
-              role="progressbar"
-              aria-label="Model confidence"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-valuenow={dirConf}
-            >
-              <span style={{ width: `${dirConf}%` }} />
-            </div>
-          </div>
         </div>
       </div>
 
