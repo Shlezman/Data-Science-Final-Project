@@ -726,7 +726,8 @@ body {
 
 .ss-core-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* auto-fit so the row fills the card whatever number of tiles the server sends */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 .ss-core-metric {
