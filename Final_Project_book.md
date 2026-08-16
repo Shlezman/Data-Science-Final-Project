@@ -3,7 +3,7 @@
 By
 Omri Shlezinger, Nadav Idelsohn, Orian Aziz, Amir Katz
 
-Approved by the supervisor: Oshrit Shtussel
+Approved by the supervisor: Dr. Oshrit Shtussel
 
 Submitted to the Computer Science Faculty of College of Management
 Rishon LeZion, August 2026
@@ -12,7 +12,7 @@ Rishon LeZion, August 2026
 
 ## Acknowledgments
 
-We would like to express our gratitude to our supervisor, Oshrit Shtussel,
+We would like to express our gratitude to our supervisor, Dr. Oshrit Shtussel,
 for her guidance throughout this project. We would also like to thank our
 families for their support, and the open-source community whose tools
 (PyTorch, scikit-learn, Optuna, pytorch-forecasting, and the Hugging Face
