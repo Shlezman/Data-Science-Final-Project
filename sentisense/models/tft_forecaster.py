@@ -232,6 +232,104 @@ def pf_directions(arch: str, price: pd.Series, cutoff, *, covariate_frame: pd.Da
     return st, lt, thr
 
 
+def pf_serve_forecast(arch: str, price: pd.Series, decision_dates, *,
+                      covariate_frame: pd.DataFrame | None = None,
+                      hpo_params: dict | None = None, n_trials: int = 8,
+                      enc: int = MAX_ENCODER_LEN, max_epochs: int = 30) -> dict:
+    """Retrain-on-demand serving for a ``reforecast`` registry row (TFT/NHiTS/NBEATS).
+
+    Unlike :func:`pf_directions` (evaluation over a sacred held-out tail), this fits on ALL
+    observed price history and scores the requested decision days — including the latest
+    trading day, whose next-day return is genuinely unknown (forecast via one dummy decoder
+    row appended beyond the observed frame; its target/covariate placeholders are never used
+    as model inputs for that step).
+
+    Args:
+        arch: 'TFT' | 'NHiTS' | 'NBEATS'.
+        price: TA-125 close series, date-indexed.
+        decision_dates: decision days to score (normally just the latest trading day).
+        covariate_frame: optional date-indexed covariate reals (dropped for univariate archs).
+        hpo_params: tuned hyper-parameters from a previous serve; None runs the same seeded
+            Optuna search as :func:`pf_directions` (train <70%, validate [70%,85%)) so the
+            caller can cache the winner and skip HPO on later nights.
+        n_trials: Optuna trials when ``hpo_params`` is None.
+        enc: default encoder length (HPO may override).
+        max_epochs: training epochs per fit.
+
+    Returns:
+        ``{"proba": {pd.Timestamp: float}, "hpo_params": dict}`` — probabilities are scaled
+        by :func:`forecast_to_proba` over the model's full forecast history, matching the
+        evaluation-time scaling so the registry row's validation-tuned threshold transfers.
+
+    Raises:
+        ImportError: pytorch-forecasting / lightning not installed.
+    """
+    try:
+        import optuna
+        from sklearn.metrics import roc_auc_score
+
+        from sentisense.models.backtest import forecast_to_proba
+    except ImportError as exc:
+        raise ImportError(_install_hint()) from exc
+    if arch in _UNIVARIATE:
+        covariate_frame = None
+
+    want = pd.DatetimeIndex(sorted({pd.Timestamp(d) for d in decision_dates}))
+    if not len(want):
+        return {"proba": {}, "hpo_params": dict(hpo_params or {})}
+    frame, cov_cols, dates = _make_frame(price, want.max(), covariate_frame)
+    n = len(frame)
+    r = frame["r"].to_numpy()
+
+    if not hpo_params:
+        v0, v1 = int(n * 0.70), int(n * 0.85)
+
+        def objective(trial) -> float:
+            params = _param_space(trial, arch)
+            try:
+                model, training = _train_one(frame, cov_cols, params, v0, arch=arch,
+                                             max_epochs=max_epochs, enc=enc)
+                preds = _predicted_returns(model, training, frame[frame.time_idx < v1])
+                ts = [t for t in preds.index if v0 <= t < v1 and 1 <= t < n]
+                if ts and len(np.unique(r[ts] > 0)) > 1:
+                    return float(roc_auc_score((np.asarray(r)[ts] > 0).astype(int),
+                                               [float(preds.loc[t]) for t in ts]))
+            except Exception as exc:  # noqa: BLE001 — a bad config shouldn't kill serving
+                logger.warning("{} serve-HPO trial failed: {}", arch, str(exc)[:120])
+            return 0.5
+
+        study = optuna.create_study(direction="maximize",
+                                    sampler=optuna.samplers.TPESampler(seed=SEED))
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+        hpo_params = dict(study.best_params)
+        logger.info("{} serve-HPO: best val ROC-AUC {:.4f} | {}",
+                    arch, study.best_value, hpo_params)
+
+    model, training = _train_one(frame, cov_cols, dict(hpo_params), n, arch=arch,
+                                 max_epochs=max_epochs, enc=enc)
+
+    # One dummy row at time_idx=n lets the dataset emit a decoder step beyond the last
+    # observed price; _predicted_returns then covers both in-frame steps and that step.
+    ext = pd.concat([frame, pd.DataFrame([{**{c: 0.0 for c in ("r", *cov_cols)},
+                                           "time_idx": n, "group": "ta125"}])],
+                    ignore_index=True)
+    fc = _predicted_returns(model, training, ext)
+    proba = pd.Series(forecast_to_proba(fc.to_numpy()), index=fc.index)
+    pos = {d: i for i, d in enumerate(dates)}
+    out: dict = {}
+    for d in want:
+        t = pos.get(d, -2) + 1                        # decision day d → predicted step t = idx+1
+        if t <= 0 or t not in proba.index:
+            logger.warning("{}: no forecast for decision day {} — abstaining at 0.5",
+                           arch, d.date())
+            out[d] = 0.5
+        else:
+            # In-frame steps (t < n) are catch-up days the model saw during fit (in-sample);
+            # only the latest day (t == n) is a genuine out-of-sample forecast.
+            out[d] = float(proba.loc[t])
+    return {"proba": out, "hpo_params": dict(hpo_params)}
+
+
 def tft_directions(price: pd.Series, cutoff, **kw):
     """Back-compat shim — TFT via :func:`pf_directions`."""
     return pf_directions("TFT", price, cutoff, **kw)

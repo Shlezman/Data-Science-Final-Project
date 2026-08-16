@@ -17,7 +17,7 @@ PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 #   SENTISENSE_DATABASE_URL=postgresql://USER:PASS@localhost:5432/sentisense
 
 # 1) Daily pipeline: scrape -> score -> embed -> derived -> champion predict.
-30 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance --extra ml python scripts/daily_live.py >> logs/cron_daily.log 2>&1
+30 15 * * * cd /tf/Data-Science-Final-Project && uv run --extra finance --extra ml --extra tft python scripts/daily_live.py >> logs/cron_daily.log 2>&1
 
 # Nightly persona simulation (local LLM) — publishes the agent map + report the
 # Simulator tab renders. Runs after the daily pipeline has scored the day's news.

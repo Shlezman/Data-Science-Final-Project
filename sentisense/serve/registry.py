@@ -83,11 +83,29 @@ def register_model(engine=None, *, version: str, name: str, model_type: str, par
                 metrics.get("roc_auc"), metrics.get("mcc"))
 
 
+def update_params(engine=None, *, version: str, params: dict) -> bool:
+    """Replace a registered model's ``params`` JSON (e.g. cache serve-time HPO winners).
+
+    Args:
+        engine: SQLAlchemy engine; created from env if None.
+        version: registry version string to update.
+        params: full replacement params dict.
+
+    Returns:
+        True if a row was updated, False if ``version`` is unknown.
+    """
+    engine = engine or get_engine()
+    with engine.begin() as conn:
+        res = conn.execute(text("UPDATE model_registry SET params=:p WHERE version=:v"),
+                           {"p": json.dumps(params or {}), "v": version})
+    return bool(res.rowcount)
+
+
 def _row_to_dict(row) -> dict | None:
     if row is None:
         return None
     d = dict(row._mapping)
-    for k in ("members", "feature_cols"):
+    for k in ("members", "feature_cols", "params"):
         if isinstance(d.get(k), str):
             d[k] = json.loads(d[k])
     return d

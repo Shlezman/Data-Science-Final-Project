@@ -167,6 +167,68 @@ def _predict_from_registry(engine, active: dict, to_predict: pd.DataFrame,
     return pd.DataFrame({"date": to_predict.index, "proba": np.clip(proba, 0.0, 1.0)})
 
 
+def _predict_reforecast(engine, active: dict, to_predict: pd.DataFrame,
+                        full: pd.DataFrame) -> pd.DataFrame:
+    """Serve a ``reforecast`` registry row (pf family: TFT/NHiTS/NBEATS) by live refit.
+
+    Forecaster families store no artifact — serving is the registry docstring's promised
+    "phase-2 serve-path": refit on all history, forecast the next-day return, map through the
+    row's validation-tuned decision threshold. Only ``family='pf'`` is implemented;
+    Chronos/TimesFM rows raise so :func:`train_and_predict` falls back to the pinned model.
+
+    The threshold is folded into the returned probability (``p' = 0.5 + p - thr``, clipped)
+    so the downstream ``proba > 0.5`` contract and the UI's confidence display stay intact.
+    Serve-time HPO winners are cached back into the row's params so later nights refit only.
+
+    Args:
+        engine: SQLAlchemy engine (params write-back + registry access).
+        active: the active registry row (dict from :func:`registry.get_active`).
+        to_predict: unlabeled serving rows (decision days) from the fused frame.
+        full: complete labeled+unlabeled fused frame (covariate source).
+
+    Returns:
+        DataFrame with ``date`` and threshold-adjusted ``proba`` columns.
+
+    Raises:
+        NotImplementedError: reforecast family other than 'pf'.
+    """
+    import json as _json
+
+    params = active.get("params") or {}
+    if isinstance(params, str):
+        params = _json.loads(params)
+    if params.get("family") != "pf":
+        raise NotImplementedError(
+            f"reforecast serve for family={params.get('family')!r} not implemented")
+
+    from sentisense.features.dataset import _load_finance
+    from sentisense.models.tft_forecaster import pf_serve_forecast
+    from sentisense.serve import registry
+
+    arch = params.get("arch", "TFT")
+    thr = float(params.get("threshold", 0.5))
+    cov_cols = params.get("cov_cols") or []
+    cov = full.reindex(columns=cov_cols).fillna(0.0) if cov_cols else None
+    price = _load_finance()[0]["TA125_Price"].dropna()   # CSV + yfinance-extended recent days
+
+    res = pf_serve_forecast(arch, price, to_predict.index, covariate_frame=cov,
+                            hpo_params=params.get("hpo") or None,
+                            n_trials=int(params.get("n_trials", 8)),
+                            max_epochs=int(params.get("max_epochs", 30)))
+    if not params.get("hpo") and res.get("hpo_params"):
+        try:
+            registry.update_params(engine, version=active["version"],
+                                   params={**params, "hpo": res["hpo_params"]})
+            logger.info("Cached serve-HPO params on {}.", active["version"])
+        except Exception as exc:  # noqa: BLE001 — caching is best-effort, serving already done
+            logger.warning("Could not cache HPO params on {}: {}",
+                           active.get("version"), str(exc)[:120])
+
+    proba = [res["proba"].get(pd.Timestamp(d), 0.5) for d in to_predict.index]
+    adjusted = np.clip(0.5 + (np.asarray(proba, dtype=float) - thr), 0.01, 0.99)
+    return pd.DataFrame({"date": to_predict.index, "proba": adjusted})
+
+
 def _predict_torch(active: dict, to_predict: pd.DataFrame, full: pd.DataFrame) -> np.ndarray:
     """Windowed forward-predict with a reloaded seq model (LSTM/GRU/TCN/PatchTST).
 
@@ -239,10 +301,13 @@ def train_and_predict(engine=None, *, dry_run: bool = False) -> dict:
     except Exception as exc:  # noqa: BLE001 — registry table may not exist yet
         logger.info("Registry unavailable ({}) — using pinned champion.", str(exc)[:60])
     preds = version = source = None
-    if active and active.get("artifact_format") in ("joblib", "ensemble", "torch"):
+    if active and active.get("artifact_format") in ("joblib", "ensemble", "torch", "reforecast"):
         try:
             full = pd.concat([labeled, to_predict]).sort_index()   # torch windows over the full frame
-            preds = _predict_from_registry(engine, active, to_predict, full=full)
+            if active.get("artifact_format") == "reforecast":
+                preds = _predict_reforecast(engine, active, to_predict, full=full)
+            else:
+                preds = _predict_from_registry(engine, active, to_predict, full=full)
             version, source = active["version"], f"registry:{active['model_type']}"
         except Exception as exc:  # noqa: BLE001 — never let an untested artifact break daily predict
             logger.warning("Registry serve failed for {} ({}) — falling back to pinned champion.",
