@@ -153,7 +153,7 @@
   > As of the merge of PR #15/#17 into `main`, `lstm_forecaster.ipynb` and
   > `tuning.ipynb` also live at the repo root (per-source LSTM + a long-running
   > Optuna/calibration tuning notebook). The `sentisense/` package generalises this
-  > same machinery into importable, server-runnable modules — see §7 and `RUNBOOK.md`.
+  > same machinery into importable, server-runnable modules — see 7 and `RUNBOOK.md`.
 - **`poc.ipynb`** — tree-model proof-of-concept (resolved on `main`; earlier had a
   leaky `StratifiedKFold(shuffle=True)` + `shift(-1)` LastDay features). The
   `sentisense` package deliberately does **not** port those leaky features; it uses

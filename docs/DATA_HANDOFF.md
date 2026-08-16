@@ -262,7 +262,7 @@ WHERE relevance_politics   = 0 AND relevance_economy   = 0
 ```
 
 Treat these like missing data unless you're specifically modelling LLM
-failure modes. The EDA notebook (`eda.ipynb` §3) already does a
+failure modes. The EDA notebook (`eda.ipynb` 3) already does a
 per-source breakdown that surfaces them.
 
 ### 2. The dataset has been standardised on `mistral-small-4`
@@ -412,7 +412,7 @@ to run them.
    `--rescore-legacy` would re-process millions of rows.
 2. **Don't `DELETE FROM nlp_vectors` without a fresh dump.** Recovery
    means waiting for hours of LLM time.
-3. **Don't trust an all-zero score row** — see "Known data quirks" §1.
+3. **Don't trust an all-zero score row** — see "Known data quirks" 1.
 4. **Don't filter on `validation_passed` alone** when computing
    per-headline aggregates — also filter on `model_name = 'mistral-small-4'`,
    otherwise you may double-count headlines that were scored under

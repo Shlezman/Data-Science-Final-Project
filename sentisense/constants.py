@@ -97,7 +97,7 @@ SENTIMENT_COLUMN: str = "global_sentiment"
 SCORE_COLUMNS: tuple[str, ...] = (*DB_RELEVANCE_COLUMNS, SENTIMENT_COLUMN)
 
 # Cross-layer name map (DB → engine result dict → golden CSV). Documented in
-# docs/sentisense-understanding.md §1. Use when bridging to the scoring pipeline
+# docs/sentisense-understanding.md 1. Use when bridging to the scoring pipeline
 # or the golden dataset, never to rename DB columns silently.
 DB_TO_ENGINE_KEY: dict[str, str] = {
     "relevance_politics": "relevance_category_1",
