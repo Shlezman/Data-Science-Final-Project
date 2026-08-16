@@ -55,6 +55,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--version", default=None, help="Registry version (default: the active model).")
     ap.add_argument("--seeds", type=int, default=3, help="Seeds to average (match the registration run).")
+    ap.add_argument("--cutoff", default=_FAR_FUTURE,
+                    help="Frame cutoff date — set to the model's training date so the "
+                         "70/15/15 split reproduces the ORIGINAL test tail (the frame has "
+                         "grown since registration; e.g. --cutoff 2026-07-02).")
     args = ap.parse_args()
 
     engine = get_engine()
@@ -79,7 +83,7 @@ def main() -> int:
 
     logger.info("Rebuilding fused frame and reproducing the OOS eval for {} ({} seeds)…",
                 row["version"], args.seeds)
-    df = build_fused_dataset(engine, cutoff=_FAR_FUTURE, overnight=True)
+    df = build_fused_dataset(engine, cutoff=args.cutoff, overnight=True)
     proba_s, label_s = seq_holdout_eval(df, arch, params, n_seeds=args.seeds)
     proba, labels = proba_s.to_numpy(), label_s.to_numpy().astype(int)
     preds = (proba > 0.5).astype(int)
