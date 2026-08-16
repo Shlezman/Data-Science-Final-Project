@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#475569"/></marker>
+  </defs>
+  <style>
+    .host{fill:#f8fafc;stroke:#334155;stroke-width:2}
+    .inner{fill:#ffffff;stroke:#94a3b8;stroke-width:1.2}
+    .db{fill:#eef2ff;stroke:#4338ca;stroke-width:2}
+    .t{font-size:14px;font-weight:bold;fill:#0f172a}
+    .h{font-size:16px;font-weight:bold;fill:#1e293b}
+    .s{font-size:12px;fill:#475569}
+    .arrow{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#a)}
+  </style>
+
+  <rect x="30" y="30" width="380" height="340" class="host" rx="12"/>
+  <text x="220" y="58" text-anchor="middle" class="h">GPU compute node (RTX 4090)</text>
+
+  <rect x="55" y="80" width="330" height="64" class="inner" rx="8"/>
+  <text x="220" y="105" text-anchor="middle" class="t">Nightly cron — daily_live.py</text>
+  <text x="220" y="126" text-anchor="middle" class="s">scrape · score · embed · derive · predict</text>
+
+  <rect x="55" y="158" width="330" height="56" class="inner" rx="8"/>
+  <text x="220" y="181" text-anchor="middle" class="t">Ollama LLM (gemma4)</text>
+  <text x="220" y="201" text-anchor="middle" class="s">live scoring · persona simulations</text>
+
+  <rect x="55" y="228" width="330" height="56" class="inner" rx="8"/>
+  <text x="220" y="251" text-anchor="middle" class="t">Registry training (periodic)</text>
+  <text x="220" y="271" text-anchor="middle" class="s">train_registry.py — full zoo</text>
+
+  <rect x="55" y="298" width="330" height="52" class="inner" rx="8"/>
+  <text x="220" y="320" text-anchor="middle" class="t">Embeddings (multilingual-e5)</text>
+  <text x="220" y="339" text-anchor="middle" class="s">new headlines only</text>
+
+  <rect x="490" y="30" width="380" height="340" class="host" rx="12"/>
+  <text x="680" y="58" text-anchor="middle" class="h">Database / UI host</text>
+
+  <rect x="515" y="80" width="330" height="64" class="db" rx="8"/>
+  <text x="680" y="105" text-anchor="middle" class="t">PostgreSQL 16 (:5432)</text>
+  <text x="680" y="126" text-anchor="middle" class="s">the only cross-host interface</text>
+
+  <rect x="515" y="158" width="330" height="70" class="inner" rx="8"/>
+  <text x="680" y="181" text-anchor="middle" class="t">Dashboard (:3000)</text>
+  <text x="680" y="201" text-anchor="middle" class="s">FastAPI + React SPA · pm2 · login gate</text>
+  <text x="680" y="219" text-anchor="middle" class="s">nginx TLS :443</text>
+
+  <rect x="515" y="242" width="330" height="52" class="inner" rx="8"/>
+  <text x="680" y="264" text-anchor="middle" class="t">MongoDB (:21771)</text>
+  <text x="680" y="283" text-anchor="middle" class="s">panel versions · sim archive</text>
+
+  <rect x="515" y="308" width="330" height="42" class="inner" rx="8"/>
+  <text x="680" y="334" text-anchor="middle" class="t">Nightly Mongo archive cron</text>
+
+  <path class="arrow" d="M410 100 L513 105"/>
+  <path class="arrow" d="M513 125 L412 130"/>
+</svg>

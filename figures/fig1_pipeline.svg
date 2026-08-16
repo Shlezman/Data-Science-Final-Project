@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#475569"/></marker>
+  </defs>
+  <style>
+    .box{fill:#f8fafc;stroke:#334155;stroke-width:1.5}
+    .db{fill:#eef2ff;stroke:#4338ca;stroke-width:2}
+    .hot{fill:#dcfce7;stroke:#16a34a;stroke-width:2}
+    .t{font-size:14px;font-weight:bold;fill:#0f172a}
+    .s{font-size:12px;fill:#475569}
+    .arrow{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#a)}
+  </style>
+
+  <rect x="30" y="40" width="200" height="66" class="box" rx="8"/>
+  <text x="130" y="68" text-anchor="middle" class="t">mivzakim_scraper</text>
+  <text x="130" y="88" text-anchor="middle" class="s">Hebrew headlines</text>
+
+  <rect x="290" y="40" width="200" height="66" class="box" rx="8"/>
+  <text x="390" y="68" text-anchor="middle" class="t">processing_engine</text>
+  <text x="390" y="88" text-anchor="middle" class="s">LLM scoring · 7 scores</text>
+
+  <rect x="550" y="40" width="200" height="66" class="db" rx="8"/>
+  <text x="650" y="68" text-anchor="middle" class="t">PostgreSQL</text>
+  <text x="650" y="88" text-anchor="middle" class="s">raw_headlines · nlp_vectors</text>
+
+  <rect x="30" y="182" width="200" height="66" class="box" rx="8"/>
+  <text x="130" y="210" text-anchor="middle" class="t">sentisense/ features</text>
+  <text x="130" y="230" text-anchor="middle" class="s">embed · PCA · leak-safe splits</text>
+
+  <rect x="290" y="182" width="200" height="66" class="box" rx="8"/>
+  <text x="390" y="210" text-anchor="middle" class="t">Model zoo + Optuna</text>
+  <text x="390" y="230" text-anchor="middle" class="s">trees · seq · forecasters</text>
+
+  <rect x="550" y="182" width="200" height="66" class="db" rx="8"/>
+  <text x="650" y="210" text-anchor="middle" class="t">Model registry</text>
+  <text x="650" y="230" text-anchor="middle" class="s">auto-best + manual override</text>
+
+  <rect x="290" y="324" width="270" height="66" class="hot" rx="8"/>
+  <text x="425" y="352" text-anchor="middle" class="t">Live dashboard</text>
+  <text x="425" y="372" text-anchor="middle" class="s">FastAPI + React · predict + settle</text>
+
+  <path class="arrow" d="M230 73 L288 73"/>
+  <path class="arrow" d="M490 73 L548 73"/>
+  <path class="arrow" d="M650 106 C650 140 230 150 175 180"/>
+  <path class="arrow" d="M230 215 L288 215"/>
+  <path class="arrow" d="M490 215 L548 215"/>
+  <path class="arrow" d="M650 248 C650 290 520 300 470 322"/>
+</svg>

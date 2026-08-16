@@ -3,7 +3,7 @@
 By
 Omri Shlezinger, Nadav Idelsohn, Orian Aziz, Amir Katz
 
-Approved by the supervisor: Oshrit Shtussel
+Approved by the supervisor: Dr. Oshrit Shtussel
 
 Submitted to the Computer Science Faculty of College of Management
 Rishon LeZion, August 2026
@@ -12,7 +12,7 @@ Rishon LeZion, August 2026
 
 ## Acknowledgments
 
-We would like to express our gratitude to our supervisor, Oshrit Shtussel,
+We would like to express our gratitude to our supervisor, Dr. Oshrit Shtussel,
 for her guidance throughout this project. We would also like to thank our
 families for their support, and the open-source community whose tools
 (PyTorch, scikit-learn, Optuna, pytorch-forecasting, and the Hugging Face
@@ -28,7 +28,7 @@ model (LLM) into a structured sentiment signal, help predict whether the
 Tel-Aviv 125 (TA-125) stock index will close higher the next trading day?**
 
 The system spans five stages. (1) A **scraper** collects Hebrew breaking-news
-headlines from `mivzakim.net` going back to ~2015. (2) A **processing engine**
+headlines from `mivzakim.net` going back to ~2010. (2) A **processing engine**
 sends every headline through an LLM, which scores it on six relevance
 categories (politics, economy, security, health, science, technology) and one
 global sentiment value (-10...+10), producing a corpus of roughly **3 million
@@ -121,16 +121,16 @@ data.
 ## List of Figures
 
 - Figure 1: SentiSense end-to-end pipeline (Section 1.6)
-- Figure 2: System architecture - modules and data flow (Section 3.1) *(placeholder)*
-- Figure 3: Two-host deployment topology (Section 3.5) *(placeholder)*
-- Figure 4: Leakage-safe chronological train/validation/test split (Section 3.3) *(placeholder)*
-- Figure 5: Model registry lifecycle - train, register, select, serve (Section 3.4) *(placeholder)*
-- Figure 6: Dashboard - prediction hero and model-performance panel (Section 3.5) *(screenshot placeholder)*
-- Figure 7: Dashboard - exploratory data-analysis panels (Section 3.5) *(screenshot placeholder)*
-- Figure 8: 3-D daily news centroids, colored by KMeans cluster (Section 3.5) *(screenshot placeholder)*
-- Figure 9: Single-day headline cloud in the shared PCA space (Section 3.5) *(screenshot placeholder)*
-- Figure 10: Per-source persona votes vs the model's call (Section 3.5) *(screenshot placeholder)*
-- Figure 11: Models panel - registry leaderboard with the active champion (Section 4.2.8) *(screenshot placeholder)*
+- Figure 2: System architecture - modules and data flow (Section 3.1)
+- Figure 3: Two-host deployment topology (Section 3.5)
+- Figure 4: Leakage-safe chronological train/validation/test split (Section 3.3)
+- Figure 5: Model registry lifecycle - train, register, select, serve (Section 3.4)
+- Figure 6: Dashboard - prediction hero and model-performance panel (Section 3.5)
+- Figure 7: Dashboard - exploratory data-analysis panels (Section 3.5)
+- Figure 8: 3-D daily news centroids with the KMeans cluster centers (Section 3.5)
+- Figure 9: Single-day headline cloud in the shared PCA space (Section 3.5)
+- Figure 10: Per-source persona votes vs the model's call (Section 3.5)
+- Figure 11: Models panel - registry leaderboard with the active champion (Section 4.2.8)
 
 ## List of Tables
 
@@ -283,7 +283,7 @@ deployment; and a web dashboard.
 
 The project follows a staged, gate-driven methodology:
 
-1. **Ingest** Hebrew headlines (backward scrape to ~2015) into `raw_headlines`.
+1. **Ingest** Hebrew headlines (backward scrape to ~2010) into `raw_headlines`.
 2. **Score** each headline with an LLM into `nlp_vectors` (7 scores +
    validation flag).
 3. **Assemble** leakage-safe daily frames: daily-mean scores, per-source score
@@ -320,29 +320,9 @@ The project follows a staged, gate-driven methodology:
   schema, and reproduction commands; **Appendix B** summarizes the live
   deployment runbook.
 
-```
- ┌──────────────────┐  headlines  ┌────────────────────┐  7 scores  ┌──────────────┐
- │ mivzakim_scraper │ ──────────▶ │  processing_engine │ ─────────▶ │  PostgreSQL  │
- │  Playwright/FF   │             │  LLM scoring       │ /headline  │ raw_headlines│
- │  mivzakim.net    │             │  (fast / 7-agent)  │            │ nlp_vectors  │
- └──────────────────┘             └────────────────────┘            └──────┬───────┘
-        ┌──────────────────────────────────────────────────────────────────┘
-        ▼
- ┌────────────────────────────┐  features  ┌──────────────────────────────┐
- │  sentisense/ (features)    │ ─────────▶ │  Model zoo + Optuna HPO      │
- │ scores·embed·PCA·cluster   │            │ trees/LSTM/GRU/TCN/PatchTST/ │
- │ leakage-safe splits        │            │ TFT/N-HiTS/Chronos/TimesFM   │
- └────────────────────────────┘            └──────────────┬───────────────┘
-                                                          │ weights + OOS metrics
-                                                          ▼
- ┌────────────────────────────┐   serve    ┌──────────────────────────────┐
- │  Live dashboard (FastAPI + │ ◀───────── │  Model registry (Postgres)   │
- │  React SPA): hero, metrics,│  active    │  auto-best + manual override │
- │  EDA, 3-D centroids, sim   │  champion  │  daily predict + settle      │
- └────────────────────────────┘            └──────────────────────────────┘
-```
-*Figure 1: SentiSense end-to-end pipeline - research stages (top) feeding the
-production loop (bottom).*
+![Figure 1](figures/fig1_pipeline.svg)
+
+*Figure 1: SentiSense end-to-end pipeline.*
 
 ---
 
@@ -410,9 +390,9 @@ independently.
 | `ui/` | FastAPI backend + React SPA dashboard | `python -m ui.app` |
 | `evaluation/` | Benchmark LLM scoring against a golden dataset | `python -m evaluation.evaluate` |
 
-> **[Figure 2 placeholder: block diagram of the modules above with the
-> database at the center; arrows labeled with the table each stage reads or
-> writes.]**
+![Figure 2](figures/fig2_system_architecture.svg)
+
+*Figure 2: System architecture.*
 
 **Design principles.**
 
@@ -440,7 +420,7 @@ independently.
 
 **Collection.** The scraper drives a headless Firefox via Playwright over
 `mivzakim.net`, scraping *backward* in time (`scripts/backfill_history.py`)
-from the most recent day toward ~2015, and *forward* daily
+from the most recent day toward ~2010, and *forward* daily
 (`scripts/daily_scrape_to_db.py`, covering today and yesterday). Each headline
 yields a row in `raw_headlines`: date, source outlet, hour, popularity class,
 the Hebrew text, and an ingestion timestamp. Deduplication uses a stored
@@ -568,8 +548,9 @@ against leakage:
   with live closes fetched from the exchange feed, so the serving frame always
   reaches the current trading day.
 
-> **[Figure 4 placeholder: timeline diagram - chronological train/validation/test
-> split and the live serving region with the Target=-1 sentinel day.]**
+![Figure 4](figures/fig4_chronological_split.svg)
+
+*Figure 4: Chronological 70/15/15 split.*
 
 **Embedding-derived block.** This block gives each day a small set of features
 describing *where that day's news sits in a map of news topics learned only
@@ -646,9 +627,9 @@ marks active and predicts with it, and only the cheap pinned XGBoost fallback
 is refit on all labeled history each night. Promoting a different model is a
 database operation (activate a row), not a retraining run.
 
-> **[Figure 5 placeholder: registry lifecycle diagram - HPO → OOS evaluation →
-> register (weights + metrics) → auto-select / manual override → nightly
-> serve.]**
+![Figure 5](figures/fig5_registry_lifecycle.svg)
+
+*Figure 5: Model-registry lifecycle.*
 
 **Champion serving** (`sentisense/serve/champion.py`). The nightly predictor
 loads whatever the registry marks active and dispatches on its artifact
@@ -674,8 +655,9 @@ The two communicate **only through the shared database**: the compute node
 writes, the dashboard reads. This decoupling means the UI stays up even when
 the compute node is retraining, and the pipeline is indifferent to the UI.
 
-> **[Figure 3 placeholder: two-host topology - GPU node (cron pipeline, LLM,
-> registry training) → shared PostgreSQL ← dashboard host (FastAPI/SPA).]**
+![Figure 3](figures/fig3_deployment_topology.svg)
+
+*Figure 3: Two-host deployment topology.*
 
 **Nightly orchestration** (`scripts/daily_live.py`, scheduled via cron after
 the TASE close). The orchestrator chains six stages with a lock file (no
@@ -725,12 +707,26 @@ views:
   OOS ROC-AUC with CI, MCC, accuracy, n) with one-click manual activation;
   hidden from the public navigation.
 
-> **[Figure 6 placeholder: dashboard screenshot - hero + model performance.]**
-> **[Figure 7 placeholder: EDA panels screenshot.]**
-> **[Figure 8 placeholder: all-days 3-D centroids colored by cluster.]**
-> **[Figure 9 placeholder: single-day headline cloud with day centroid and
-> cluster centers.]**
-> **[Figure 10 placeholder: persona votes vs model call for one day.]**
+![Figure 6](figures/fig6_hero_performance.png)
+
+*Figure 6: Prediction hero and model performance.*
+
+![Figure 7](figures/fig7_eda_panels1.png)
+![Figure 7](figures/fig7_eda_panels2.png)
+
+*Figure 7: Exploratory data-analysis panels.*
+
+![Figure 8](figures/fig9_centroids_all_days.png)
+
+*Figure 8: Daily news centroids (3-D).*
+
+![Figure 9](figures/fig10_day_headline_cloud.png)
+
+*Figure 9: Single-day headline cloud.*
+
+![Figure 10](figures/fig11_persona_votes.png)
+
+*Figure 10: Persona votes vs the model's call.*
 
 ### 3.6 Implementation Details
 
@@ -1157,8 +1153,7 @@ models on a shared held-out window.
 | ModelC_TwoTower_PerSource | 0.4514 | 0.5303 | -0.0789 | 0.4766 |
 
 *Table 8: Transformer zoo final leaderboard vs tree/linear reference models.
-Balanced accuracy and MCC track accuracy closely here; PatchTST leads on both
-(balanced accuracy 0.5381, MCC 0.0949).*
+PatchTST leads on all metrics.*
 
 **Window-size ablation (PatchTST):** best at window 15-20 (accuracy around
 0.54-0.55, ROC-AUC up to 0.592); the model collapses to the majority class at
@@ -1348,9 +1343,7 @@ architecture with 3-seed OOS averaging, plus the foundation-model families)
 populated the registry leaderboard that the dashboard's Models panel displays,
 and produced the champion below.
 
-> **[Table/Figure 11 placeholder: export the full registry leaderboard from
-> the Models panel (version, family, ROC-AUC + CI, MCC, accuracy, n) once the
-> full-budget run's results are final.]**
+The full registry leaderboard is shown in the Models panel (Figure 11).
 
 **The active champion - the system's headline result.** Selection by held-out
 accuracy activated a **PatchTST** sequence classifier on the fused frame:
@@ -1399,9 +1392,9 @@ extends the champion's prospective record on the dashboard (eval-seeded
 cumulative accuracy, Section 3.5). This record is the project's strongest
 ongoing evidence, since prospective days cannot be overfit.
 
-> **[Figure 11 placeholder: screenshot of the Models panel with the active
-> champion highlighted; optionally a second screenshot of the cumulative
-> live-accuracy panel after a few weeks of operation.]**
+![Figure 11](figures/fig11_models_leaderboard.svg)
+
+*Figure 11: Models panel with the active champion.*
 
 ### 4.3 Data Analysis and Interpretation
 
