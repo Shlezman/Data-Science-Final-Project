@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 430" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#475569"/></marker>
+  </defs>
+  <style>
+    .box{fill:#f8fafc;stroke:#334155;stroke-width:1.5}
+    .db{fill:#eef2ff;stroke:#4338ca;stroke-width:2}
+    .hot{fill:#dcfce7;stroke:#16a34a;stroke-width:2}
+    .t{font-size:14px;font-weight:bold;fill:#0f172a}
+    .s{font-size:11px;fill:#475569}
+    .e{font-size:11px;fill:#4338ca}
+    .arrow{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#a)}
+  </style>
+  <text x="490" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#0f172a">Model-registry lifecycle — train, register, select, serve</text>
+
+  <rect x="30" y="60" width="200" height="90" class="box" rx="8"/>
+  <text x="130" y="85" text-anchor="middle" class="t">1 · Tune (periodic)</text>
+  <text x="130" y="104" text-anchor="middle" class="s">train_registry.py — full zoo</text>
+  <text x="130" y="119" text-anchor="middle" class="s">Optuna HPO, validation slice only</text>
+  <text x="130" y="134" text-anchor="middle" class="s">trees · LSTM/GRU/TCN/PatchTST · forecasters</text>
+
+  <rect x="290" y="60" width="200" height="90" class="box" rx="8"/>
+  <text x="390" y="85" text-anchor="middle" class="t">2 · Evaluate OOS</text>
+  <text x="390" y="104" text-anchor="middle" class="s">held-out test tail, scored once</text>
+  <text x="390" y="119" text-anchor="middle" class="s">ROC-AUC + bootstrap CI,</text>
+  <text x="390" y="134" text-anchor="middle" class="s">accuracy, MCC, n</text>
+
+  <rect x="550" y="60" width="200" height="90" class="db" rx="8"/>
+  <text x="650" y="85" text-anchor="middle" class="t">3 · Register</text>
+  <text x="650" y="104" text-anchor="middle" class="s">model_registry row: version,</text>
+  <text x="650" y="119" text-anchor="middle" class="s">hyper-params, metrics, artifact,</text>
+  <text x="650" y="134" text-anchor="middle" class="s">feature-column contract</text>
+
+  <rect x="30" y="220" width="330" height="100" class="box" rx="8"/>
+  <text x="195" y="245" text-anchor="middle" class="t">4 · Select</text>
+  <text x="195" y="264" text-anchor="middle" class="s">auto-best on the selection metric (accuracy by default,</text>
+  <text x="195" y="279" text-anchor="middle" class="s">--select-metric oos_roc_auc | oos_accuracy)</text>
+  <text x="195" y="297" text-anchor="middle" class="e">manual dashboard activation is STICKY —</text>
+  <text x="195" y="311" text-anchor="middle" class="e">auto-best never silently overrides it</text>
+
+  <rect x="420" y="220" width="250" height="100" class="hot" rx="8"/>
+  <text x="545" y="245" text-anchor="middle" class="t">5 · Serve nightly</text>
+  <text x="545" y="264" text-anchor="middle" class="s">champion.py loads the active row,</text>
+  <text x="545" y="279" text-anchor="middle" class="s">dispatches on artifact: joblib · torch</text>
+  <text x="545" y="294" text-anchor="middle" class="s">(weights_only=True) · ensemble</text>
+  <text x="545" y="311" text-anchor="middle" class="s">predicts the sentinel day → model_predictions</text>
+
+  <rect x="730" y="220" width="220" height="100" class="box" rx="8"/>
+  <text x="840" y="245" text-anchor="middle" class="t">Fallback (always armed)</text>
+  <text x="840" y="264" text-anchor="middle" class="s">pinned XGBoost config,</text>
+  <text x="840" y="279" text-anchor="middle" class="s">refit nightly on all labeled days;</text>
+  <text x="840" y="294" text-anchor="middle" class="s">any registry failure logs loudly</text>
+  <text x="840" y="309" text-anchor="middle" class="s">and falls back — never a blank night</text>
+
+  <path class="arrow" d="M230 105 L288 105"/>
+  <path class="arrow" d="M490 105 L548 105"/>
+  <path class="arrow" d="M650 150 C650 190 420 195 300 218"/>
+  <text x="620" y="192" class="e">at most one active (partial unique index)</text>
+  <path class="arrow" d="M360 270 L418 270"/>
+  <path class="arrow" d="M670 270 L728 270" stroke-dasharray="5 4"/>
+  <text x="676" y="262" class="e">on failure</text>
+  <path class="arrow" d="M545 320 C545 375 250 380 140 380 C90 380 60 340 55 322"/>
+  <text x="330" y="372" class="e">settle: yesterday's call vs realized close → cumulative live record → informs next selection</text>
+</svg>

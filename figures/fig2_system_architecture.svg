@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#475569"/></marker>
+  </defs>
+  <style>
+    .box{fill:#f8fafc;stroke:#334155;stroke-width:1.5;rx:8}
+    .db{fill:#eef2ff;stroke:#4338ca;stroke-width:2}
+    .t{font-size:15px;font-weight:bold;fill:#0f172a}
+    .s{font-size:11.5px;fill:#475569}
+    .e{font-size:11px;fill:#4338ca}
+    .arrow{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#a)}
+  </style>
+  <text x="490" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#0f172a">SentiSense — modules and data flow (database as the contract)</text>
+
+  <!-- center DB -->
+  <rect x="370" y="215" width="240" height="150" class="db" rx="10"/>
+  <text x="490" y="240" text-anchor="middle" class="t">PostgreSQL 16</text>
+  <text x="490" y="260" text-anchor="middle" class="s">raw_headlines · nlp_vectors</text>
+  <text x="490" y="276" text-anchor="middle" class="s">headline_embeddings · daily_embedding_derived</text>
+  <text x="490" y="292" text-anchor="middle" class="s">embedding_pca_basis · model_registry</text>
+  <text x="490" y="308" text-anchor="middle" class="s">model_predictions · champion_full_eval</text>
+  <text x="490" y="324" text-anchor="middle" class="s">narrative_sim · narrative_sim_graph/report</text>
+  <text x="490" y="352" text-anchor="middle" class="e">single source of truth — all stages decoupled</text>
+
+  <!-- scraper -->
+  <rect x="30" y="60" width="230" height="70" class="box" rx="8"/>
+  <text x="145" y="85" text-anchor="middle" class="t">mivzakim_scraper/</text>
+  <text x="145" y="103" text-anchor="middle" class="s">Playwright + Firefox · mivzakim.net</text>
+  <text x="145" y="118" text-anchor="middle" class="s">backfill (→2015) + daily forward</text>
+  <path class="arrow" d="M260 105 C330 120 360 180 400 213"/>
+  <text x="305" y="150" class="e">writes raw_headlines</text>
+
+  <!-- processing engine -->
+  <rect x="30" y="255" width="230" height="70" class="box" rx="8"/>
+  <text x="145" y="280" text-anchor="middle" class="t">processing_engine/</text>
+  <text x="145" y="298" text-anchor="middle" class="s">LLM scoring: 6 relevance + sentiment</text>
+  <text x="145" y="313" text-anchor="middle" class="s">fast single-prompt · 7-agent LangGraph</text>
+  <path class="arrow" d="M260 290 L368 290"/>
+  <text x="270" y="282" class="e">reads raw · writes nlp_vectors</text>
+
+  <!-- evaluation -->
+  <rect x="30" y="430" width="230" height="70" class="box" rx="8"/>
+  <text x="145" y="455" text-anchor="middle" class="t">evaluation/</text>
+  <text x="145" y="473" text-anchor="middle" class="s">golden-dataset quality gate</text>
+  <text x="145" y="488" text-anchor="middle" class="s">MAE · within-1 · Pearson r</text>
+  <path class="arrow" d="M145 430 L145 327" stroke-dasharray="5 4"/>
+  <text x="152" y="385" class="e">gates the scoring model</text>
+
+  <!-- sentisense package -->
+  <rect x="710" y="60" width="240" height="100" class="box" rx="8"/>
+  <text x="830" y="85" text-anchor="middle" class="t">sentisense/</text>
+  <text x="830" y="103" text-anchor="middle" class="s">leak-safe features · e5 embeddings</text>
+  <text x="830" y="118" text-anchor="middle" class="s">PCA/cluster block · narrative clustering</text>
+  <text x="830" y="133" text-anchor="middle" class="s">model zoo + Optuna HPO</text>
+  <text x="830" y="148" text-anchor="middle" class="s">serve/: registry + champion</text>
+  <path class="arrow" d="M612 235 C670 200 690 170 708 140"/>
+  <text x="628" y="185" class="e">reads scores/embeddings</text>
+  <path class="arrow" d="M760 162 C700 210 660 225 614 248"/>
+  <text x="640" y="242" class="e">writes registry + predictions</text>
+
+  <!-- scripts -->
+  <rect x="710" y="255" width="240" height="80" class="box" rx="8"/>
+  <text x="830" y="280" text-anchor="middle" class="t">scripts/</text>
+  <text x="830" y="298" text-anchor="middle" class="s">daily_live · settle_predictions</text>
+  <text x="830" y="313" text-anchor="middle" class="s">train_registry · pipeline_compare</text>
+  <text x="830" y="328" text-anchor="middle" class="s">backfill · process/retry/standardize</text>
+  <path class="arrow" d="M708 290 L612 290"/>
+  <text x="628" y="282" class="e">orchestrates via DB</text>
+
+  <!-- UI -->
+  <rect x="710" y="430" width="240" height="80" class="box" rx="8"/>
+  <text x="830" y="455" text-anchor="middle" class="t">ui/</text>
+  <text x="830" y="473" text-anchor="middle" class="s">FastAPI read-only JSON API</text>
+  <text x="830" y="488" text-anchor="middle" class="s">React SPA dashboard (built)</text>
+  <path class="arrow" d="M708 460 C650 430 630 400 606 368"/>
+  <text x="600" y="420" class="e">reads everything · writes nothing heavy</text>
+</svg>
