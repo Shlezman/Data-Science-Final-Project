@@ -29,7 +29,7 @@ const TABS = [
 export default function App() {
   const [tab, setTab] = useState('dashboard');
   const [champion, setChampion] = useState(null);
-  const [auth, setAuth] = useState(null);   // null = probing; {authed, gated}
+  const [auth, setAuth] = useState(null);   // null = probing; {authed, gated, admin}
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark');
   const [centroidsOpen, setCentroidsOpen] = useState(false);
 
@@ -47,7 +47,7 @@ export default function App() {
   useEffect(() => {
     getJson('/api/auth')
       .then((res) => setAuth(res))
-      .catch(() => setAuth({ authed: true, gated: false }));   // gate endpoint down → don't lock out
+      .catch(() => setAuth({ authed: true, gated: false, admin: true }));   // gate endpoint down → don't lock out (dev)
   }, []);
 
   useEffect(() => {
@@ -59,19 +59,24 @@ export default function App() {
   }, [auth]);
 
   useEffect(() => {
+    if (!auth?.admin) return undefined;          // operator entrance is admin-only
     const onHash = () => {
       if (window.location.hash === '#models') setTab('models');
     };
     onHash();
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  }, [auth]);
 
   if (auth === null) {
     return null;                       // brief blank while probing the gate
   }
   if (auth.gated && !auth.authed) {
-    return <Login onOk={() => setAuth({ authed: true, gated: true })} />;
+    return (
+      <Login
+        onOk={(res) => setAuth({ authed: true, gated: true, admin: !!res?.admin })}
+      />
+    );
   }
 
   return (
@@ -106,19 +111,21 @@ export default function App() {
           </div>
 
           <div className="ss-header-actions">
-            {/* Invisible operator entrance (opens Models) — placed FIRST so it sits
-                where the theme toggle used to be; the visible toggle moved right. */}
-            <span className="ss-champion ss-champion--ghost" onClick={() => setTab('models')}
-                  role="button" tabIndex={-1} aria-hidden="true"
-                  style={{ cursor: 'default', userSelect: 'none' }}>
-              {champion ? (
-                <>
-                  <span className="ss-champion__dot" aria-hidden="true" />
-                  <span className="ss-champion__label">Serving</span>
-                  <span className="ss-champion__value">{champion}</span>
-                </>
-              ) : null}
-            </span>
+            {/* Invisible operator entrance (opens Models) — admin-only, placed FIRST
+                so it sits where the theme toggle used to be. */}
+            {auth.admin ? (
+              <span className="ss-champion ss-champion--ghost" onClick={() => setTab('models')}
+                    role="button" tabIndex={-1} aria-hidden="true"
+                    style={{ cursor: 'default', userSelect: 'none' }}>
+                {champion ? (
+                  <>
+                    <span className="ss-champion__dot" aria-hidden="true" />
+                    <span className="ss-champion__label">Serving</span>
+                    <span className="ss-champion__value">{champion}</span>
+                  </>
+                ) : null}
+              </span>
+            ) : null}
 
             {/* Was a fixed pill floating over the dashboard's bottom-right corner,
                 where it overlapped content and only existed on that one tab. */}
@@ -174,7 +181,7 @@ export default function App() {
         {tab === 'dashboard' ? <Dashboard /> : null}
         {tab === 'archive' ? <Archive /> : null}
         {tab === 'simulator' ? <Simulator /> : null}
-        {tab === 'models' ? <Models /> : null}
+        {tab === 'models' && auth.admin ? <Models /> : null}
       </main>
 
       <Centroids3D open={centroidsOpen} onClose={() => setCentroidsOpen(false)} />

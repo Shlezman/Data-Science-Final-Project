@@ -38,26 +38,56 @@ _SIM_HEALTH_TTL = 30.0
 _sim_health: dict = {"t": -1e9, "val": None}
 
 # --- site login gate ---------------------------------------------------------
-# One shared password from the environment (never committed). When unset, the
-# gate is OFF (local dev). The session cookie is an HMAC of a fixed message
-# under a key derived from the password, so it is stateless and survives
-# restarts; rotating the password invalidates every session.
+# Two roles, two shared passwords from the environment (never committed). When
+# the viewer password is unset, the gate is OFF (local dev). Session cookies are
+# an HMAC of a role-specific message under a key derived from that role's
+# password, so they are stateless and survive restarts; rotating a password
+# invalidates that role's sessions. The admin role additionally unlocks the
+# hidden Models panel and every mutating endpoint (model activation,
+# performance-version editing).
 _UI_PASSWORD = os.environ.get("SENTISENSE_UI_PASSWORD", "")
+_ADMIN_PASSWORD = os.environ.get("SENTISENSE_ADMIN_PASSWORD", "")
 _AUTH_COOKIE = "ss_auth"
 
 
-def _auth_token() -> str:
-    """The expected session-cookie value for the current password."""
-    key = hashlib.sha256(("sentisense-ui:" + _UI_PASSWORD).encode()).digest()
-    return hmac.new(key, b"session-v1", hashlib.sha256).hexdigest()
+def _auth_token(admin: bool = False) -> str:
+    """The expected session-cookie value for the given role.
+
+    Args:
+        admin: Derive the admin-role token instead of the viewer token.
+
+    Returns:
+        Hex HMAC digest expected in the session cookie for that role.
+    """
+    pw = _ADMIN_PASSWORD if admin else _UI_PASSWORD
+    key = hashlib.sha256(("sentisense-ui:" + pw).encode()).digest()
+    msg = b"session-v1-admin" if admin else b"session-v1"
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def _is_admin(cookies) -> bool:
+    """True when the request carries a valid admin session cookie.
+
+    With the whole gate off (no viewer password — local dev) everyone is
+    admin so the panel stays usable; with a gate but no admin password
+    configured, nobody is (mutations locked until the env is set).
+    """
+    if not _UI_PASSWORD:
+        return True
+    if not _ADMIN_PASSWORD:
+        return False
+    tok = cookies.get(_AUTH_COOKIE, "")
+    return bool(tok) and hmac.compare_digest(tok, _auth_token(admin=True))
 
 
 def _is_authed(cookies) -> bool:
-    """True when the gate is off or the request carries a valid session cookie."""
+    """True when the gate is off or the request carries a valid session cookie (either role)."""
     if not _UI_PASSWORD:
         return True
     tok = cookies.get(_AUTH_COOKIE, "")
-    return bool(tok) and hmac.compare_digest(tok, _auth_token())
+    if not tok:
+        return False
+    return hmac.compare_digest(tok, _auth_token()) or _is_admin(cookies)
 
 
 app = FastAPI(title="SentiSense live", version="1.0")
@@ -82,23 +112,35 @@ async def _auth_middleware(request: Request, call_next):
 @app.get("/api/auth")
 def auth_state(request: Request) -> dict:
     """Whether this browser session is authenticated (drives the login screen)."""
-    return {"authed": _is_authed(request.cookies), "gated": bool(_UI_PASSWORD)}
+    return {"authed": _is_authed(request.cookies), "gated": bool(_UI_PASSWORD),
+            "admin": _is_admin(request.cookies)}
 
 
 @app.post("/api/login")
 async def login(request: Request) -> JSONResponse:
-    """Validate the shared password and set the session cookie (30 days)."""
+    """Validate a shared password (admin or viewer) and set the session cookie (30 days)."""
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = {}
     supplied = str(body.get("password", ""))
-    if not _UI_PASSWORD or not secrets.compare_digest(supplied, _UI_PASSWORD):
+    if _ADMIN_PASSWORD and secrets.compare_digest(supplied, _ADMIN_PASSWORD):
+        token, admin = _auth_token(admin=True), True
+    elif _UI_PASSWORD and secrets.compare_digest(supplied, _UI_PASSWORD):
+        token, admin = _auth_token(), False
+    else:
         return JSONResponse({"error": "wrong password"}, status_code=401)
-    resp = JSONResponse({"ok": True})
-    resp.set_cookie(_AUTH_COOKIE, _auth_token(), max_age=30 * 24 * 3600,
+    resp = JSONResponse({"ok": True, "admin": admin})
+    resp.set_cookie(_AUTH_COOKIE, token, max_age=30 * 24 * 3600,
                     httponly=True, samesite="lax")
     return resp
+
+
+def _admin_denied(request: Request) -> JSONResponse | None:
+    """403 response when the request lacks the admin role, else None."""
+    if not _is_admin(request.cookies):
+        return JSONResponse({"error": "admin required"}, status_code=403)
+    return None
 
 _CACHE: dict = {}
 _CACHE_TTL = 60.0
@@ -231,13 +273,15 @@ def _build_performance() -> dict:
         "core_tag": "Overall · evaluation + live",
         "core": [
             {"label": "Accuracy", "value": (round(acc, 4) if acc is not None else None),
-             "kind": "accuracy", "baseline": 0.5, "domain": [0, 1], "scope": "Overall",
+             "kind": "accuracy", "baseline": 0.5303, "domain": [0, 1], "scope": "Overall",
              "comparison": (f"Eval {pctf(ev.get('accuracy'))}" if ev.get("accuracy") is not None else None),
-             "info": "The share of predictions that matched the actual market direction."},
+             "info": "The share of predictions that matched the actual market direction. "
+                     "Baseline 53.03% — the long-run share of TA-125 up days."},
             {"label": "ROC-AUC", "value": ev.get("roc_auc"),
-             "kind": "auc", "baseline": 0.5, "domain": [0, 1], "scope": "Evaluation",
+             "kind": "auc", "baseline": 0.521, "domain": [0, 1], "scope": "Evaluation",
              "comparison": "Higher is better",
-             "info": "How well the model separates up days from down days across decision thresholds."},
+             "info": "How well the model separates up days from down days across decision thresholds. "
+                     "Baseline 0.521 — the naive-predictor reference on this data."},
             {"label": "MCC", "value": (round(mcc, 4) if isinstance(mcc, (int, float)) else None),
              "kind": "mcc", "baseline": 0, "domain": [-1, 1],
              "scope": ("Live" if live_n > 0 else "Evaluation"),
@@ -345,7 +389,10 @@ def performance_version(vid: str) -> JSONResponse:
 
 @app.post("/api/performance/versions")
 async def performance_version_save(request: Request) -> JSONResponse:
-    """Save a new version. Body: {doc?: object, note?: str} — doc defaults to computed."""
+    """Save a new version. Admin-only. Body: {doc?: object, note?: str} — doc defaults to computed."""
+    denied = _admin_denied(request)
+    if denied:
+        return denied
     coll = _perf_coll()
     if coll is None:
         return JSONResponse({"error": "mongo unavailable"}, status_code=503)
@@ -365,8 +412,11 @@ async def performance_version_save(request: Request) -> JSONResponse:
 
 
 @app.post("/api/performance/versions/{vid}/activate")
-def performance_version_activate(vid: str) -> JSONResponse:
-    """Make one version the served document (deactivates the rest)."""
+def performance_version_activate(vid: str, request: Request) -> JSONResponse:
+    """Make one version the served document (deactivates the rest). Admin-only."""
+    denied = _admin_denied(request)
+    if denied:
+        return denied
     coll = _perf_coll()
     if coll is None:
         return JSONResponse({"error": "mongo unavailable"}, status_code=503)
@@ -383,8 +433,11 @@ def performance_version_activate(vid: str) -> JSONResponse:
 
 
 @app.post("/api/performance/versions/deactivate")
-def performance_version_deactivate() -> JSONResponse:
-    """Deactivate all versions — the panel falls back to file/computed values."""
+def performance_version_deactivate(request: Request) -> JSONResponse:
+    """Deactivate all versions — the panel falls back to file/computed values. Admin-only."""
+    denied = _admin_denied(request)
+    if denied:
+        return denied
     coll = _perf_coll()
     if coll is None:
         return JSONResponse({"error": "mongo unavailable"}, status_code=503)
@@ -498,8 +551,11 @@ def models() -> dict:
 
 
 @app.post("/api/models/{version}/activate")
-def activate_model(version: str) -> JSONResponse:
-    """Manually set the active (served) model. Manual picks are sticky vs auto-selection."""
+def activate_model(version: str, request: Request) -> JSONResponse:
+    """Manually set the active (served) model. Admin-only; manual picks are sticky vs auto."""
+    denied = _admin_denied(request)
+    if denied:
+        return denied
     from sentisense.serve import registry
     if not registry.set_active(version=version, by="manual"):
         return JSONResponse({"error": f"model '{version}' not found"}, status_code=404)

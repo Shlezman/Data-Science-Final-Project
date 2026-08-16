@@ -20,8 +20,8 @@ export default function Login({ onOk }) {
     setBusy(true);
     setError(null);
     try {
-      await postJson('/api/login', { password });
-      onOk();
+      const res = await postJson('/api/login', { password });
+      onOk(res);
     } catch (err) {
       setError(err.status === 401 ? 'Wrong password.' : err.message);
     } finally {

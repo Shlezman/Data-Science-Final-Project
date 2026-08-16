@@ -28,7 +28,7 @@ model (LLM) into a structured sentiment signal, help predict whether the
 Tel-Aviv 125 (TA-125) stock index will close higher the next trading day?**
 
 The system spans five stages. (1) A **scraper** collects Hebrew breaking-news
-headlines from `mivzakim.net` going back to ~2015. (2) A **processing engine**
+headlines from `mivzakim.net` going back to ~2010. (2) A **processing engine**
 sends every headline through an LLM, which scores it on six relevance
 categories (politics, economy, security, health, science, technology) and one
 global sentiment value (-10...+10), producing a corpus of roughly **3 million
@@ -121,16 +121,16 @@ data.
 ## List of Figures
 
 - Figure 1: SentiSense end-to-end pipeline (Section 1.6)
-- Figure 2: System architecture - modules and data flow (Section 3.1) *(placeholder)*
-- Figure 3: Two-host deployment topology (Section 3.5) *(placeholder)*
-- Figure 4: Leakage-safe chronological train/validation/test split (Section 3.3) *(placeholder)*
-- Figure 5: Model registry lifecycle - train, register, select, serve (Section 3.4) *(placeholder)*
-- Figure 6: Dashboard - prediction hero and model-performance panel (Section 3.5) *(screenshot placeholder)*
-- Figure 7: Dashboard - exploratory data-analysis panels (Section 3.5) *(screenshot placeholder)*
-- Figure 8: 3-D daily news centroids, colored by KMeans cluster (Section 3.5) *(screenshot placeholder)*
-- Figure 9: Single-day headline cloud in the shared PCA space (Section 3.5) *(screenshot placeholder)*
-- Figure 10: Per-source persona votes vs the model's call (Section 3.5) *(screenshot placeholder)*
-- Figure 11: Models panel - registry leaderboard with the active champion (Section 4.2.8) *(screenshot placeholder)*
+- Figure 2: System architecture - modules and data flow (Section 3.1)
+- Figure 3: Two-host deployment topology (Section 3.5)
+- Figure 4: Leakage-safe chronological train/validation/test split (Section 3.3)
+- Figure 5: Model registry lifecycle - train, register, select, serve (Section 3.4)
+- Figure 6: Dashboard - prediction hero and model-performance panel (Section 3.5)
+- Figure 7: Dashboard - exploratory data-analysis panels (Section 3.5)
+- Figure 8: 3-D daily news centroids with the KMeans cluster centers (Section 3.5)
+- Figure 9: Single-day headline cloud in the shared PCA space (Section 3.5)
+- Figure 10: Per-source persona votes vs the model's call (Section 3.5)
+- Figure 11: Models panel - registry leaderboard with the active champion (Section 4.2.8)
 
 ## List of Tables
 
@@ -283,7 +283,7 @@ deployment; and a web dashboard.
 
 The project follows a staged, gate-driven methodology:
 
-1. **Ingest** Hebrew headlines (backward scrape to ~2015) into `raw_headlines`.
+1. **Ingest** Hebrew headlines (backward scrape to ~2010) into `raw_headlines`.
 2. **Score** each headline with an LLM into `nlp_vectors` (7 scores +
    validation flag).
 3. **Assemble** leakage-safe daily frames: daily-mean scores, per-source score
@@ -410,9 +410,11 @@ independently.
 | `ui/` | FastAPI backend + React SPA dashboard | `python -m ui.app` |
 | `evaluation/` | Benchmark LLM scoring against a golden dataset | `python -m evaluation.evaluate` |
 
-> **[Figure 2 placeholder: block diagram of the modules above with the
-> database at the center; arrows labeled with the table each stage reads or
-> writes.]**
+![Figure 2](figures/fig2_system_architecture.svg)
+
+*Figure 2: System architecture — the modules of Section 3.1 with the
+PostgreSQL database at the center; arrows labeled with what each stage reads
+or writes.*
 
 **Design principles.**
 
@@ -440,7 +442,7 @@ independently.
 
 **Collection.** The scraper drives a headless Firefox via Playwright over
 `mivzakim.net`, scraping *backward* in time (`scripts/backfill_history.py`)
-from the most recent day toward ~2015, and *forward* daily
+from the most recent day toward ~2010, and *forward* daily
 (`scripts/daily_scrape_to_db.py`, covering today and yesterday). Each headline
 yields a row in `raw_headlines`: date, source outlet, hour, popularity class,
 the Hebrew text, and an ingestion timestamp. Deduplication uses a stored
@@ -568,8 +570,11 @@ against leakage:
   with live closes fetched from the exchange feed, so the serving frame always
   reaches the current trading day.
 
-> **[Figure 4 placeholder: timeline diagram - chronological train/validation/test
-> split and the live serving region with the Target=-1 sentinel day.]**
+![Figure 4](figures/fig4_chronological_split.svg)
+
+*Figure 4: Leakage-safe chronological 70/15/15 split — all transforms fit on
+the train slice only, the test tail scored exactly once, and the live serving
+region carrying the Target = -1 sentinel day.*
 
 **Embedding-derived block.** This block gives each day a small set of features
 describing *where that day's news sits in a map of news topics learned only
@@ -646,9 +651,11 @@ marks active and predicts with it, and only the cheap pinned XGBoost fallback
 is refit on all labeled history each night. Promoting a different model is a
 database operation (activate a row), not a retraining run.
 
-> **[Figure 5 placeholder: registry lifecycle diagram - HPO → OOS evaluation →
-> register (weights + metrics) → auto-select / manual override → nightly
-> serve.]**
+![Figure 5](figures/fig5_registry_lifecycle.svg)
+
+*Figure 5: Model-registry lifecycle — periodic HPO, one-shot OOS evaluation,
+registration (weights + metrics), auto-selection with the sticky manual
+override, nightly serving, and the always-armed pinned fallback.*
 
 **Champion serving** (`sentisense/serve/champion.py`). The nightly predictor
 loads whatever the registry marks active and dispatches on its artifact
@@ -674,8 +681,11 @@ The two communicate **only through the shared database**: the compute node
 writes, the dashboard reads. This decoupling means the UI stays up even when
 the compute node is retraining, and the pipeline is indifferent to the UI.
 
-> **[Figure 3 placeholder: two-host topology - GPU node (cron pipeline, LLM,
-> registry training) → shared PostgreSQL ← dashboard host (FastAPI/SPA).]**
+![Figure 3](figures/fig3_deployment_topology.svg)
+
+*Figure 3: Two-host deployment topology — the GPU node (nightly cron pipeline,
+local LLM, periodic registry training) writes to the shared PostgreSQL; the
+dashboard host (FastAPI + SPA behind an nginx TLS proxy) only reads it.*
 
 **Nightly orchestration** (`scripts/daily_live.py`, scheduled via cron after
 the TASE close). The orchestrator chains six stages with a lock file (no
@@ -725,12 +735,33 @@ views:
   OOS ROC-AUC with CI, MCC, accuracy, n) with one-click manual activation;
   hidden from the public navigation.
 
-> **[Figure 6 placeholder: dashboard screenshot - hero + model performance.]**
-> **[Figure 7 placeholder: EDA panels screenshot.]**
-> **[Figure 8 placeholder: all-days 3-D centroids colored by cluster.]**
-> **[Figure 9 placeholder: single-day headline cloud with day centroid and
-> cluster centers.]**
-> **[Figure 10 placeholder: persona votes vs model call for one day.]**
+![Figure 6](figures/fig6_hero_performance.png)
+
+*Figure 6: Dashboard — the prediction hero and the active champion's
+model-performance panel (eval-seeded cumulative accuracy with the eval/live
+split shown explicitly).*
+
+![Figure 7](figures/fig7_eda_panels.png)
+
+*Figure 7: Exploratory data-analysis panels — headline volume, daily mean
+sentiment, sentiment distribution, highest-category relevance, the category
+correlation heatmap, and validation quality.*
+
+![Figure 8](figures/fig8_centroids_all_days.png)
+
+*Figure 8: All trading days' news centroids in the shared 16-d PCA space,
+with the KMeans cluster centers drawn as labeled markers.*
+
+![Figure 9](figures/fig9_day_headline_cloud.png)
+
+*Figure 9: A single day's headline cloud — each headline projected through
+the same persisted basis the models consume, alongside the day centroid and
+cluster centers.*
+
+![Figure 10](figures/fig10_persona_votes.png)
+
+*Figure 10: Per-source persona votes for one day, against the model's call
+and the realized outcome.*
 
 ### 3.6 Implementation Details
 
@@ -1348,9 +1379,44 @@ architecture with 3-seed OOS averaging, plus the foundation-model families)
 populated the registry leaderboard that the dashboard's Models panel displays,
 and produced the champion below.
 
-> **[Table/Figure 11 placeholder: export the full registry leaderboard from
-> the Models panel (version, family, ROC-AUC + CI, MCC, accuracy, n) once the
-> full-budget run's results are final.]**
+The full registry leaderboard, exported from the `model_registry` table
+(sorted by held-out accuracy; the active row is the served champion):
+
+| Version | Family | ROC-AUC [95% CI] | MCC | Accuracy | n | Active |
+|---|---|---|---|---|---|---|
+| patchtst-20260702-1351 | patchtst | 0.4795 [0.416, 0.539] | 0.0873 | **0.5780** | 327 | **yes** |
+| xgboost-20260702-1226 | xgboost | 0.5430 [0.482, 0.607] | 0.0971 | 0.5733 | 389 | |
+| xgboost-20260702-1351 | xgboost | 0.5430 [0.482, 0.607] | 0.0971 | 0.5733 | 389 | |
+| patchtst-20260702-1154 | patchtst | 0.5482 [0.497, 0.603] | 0.0852 | 0.5729 | 377 | |
+| tcn-20260702-1351 | tcn | 0.5731 [0.518, 0.628] | 0.0845 | 0.5681 | 382 | |
+| lstm-20260702-1226 | lstm | 0.5276 [0.470, 0.584] | 0.0898 | 0.5654 | 382 | |
+| catboost-20260702-1351 | catboost | 0.5682 [0.510, 0.624] | 0.0769 | 0.5630 | 389 | |
+| catboost-20260702-1226 | catboost | 0.5682 [0.510, 0.624] | 0.0769 | 0.5630 | 389 | |
+| lgbm-20260702-1154 | lgbm | 0.5153 [0.458, 0.576] | 0.0601 | 0.5553 | 389 | |
+| lgbm-20260702-1139 | lgbm | 0.5153 [0.458, 0.576] | 0.0601 | 0.5553 | 389 | |
+| Chronos-zeroshot-20260702-1351 | chronos | 0.4266 [0.372, 0.485] | -0.1230 | 0.5538 | 381 | |
+| lgbm-20260702-1226 | lgbm | 0.5269 [0.468, 0.586] | 0.0544 | 0.5527 | 389 | |
+| xgboost-20260702-1139 | xgboost | 0.5476 [0.486, 0.604] | 0.0618 | 0.5527 | 389 | |
+| xgboost-20260702-1154 | xgboost | 0.5476 [0.486, 0.604] | 0.0618 | 0.5527 | 389 | |
+| lgbm-20260702-1351 | lgbm | 0.5269 [0.468, 0.586] | 0.0544 | 0.5527 | 389 | |
+| gru-20260702-1154 | gru | 0.5205 [0.464, 0.579] | 0.0421 | 0.5524 | 382 | |
+| lstm-20260702-1351 | lstm | 0.5349 [0.465, 0.589] | -0.0037 | 0.5450 | 367 | |
+| catboost-20260702-1139 | catboost | 0.5476 [0.483, 0.603] | 0.0298 | 0.5424 | 389 | |
+| catboost-20260702-1154 | catboost | 0.5476 [0.483, 0.603] | 0.0298 | 0.5424 | 389 | |
+| Chronos-tuned-20260702-1351 | chronos | 0.4492 [0.392, 0.506] | -0.0666 | 0.5381 | 381 | |
+| TFT-20260702-1351 | pf | 0.5284 [0.472, 0.583] | 0.0464 | 0.5314 | 382 | |
+| ensemble-top3-20260702-1351 | ensemble | 0.5513 [0.493, 0.613] | 0.0259 | 0.5116 | 389 | |
+| tcn-20260702-1154 | tcn | 0.4345 [0.370, 0.489] | -0.1093 | 0.5040 | 377 | |
+| NBEATS-20260702-1351 | pf | 0.5212 [0.458, 0.578] | -0.0008 | 0.5000 | 382 | |
+| ensemble-top3-20260702-1154 | ensemble | 0.5362 [0.475, 0.598] | -0.0017 | 0.4987 | 389 | |
+| NHiTS-20260702-1351 | pf | 0.4833 [0.427, 0.542] | 0.0041 | 0.4921 | 382 | |
+| lstm-20260702-1154 | lstm | 0.5110 [0.451, 0.572] | 0.0000 | 0.4450 | 382 | |
+| gru-20260702-1226 | gru | 0.4531 [0.399, 0.509] | 0.0000 | 0.4450 | 382 | |
+| gru-20260702-1351 | gru | 0.4531 [0.399, 0.509] | 0.0000 | 0.4450 | 382 | |
+
+*Table: the production registry leaderboard as registered by the full-budget
+run (29 candidates across trees, sequence models, forecasters, foundation
+models, and the soft-vote ensembles).*
 
 **The active champion - the system's headline result.** Selection by held-out
 accuracy activated a **PatchTST** sequence classifier on the fused frame:
@@ -1399,9 +1465,10 @@ extends the champion's prospective record on the dashboard (eval-seeded
 cumulative accuracy, Section 3.5). This record is the project's strongest
 ongoing evidence, since prospective days cannot be overfit.
 
-> **[Figure 11 placeholder: screenshot of the Models panel with the active
-> champion highlighted; optionally a second screenshot of the cumulative
-> live-accuracy panel after a few weeks of operation.]**
+![Figure 11](figures/fig11_models_leaderboard.png)
+
+*Figure 11: The Models operator panel — the registry leaderboard with the
+active PatchTST champion highlighted.*
 
 ### 4.3 Data Analysis and Interpretation
 
