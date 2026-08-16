@@ -1153,7 +1153,7 @@ models on a shared held-out window.
 
 *Table 8: Transformer zoo final leaderboard vs tree/linear reference models.
 Balanced accuracy and MCC track accuracy closely here; PatchTST leads on both
-(balanced accuracy 0.5381, MCC 0.0949).*
+(balanced accuracy 0.5381).*
 
 **Window-size ablation (PatchTST):** best at window 15-20 (accuracy around
 0.54-0.55, ROC-AUC up to 0.592); the model collapses to the majority class at
