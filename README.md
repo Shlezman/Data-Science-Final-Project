@@ -16,15 +16,16 @@ direction of the TA-125** (Tel Aviv 125 index) from those signals plus market da
         ┌──────────────────────────────────────────────────────────────────────── ┘
         ▼
  ┌────────────────────────────┐     features      ┌─────────────────────────────┐
- │  sentisense/ (Phase 2&3)   │ ───────────────▶  │  Forecasting                │
- │  features · embed · cluster│                   │  trees / LSTM / GRU +        │
- │  baselines · LSTM HPO      │                   │  Optuna HPO → next-day TA-125│
- └────────────────────────────┘                   └─────────────────────────────┘
+ │  sentisense/ (Phase 2&3)   │ ───────────────▶  │  Forecasting + serving      │
+ │  features · embed · cluster│                   │  model zoo + Optuna HPO →    │
+ │  models · hpo · serve · sim│                   │  registry champion → nightly │
+ └────────────────────────────┘                   │  prediction + live dashboard │
+                                                  └─────────────────────────────┘
 ```
 
-Five modules (see [`.claude/ROADMAP.md`](.claude/ROADMAP.md) for the full agenda):
+Five modules:
 **1. Ingestion** ✅ · **2. NLP scoring** ✅ · **3. Feature engineering** ✅ ·
-**4. Forecasting (trees + LSTM/GRU + HPO)** ✅ · **5. Orchestration / dashboard / DevOps** 🔜
+**4. Forecasting (model zoo + HPO + registry)** ✅ · **5. Orchestration / dashboard / DevOps** ✅
 
 ## Modules
 
@@ -33,18 +34,25 @@ Five modules (see [`.claude/ROADMAP.md`](.claude/ROADMAP.md) for the full agenda
 | [`mivzakim_scraper/`](mivzakim_scraper/) | Scrape Hebrew headlines by date or keyword | `python main.py` |
 | [`processing_engine/`](processing_engine/) | Score headlines (6 relevance + sentiment) via LLM | `from processing_engine import process_single_observation` |
 | [`scripts/`](scripts/) | Data pipeline: schema, backfill, scoring, retry, standardise | `python scripts/<name>.py` |
-| [`sentisense/`](sentisense/) | Phase 2&3 forecasting: features, embeddings, clustering, baselines, LSTM HPO | `python -m sentisense.pipeline` |
+| [`sentisense/`](sentisense/) | Phase 2&3 forecasting: features, embeddings, clustering, model zoo, HPO, registry serving, narrative sims | `python -m sentisense.pipeline` |
+| [`ui/`](ui/) | Live dashboard — FastAPI backend + React SPA (login-gated, served behind nginx TLS) | `uvicorn ui.app:app` |
 | [`evaluation/`](evaluation/) | Benchmark Ollama models against a golden dataset | `python -m evaluation.evaluate` |
+| [`ops/`](ops/) | Deployment artifacts: crontab, pm2 config, nginx reverse-proxy config | — |
+| [`external/`](external/) | MiroFish narrative-simulation submodule (AGPL — isolated as a separate local-only service) | — |
 
-## Notebooks (repo root)
+## Notebooks ([`notebooks/`](notebooks/))
 
 | Notebook | Purpose |
 |----------|---------|
-| [`eda.ipynb`](eda.ipynb) | Exploratory analysis — volume, validation health, score distributions, correlations |
-| [`poc.ipynb`](poc.ipynb) | Tree-model PoC (XGB/LGBM/CatBoost) for next-day direction + statistical tests |
-| [`lstm_forecaster.ipynb`](lstm_forecaster.ipynb) | LSTM next-day predictor on the per-source feature shape |
-| [`tuning.ipynb`](tuning.ipynb) | Long-running Optuna + isotonic-calibration tuning across model classes |
-| [`transformer_forecaster.ipynb`](transformer_forecaster.ipynb) | Transformer model zoo (vanilla / PatchTST / two-tower / Informer) |
+| [`eda.ipynb`](notebooks/eda.ipynb) | Exploratory analysis — volume, validation health, score distributions, correlations |
+| [`poc.ipynb`](notebooks/poc.ipynb) | Tree-model PoC (XGB/LGBM/CatBoost) for next-day direction + statistical tests |
+| [`lstm_forecaster.ipynb`](notebooks/lstm_forecaster.ipynb) | LSTM next-day predictor on the per-source feature shape |
+| [`tuning.ipynb`](notebooks/tuning.ipynb) | Long-running Optuna + isotonic-calibration tuning across model classes |
+| [`transformer_forecaster.ipynb`](notebooks/transformer_forecaster.ipynb) | Transformer model zoo (vanilla / PatchTST / two-tower / Informer) |
+| [`sentisense_analysis.ipynb`](notebooks/sentisense_analysis.ipynb) | Package-driven analysis over the full pipeline outputs |
+| [`compare_lstm_features_with_poc.ipynb`](notebooks/compare_lstm_features_with_poc.ipynb) | Feature-shape ablation: per-source LSTM features vs the PoC daily-mean shape |
+| [`timesfm_explainability.ipynb`](notebooks/timesfm_explainability.ipynb) | TimesFM foundation-forecaster explainability |
+| [`miro_explainability.ipynb`](notebooks/miro_explainability.ipynb) | Narrative-simulation (MiroFish) feature explainability |
 
 ## Quick start
 
@@ -87,7 +95,7 @@ leakage-safe end to end. Full operator runbook + gate sequence:
 | `validation_passed` | bool | — | Whether the LLM output passed validation |
 
 (The scoring pipeline emits these as `relevance_category_1..6`; the DB stores the named
-columns above. See [`DATA_HANDOFF.md`](DATA_HANDOFF.md) for the full data dictionary.)
+columns above. See [`docs/DATA_HANDOFF.md`](docs/DATA_HANDOFF.md) for the full data dictionary.)
 
 ## Repository structure
 
@@ -95,35 +103,39 @@ columns above. See [`DATA_HANDOFF.md`](DATA_HANDOFF.md) for the full data dictio
 ├── mivzakim_scraper/          # Playwright scraper for mivzakim.net (Hebrew news)
 ├── processing_engine/         # LLM scoring pipeline (fast single-prompt + 7-agent LangGraph)
 ├── sentisense/                # Phase 2&3 forecasting package (run via `python -m sentisense.X`)
-│   ├── constants.py           #   cutoff, model name, score contract
+│   ├── constants.py           #   cutoff, model name, score contract, data paths
 │   ├── config.py              #   modeling/HPO knobs (env-overridable)
-│   ├── db/                    #   SQLAlchemy engine (env-only DSN) + migrations
+│   ├── db/                    #   SQLAlchemy engine (env-only DSN) + migrations 001-008
 │   ├── ingest/                #   backfill · score · coverage report (Gate A)
-│   ├── features/              #   leak-safe daily dataset assembly
+│   ├── features/              #   leak-safe daily dataset assembly (+ overnight block)
 │   ├── embed/                 #   multilingual-e5 headline embeddings + cache
 │   ├── cluster/               #   causal expanding-window narrative clustering
-│   ├── models/                #   sequence datasets, train harness, LSTM/GRU, baselines
-│   ├── hpo/                   #   resumable Optuna LSTM HPO + sacred-holdout eval
+│   ├── models/                #   model zoo: trees · LSTM/GRU/TCN/PatchTST · TFT/N-HiTS/N-BEATS · Chronos/TimesFM
+│   ├── hpo/                   #   resumable Optuna HPO + sacred-holdout eval
+│   ├── serve/                 #   model registry + champion serving (nightly prediction)
+│   ├── sim/                   #   narrative simulations (local-LLM personas, MiroFish client)
 │   └── pipeline.py            #   end-to-end orchestrator
-├── evaluation/                # Model benchmark harness (golden dataset, metrics, leaderboard)
-├── scripts/                   # init_db.sql · backfill · process/retry/standardize · daily cron
-├── tests/                     # pytest — cutoff, leakage, calendar rollover, connection
-├── docs/                      # RUNBOOK.md · sentisense-understanding.md
-├── *.ipynb                    # eda · poc · lstm_forecaster · tuning · transformer_forecaster
+├── ui/                        # Live dashboard: FastAPI + React SPA (login gate, websocket)
+├── evaluation/                # LLM benchmark harness (golden dataset) + finance CSVs
+├── scripts/                   # init_db.sql · backfill · scoring · daily_live · sims · registry training
+├── ops/                       # crontab · pm2 config · nginx TLS reverse-proxy config
+├── notebooks/                 # eda · poc · lstm · tuning · transformer zoo · explainability
+├── external/                  # MiroFish submodule (AGPL, isolated local-only service)
+├── tests/                     # pytest — offline: leakage, calendar, serving, promotion gate
+├── docs/                      # runbooks · MODEL_ZOO · DATA_HANDOFF · leaderboard · miro/
 ├── docker-compose.yml         # PostgreSQL 16 + optional pgAdmin
-├── DATA_HANDOFF.md            # consumer-level data dictionary
-└── pyproject.toml             # sentisense package (base + ml/embed/finance/dev extras)
+└── pyproject.toml             # sentisense package (base + ml/embed/finance/tft/chronos/ui/... extras)
 ```
 
 ## Documentation
 
 | Doc | Audience |
 |-----|----------|
-| [`.claude/CLAUDE.md`](.claude/CLAUDE.md) | Operator reference for running the whole pipeline |
-| [`DATA_HANDOFF.md`](DATA_HANDOFF.md) | Consumer reference for working with the scored dataset |
+| [`docs/LIVE_RUNBOOK.md`](docs/LIVE_RUNBOOK.md) | Operator reference for the live two-machine deployment |
+| [`docs/DATA_HANDOFF.md`](docs/DATA_HANDOFF.md) | Consumer reference for working with the scored dataset |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Phase 2&3 server-side run commands + gate sequence |
+| [`docs/MODEL_ZOO.md`](docs/MODEL_ZOO.md) | Model grid: families × data types × regimes |
 | [`docs/sentisense-understanding.md`](docs/sentisense-understanding.md) | Schema + pipeline ground truth |
-| [`.claude/ROADMAP.md`](.claude/ROADMAP.md) | Full five-module build agenda |
 
 ## Configuration
 
