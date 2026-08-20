@@ -77,7 +77,7 @@ export default function AnalystPanel({ date }) {
           </p>
         </div>
       </div>
-      <div className="ss-controls">
+      <div className="ss-controls ss-analyst__row">
         <button className="ss-btn" onClick={() => submit('narrate')}
                 disabled={!date || state === 'waiting'}>
           {state === 'waiting' ? 'Thinking…' : `Narrate ${date || 'the day'}`}

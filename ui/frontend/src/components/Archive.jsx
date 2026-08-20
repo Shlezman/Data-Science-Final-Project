@@ -406,20 +406,20 @@ export default function Archive() {
           sentence passed as a tooltip onto the "Sentiment" label of all 50 cards on
           the page. When score filters are on, "unscored" is struck through rather
           than explained in an extra clause. */}
-      <dl className="ss-legend" aria-label="Sentiment badge key">
-        <dt className="ss-legend__term">Sentiment</dt>
-        <dd className="ss-legend__scale">−10…+10</dd>
-        <dd className="ss-legend__item">
+      <dl className="ss-sentiment-legend" aria-label="Sentiment badge key">
+        <dt className="ss-sentiment-legend__term">Sentiment</dt>
+        <dd className="ss-sentiment-legend__scale">−10…+10</dd>
+        <dd className="ss-sentiment-legend__item">
           <span className="ss-badge pos">+3</span> positive
         </dd>
-        <dd className="ss-legend__item">
+        <dd className="ss-sentiment-legend__item">
           <span className="ss-badge neutral">0</span> neutral
         </dd>
-        <dd className="ss-legend__item">
+        <dd className="ss-sentiment-legend__item">
           <span className="ss-badge neg">−2</span> negative
         </dd>
         <dd
-          className={`ss-legend__item${scoresFiltered ? ' is-excluded' : ''}`}
+          className={`ss-sentiment-legend__item${scoresFiltered ? ' is-excluded' : ''}`}
           title={scoresFiltered ? 'Excluded by the active score filters' : undefined}
         >
           <span className="ss-badge neutral">n/a</span> unscored

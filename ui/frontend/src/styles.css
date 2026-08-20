@@ -442,212 +442,6 @@ body {
   font-weight: 600;
 }
 
-.ss-stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
-}
-
-/* Bento layout: Accuracy anchors the grid as a large 2×2 tile, N gets a
-   wide supporting tile, and the remaining four metrics fill small cells —
-   size communicates importance instead of every tile looking identical. */
-.ss-stat-grid--metrics {
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(3, minmax(64px, auto));
-  grid-template-areas:
-    "acc acc mcc auc"
-    "acc acc prec rec"
-    "n   n   f1   pend";
-}
-.ss-stat--area-acc  { grid-area: acc; }
-.ss-stat--area-mcc  { grid-area: mcc; }
-.ss-stat--area-auc  { grid-area: auc; }
-.ss-stat--area-prec { grid-area: prec; }
-.ss-stat--area-rec  { grid-area: rec; }
-.ss-stat--area-n    { grid-area: n; }
-.ss-stat--area-f1   { grid-area: f1; }
-.ss-stat--area-pend { grid-area: pend; }
-
-@media (max-width: 720px) {
-  .ss-stat-grid--metrics {
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-areas:
-      "acc  acc"
-      "acc  acc"
-      "n    n"
-      "mcc  auc"
-      "prec rec"
-      "f1   pend";
-  }
-}
-@media (max-width: 380px) {
-  .ss-stat-grid--metrics {
-    grid-template-columns: 1fr;
-    grid-template-areas: "acc" "n" "mcc" "auc" "prec" "rec" "f1" "pend";
-  }
-}
-
-.ss-stat {
-  position: relative;
-  overflow: hidden;
-  background: var(--ss-surface-2);
-  border: 1px solid var(--ss-border);
-  border-radius: 16px;
-  padding: 12px 14px;
-  transition: transform 0.15s ease, border-color 0.15s ease;
-}
-
-.ss-stat:hover {
-  transform: translateY(-2px);
-  border-color: var(--ss-border-strong);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ss-stat { transition: none; }
-  .ss-stat:hover { transform: none; }
-}
-
-/* Per-metric accent: a dot next to the label and a soft wash bleeding in
-   from the top-right, both driven by --stat-accent. Metrics WITH a chance
-   baseline inherit it from their .ss-stat--pos/--neg tone, so the dot
-   reinforces the good/weak reading; the rest get a purely decorative hue
-   so the grid doesn't read as a row of identical grey boxes. */
-.ss-stat__dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  margin-right: 7px;
-  vertical-align: baseline;
-  background: var(--stat-accent, var(--ss-neutral));
-}
-
-.ss-stat::after {
-  content: '';
-  position: absolute;
-  top: -40px;
-  right: -40px;
-  width: 120px;
-  height: 120px;
-  border-radius: 999px;
-  background: var(--stat-accent, transparent);
-  opacity: 0.09;
-  pointer-events: none;
-}
-
-/* Stacked composition bar for wide tiles (see SplitBar). */
-.ss-splitbar {
-  margin-top: 10px;
-}
-.ss-splitbar__track {
-  display: flex;
-  height: 8px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: var(--ss-border);
-}
-.ss-splitbar__seg {
-  display: block;
-  height: 100%;
-  min-width: 2px;
-}
-.ss-splitbar__legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin-top: 7px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ss-fg-muted);
-}
-.ss-splitbar__swatch {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  margin-right: 6px;
-}
-
-.ss-stat--accent-teal   { --stat-accent: #2dd4bf; }
-.ss-stat--accent-violet { --stat-accent: #a78bfa; }
-.ss-stat--accent-amber  { --stat-accent: #fbbf24; }
-.ss-stat--accent-blue   { --stat-accent: #60a5fa; }
-.ss-stat--accent-slate  { --stat-accent: #94a3b8; }
-
-/* The anchor tile: bigger radius, bigger number, text on the left with the
-   gauge filling the space that used to just sit empty on the right — reads
-   as the headline KPI instead of one entry in a wall of squares. */
-.ss-stat--featured {
-  border-radius: 22px;
-  padding: 20px 28px;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 40px;
-  background: linear-gradient(160deg, var(--ss-surface-2), rgba(59, 130, 246, 0.06));
-}
-/* Doubled class raises specificity above the later `.ss-stat .value` /
-   `.ss-stat .label` rules, which otherwise win on source order alone. */
-.ss-stat.ss-stat--featured .value {
-  font-size: 64px;
-  line-height: 1.1;
-  margin-top: 8px;
-}
-/* Scale the dot + wash with the anchor tile so they stay proportional. */
-.ss-stat--featured .ss-stat__dot {
-  width: 10px;
-  height: 10px;
-  margin-right: 9px;
-}
-.ss-stat--featured::after {
-  top: -70px;
-  right: -70px;
-  width: 220px;
-  height: 220px;
-}
-.ss-stat.ss-stat--featured .label {
-  font-size: 16px;
-}
-.ss-gauge {
-  flex: none;
-}
-
-/* Subtle good/weak cue for metrics with a meaningful chance baseline
-   (accuracy, MCC, ROC-AUC) — colored border + soft glow + value, not a
-   filled background, so it stays readable and doesn't compete with the
-   tiles that intentionally have no opinion (precision/recall/F1/N/pending). */
-.ss-stat--pos {
-  --stat-accent: var(--ss-pos);
-  border-color: rgba(34, 197, 94, 0.45);
-  box-shadow: 0 0 24px -10px rgba(34, 197, 94, 0.55);
-}
-.ss-stat--pos .value {
-  color: var(--ss-pos);
-}
-.ss-stat--neg {
-  --stat-accent: var(--ss-neg);
-  border-color: rgba(239, 68, 68, 0.45);
-  box-shadow: 0 0 24px -10px rgba(239, 68, 68, 0.55);
-}
-.ss-stat--neg .value {
-  color: var(--ss-neg);
-}
-
-.ss-stat .label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ss-fg-muted);
-}
-
-.ss-stat .value {
-  font-size: 20px;
-  font-weight: 700;
-  margin-top: 2px;
-}
-
 /* Model performance: quality metrics, classification metrics and operational
    sample status are intentionally separated so card size and colour follow
    meaning rather than decoration. */
@@ -1223,9 +1017,18 @@ select optgroup {
   flex-wrap: wrap;
 }
 
+/* The graph column. min-width:0 is the point: a flex item defaults to
+   min-width:auto, so the cytoscape canvas held the column at its own intrinsic
+   width and the network ran past the card edge on a phone — clipped, so part of
+   the graph could not be reached at all. */
+.ss-graph-col {
+  flex: 1 1 480px;
+  min-width: 0;
+}
+
 .ss-graph {
   flex: 1 1 480px;
-  min-width: 320px;
+  min-width: 0;
   height: 480px;
   border: 1px solid var(--ss-border);
   border-radius: var(--ss-radius);
@@ -1291,19 +1094,50 @@ select optgroup {
   vertical-align: middle;
 }
 
+/* The report is prose, not a code dump. It was a <pre> in ui-monospace, so the
+   narrative synthesis — the payoff of the whole tab — arrived looking like log
+   output, with its Markdown markers showing as literal characters. */
 .ss-report {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  line-height: 1.55;
-  max-height: 480px;
+  max-height: 520px;
   overflow: auto;
   background: var(--ss-surface-2);
   border: 1px solid var(--ss-border);
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px 18px;
   margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.ss-report__heading {
+  margin: 18px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ss-fg-muted);
+}
+
+.ss-report__heading:first-child {
+  margin-top: 0;
+}
+
+.ss-report__para {
+  /* Capped measure: at full card width the lines run past 120 characters, which
+     reads as a wall even once it is properly typeset. */
+  max-width: 78ch;
+  margin: 0 0 10px;
+  color: var(--ss-fg);
+  word-break: break-word;
+}
+
+.ss-report__para:last-child {
+  margin-bottom: 0;
+}
+
+.ss-report__para strong {
+  font-weight: 650;
+  color: var(--ss-fg);
 }
 
 .ss-events {
@@ -2067,14 +1901,48 @@ body {
   font-size: 13px;
 }
 
+/* The aggregate row spans the whole grid, but it carried the same four short values
+   as a 214px chip — a ~1,100px band that was almost entirely empty above a tidy
+   grid. Laid out ACROSS its width, with the score as the focal point, so the full
+   span buys emphasis instead of air. */
 .ss-persona--general {
   grid-column: 1 / -1;
   border-color: var(--ss-accent);
   background: rgba(59, 130, 246, 0.1);
+  flex-direction: row;
+  align-items: center;
+  /* Wraps so the score drops to its own line on a phone: side by side, the name and
+     the score together exceeded the 311px card and pushed past its edge. */
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 16px;
+}
+
+.ss-persona--general .ss-persona__head {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 10px;
 }
 
 .ss-persona--general .ss-persona__source {
   font-size: 14px;
+}
+
+/* Pushed to the far edge so the row reads name → … → score, rather than leaving
+   everything bunched on the left. */
+.ss-persona--general .ss-persona__meta {
+  margin-left: auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.ss-persona--general .ss-pill {
+  font-size: 15px;
+  padding: 3px 10px;
+}
+
+.ss-persona--general .ss-persona__vote {
+  font-size: 20px;
 }
 
 .ss-persona__head {
@@ -2183,6 +2051,7 @@ body {
 /* Archive toolbar: date + search on the first row, sort + score filters on the
    second, both inside ONE panel. Previously the first row sat bare on the card
    and only the second was boxed, so the same toolbar wore two skins. */
+.ss-toolbar,
 .ss-archive-toolbar {
   border: 1px solid var(--ss-border);
   border-radius: 12px;
@@ -2193,6 +2062,7 @@ body {
      the rounded corners, so nothing needs clipping here. */
 }
 
+.ss-toolbar__row,
 .ss-archive-toolbar__row {
   display: flex;
   flex-wrap: wrap;
@@ -2202,6 +2072,15 @@ body {
 }
 
 /* Hairline divider rather than a gap: the rows are one control surface. */
+.ss-toolbar__hint {
+  flex: 1 1 240px;
+  align-self: center;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ss-fg-muted);
+}
+
 .ss-archive-toolbar__row--scores {
   border-top: 1px solid var(--ss-border);
 }
@@ -2209,6 +2088,7 @@ body {
 /* One control height across the toolbar. select and input[type=search] resolve
    different intrinsic heights from identical padding (35px vs 37px), which left
    the search box sitting 2px proud of the date select right beside it. */
+.ss-toolbar .ss-field > select,
 .ss-archive-toolbar .ss-field > select,
 .ss-archive-toolbar .ss-archive-filter input,
 .ss-archive-toolbar .ss-input-group {
@@ -2354,8 +2234,11 @@ body {
 }
 
 /* A key, not a sentence: each term is a swatch plus one word, so it scans at a
-   glance instead of being read left to right. */
-.ss-legend {
+   glance instead of being read left to right.
+   NOT named .ss-legend — the simulator's node-type legend already owns that class,
+   and this block sat later in the file, so it was overriding the simulator's
+   margins, gap and text colour. */
+.ss-sentiment-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2365,18 +2248,18 @@ body {
   color: var(--ss-fg-muted);
 }
 
-.ss-legend__term {
+.ss-sentiment-legend__term {
   font-weight: 600;
   color: var(--ss-fg);
 }
 
-.ss-legend__scale {
+.ss-sentiment-legend__scale {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
 }
 
-.ss-legend__item {
+.ss-sentiment-legend__item {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2385,7 +2268,7 @@ body {
 
 /* Score filters drop unscored rows entirely, so the term is struck through rather
    than explained in an extra sentence appended to the legend. */
-.ss-legend__item.is-excluded {
+.ss-sentiment-legend__item.is-excluded {
   opacity: 0.45;
   text-decoration: line-through;
 }
@@ -2414,8 +2297,10 @@ body {
   outline: 2px solid var(--ss-accent);
   outline-offset: 1px;
 }
+.ss-toolbar .ss-field--sort select,
 .ss-archive-toolbar .ss-field--sort select { width: 172px; }
 .ss-archive-toolbar .ss-field--sentiment select { width: 180px; }
+.ss-toolbar .ss-field,
 .ss-archive-toolbar .ss-field { flex: 0 0 auto; }
 /* Overrides the standalone filter's 340px cap: inside the panel it should run to
    the edge rather than stopping short and leaving a gap on the right. */
@@ -2467,6 +2352,7 @@ body {
 
 .ss-input-group select:focus-visible { outline: none; }
 
+.ss-toolbar select:focus-visible,
 .ss-archive-toolbar select:focus-visible {
   outline: 2px solid var(--ss-accent);
   outline-offset: 1px;
@@ -2661,15 +2547,34 @@ body {
 }
 .ss-analyst__question {
   flex: 1 1 320px;
+  display: flex;
 }
+
+/* The three controls in this row are one set, so they share a height. The input
+   inherited a 16px font and 9px padding while .ss-btn uses 14px/7px, which made it
+   43px against the buttons' 36px — and, with the row bottom-aligned, left it
+   sitting 7px proud of them. */
+.ss-analyst__row .ss-btn,
+.ss-analyst__question input {
+  height: 38px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 8px;
+}
+
+/* Both buttons take the width of the wider one, so the row reads as a pair of
+   matching blocks instead of one wide and one stub. */
+.ss-analyst__row .ss-btn {
+  min-width: 176px;
+}
+
 .ss-analyst__question input {
   width: 100%;
-  padding: 9px 11px;
-  border-radius: 8px;
+  padding: 0 11px;
   border: 1px solid var(--ss-border);
   background: var(--ss-surface-2);
   color: var(--ss-fg);
-  font: inherit;
+  font-family: inherit;
 }
 
 /* Persona quote (agent statements + consensus) */
