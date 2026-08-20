@@ -65,30 +65,6 @@ export function outcomeCls(label) {
 }
 
 /**
- * Classifies a metric value relative to its chance/random-guess baseline, so
- * UI can give a subtle good/weak visual cue without inventing an arbitrary
- * threshold for metrics that have no universally agreed "good" cutoff.
- *
- * @param {number|null|undefined} value The metric value.
- * @param {number} chance The value a random/no-skill predictor would score
- *   (0.5 for accuracy and ROC-AUC, 0 for MCC).
- * @param {number} [margin] How far above chance counts as clearly "good".
- * @returns {'pos'|'neg'|null} "pos" if clearly above chance, "neg" if at or
- *   below chance, or null (no opinion / render neutrally) in the grey zone.
- */
-export function toneFromChance(value, chance, margin = 0.05) {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return null;
-  }
-  if (value >= chance + margin) {
-    return 'pos';
-  }
-  if (value < chance) {
-    return 'neg';
-  }
-  return null;
-}
-
 /**
  * Renders a signed score with an explicit sign and a typographic minus (U+2212),
  * which lines up with the digits instead of sitting high and short like the ASCII
