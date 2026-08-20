@@ -19,32 +19,80 @@ function voteGlyph(vote) {
 }
 
 /**
- * One persona chip: source name, vote arrow, mean sentiment and headline count.
+ * Formats a persona's mean sentiment, or an em dash when the day has no score.
+ *
+ * @param {object} persona Persona row.
+ * @returns {string} Two-decimal score or '—'.
+ */
+function meanText(persona) {
+  return typeof persona.mean_sentiment === 'number' &&
+    !Number.isNaN(persona.mean_sentiment)
+    ? persona.mean_sentiment.toFixed(2)
+    : '—';
+}
+
+/**
+ * The aggregate persona: one accented row above the per-source list.
  *
  * @param {object} props Component props.
- * @param {object} props.persona Persona row ({source, n, mean_sentiment, vote}).
- * @param {boolean} [props.emphasized] True for the General persona card.
- * @returns {JSX.Element} The chip.
+ * @param {object} props.persona The General persona row.
+ * @returns {JSX.Element} The aggregate row.
  */
-function PersonaChip({ persona, emphasized = false }) {
+function GeneralPersona({ persona }) {
   const { glyph, cls } = voteGlyph(persona.vote);
-  const mean =
-    typeof persona.mean_sentiment === 'number' &&
-    !Number.isNaN(persona.mean_sentiment)
-      ? persona.mean_sentiment.toFixed(2)
-      : '—';
   return (
-    <div className={`ss-persona${emphasized ? ' ss-persona--general' : ''}`}>
-      <span className="ss-persona__head">
-        <span className="ss-persona__source">{persona.source}</span>
+    <div className="ss-persona-general">
+      <span className="ss-persona-general__source">{persona.source}</span>
+      <span className="ss-persona-general__meta">
+        <span className={`ss-pill ss-pill--${cls}`}>{meanText(persona)}</span>
         <span className={`ss-persona__vote ss-persona__vote--${cls}`}>
           {glyph}
         </span>
-      </span>
-      <span className="ss-persona__meta">
-        <span className={`ss-pill ss-pill--${cls}`}>{mean}</span>
         <span className="ss-muted">{persona.n} headlines</span>
       </span>
+    </div>
+  );
+}
+
+/**
+ * One source persona as a single aligned row: name, score, volume bar, count.
+ *
+ * This was a bordered two-line card in an auto-fill grid. Eleven of them read as a
+ * wall of boxes in which nothing lined up, because the score and the count landed
+ * wherever each Hebrew outlet name happened to end. As rows sharing one panel, the
+ * columns line up across the whole list and the only chrome left is the panel.
+ *
+ * The vote arrow went with the card: it restated exactly what the pill's colour
+ * already says, since both come from the same voteGlyph() call. The aggregate row
+ * above still carries one, so the day's direction stays explicit.
+ *
+ * @param {object} props Component props.
+ * @param {object} props.persona Persona row ({source, n, mean_sentiment, vote}).
+ * @param {number} props.maxN Headline count of the loudest source, for the bar scale.
+ * @returns {JSX.Element} The row.
+ */
+function PersonaRow({ persona, maxN }) {
+  const { cls } = voteGlyph(persona.vote);
+  // Floored so the quietest outlet still reads as a bar and not as a dot.
+  const share = maxN > 0 ? Math.max(0.08, persona.n / maxN) : 0;
+  return (
+    <div
+      className="ss-persona-row"
+      aria-label={`${persona.source}: mean sentiment ${meanText(persona)}, ${persona.n} headlines`}
+    >
+      <span className="ss-persona-row__source" title={persona.source}>
+        {persona.source}
+      </span>
+      <span className={`ss-pill ss-pill--${cls}`}>{meanText(persona)}</span>
+      {/* Volume, deliberately in neutral grey: colour here already means sentiment,
+          and a second colour scale on the same row would read as a second score. */}
+      <span className="ss-persona-row__volume" aria-hidden="true">
+        <span
+          className="ss-persona-row__bar"
+          style={{ width: `${(share * 100).toFixed(1)}%` }}
+        />
+      </span>
+      <span className="ss-persona-row__n" aria-hidden="true">{persona.n}</span>
     </div>
   );
 }
@@ -148,6 +196,7 @@ export default function PersonaPanel({ date }) {
   const personas = data?.personas || [];
   const general = data?.general || null;
   const hasPersonas = personas.length > 0 || general != null;
+  const maxN = personas.reduce((m, p) => Math.max(m, p.n), 0);
 
   return (
     <div className="ss-card">
@@ -171,12 +220,14 @@ export default function PersonaPanel({ date }) {
 
       {hasPersonas ? (
         <>
-          <div className="ss-persona-grid">
-            {general ? <PersonaChip persona={general} emphasized /> : null}
-            {personas.map((p) => (
-              <PersonaChip key={p.source} persona={p} />
-            ))}
-          </div>
+          {general ? <GeneralPersona persona={general} /> : null}
+          {personas.length > 0 ? (
+            <div className="ss-persona-list">
+              {personas.map((p) => (
+                <PersonaRow key={p.source} persona={p} maxN={maxN} />
+              ))}
+            </div>
+          ) : null}
           <VerdictRow model={data?.model || null} actual={data?.actual ?? null} />
         </>
       ) : null}
