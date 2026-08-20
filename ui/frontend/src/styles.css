@@ -1901,14 +1901,48 @@ body {
   font-size: 13px;
 }
 
+/* The aggregate row spans the whole grid, but it carried the same four short values
+   as a 214px chip — a ~1,100px band that was almost entirely empty above a tidy
+   grid. Laid out ACROSS its width, with the score as the focal point, so the full
+   span buys emphasis instead of air. */
 .ss-persona--general {
   grid-column: 1 / -1;
   border-color: var(--ss-accent);
   background: rgba(59, 130, 246, 0.1);
+  flex-direction: row;
+  align-items: center;
+  /* Wraps so the score drops to its own line on a phone: side by side, the name and
+     the score together exceeded the 311px card and pushed past its edge. */
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 16px;
+}
+
+.ss-persona--general .ss-persona__head {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 10px;
 }
 
 .ss-persona--general .ss-persona__source {
   font-size: 14px;
+}
+
+/* Pushed to the far edge so the row reads name → … → score, rather than leaving
+   everything bunched on the left. */
+.ss-persona--general .ss-persona__meta {
+  margin-left: auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.ss-persona--general .ss-pill {
+  font-size: 15px;
+  padding: 3px 10px;
+}
+
+.ss-persona--general .ss-persona__vote {
+  font-size: 20px;
 }
 
 .ss-persona__head {
@@ -2513,15 +2547,34 @@ body {
 }
 .ss-analyst__question {
   flex: 1 1 320px;
+  display: flex;
 }
+
+/* The three controls in this row are one set, so they share a height. The input
+   inherited a 16px font and 9px padding while .ss-btn uses 14px/7px, which made it
+   43px against the buttons' 36px — and, with the row bottom-aligned, left it
+   sitting 7px proud of them. */
+.ss-analyst__row .ss-btn,
+.ss-analyst__question input {
+  height: 38px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 8px;
+}
+
+/* Both buttons take the width of the wider one, so the row reads as a pair of
+   matching blocks instead of one wide and one stub. */
+.ss-analyst__row .ss-btn {
+  min-width: 176px;
+}
+
 .ss-analyst__question input {
   width: 100%;
-  padding: 9px 11px;
-  border-radius: 8px;
+  padding: 0 11px;
   border: 1px solid var(--ss-border);
   background: var(--ss-surface-2);
   color: var(--ss-fg);
-  font: inherit;
+  font-family: inherit;
 }
 
 /* Persona quote (agent statements + consensus) */
