@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getJson, postJson, simRunSocketUrl } from '../lib/api.js';
+import { getJson, simRunSocketUrl } from '../lib/api.js';
 import CytoscapeGraph from './CytoscapeGraph.jsx';
 import PersonaPanel from './PersonaPanel.jsx';
 import AnalystPanel from './AnalystPanel.jsx';
@@ -153,8 +153,13 @@ function Legend({ colors }) {
 export default function Simulator() {
   const [modes, setModes] = useState([]);
   const [simDates, setSimDates] = useState([]);
+  // The selects are a DRAFT: nothing loads until "Show selection" commits them to
+  // `applied`, which is what every panel on this tab reads. They used to fetch on
+  // every change, so picking a mode and then a day loaded a combination nobody
+  // asked for, and the graph, personas and report each blinked twice on the way.
   const [mode, setMode] = useState('');
   const [date, setDate] = useState('');
+  const [applied, setApplied] = useState({ mode: '', date: '' });
 
   const [graph, setGraph] = useState(null);
   const [report, setReport] = useState(null);
@@ -167,6 +172,7 @@ export default function Simulator() {
   const [running, setRunning] = useState(false);
   const [simLive, setSimLive] = useState(null);
   const wsRef = useRef(null);
+  const topRef = useRef(null);
 
   useEffect(() => {
     getJson('/api/sim/modes')
@@ -175,6 +181,9 @@ export default function Simulator() {
         setModes(list);
         if (list.length > 0) {
           setMode(list[0]);
+          // The first load applies itself; an empty tab waiting to be told to
+          // show its default selection would be a worse trade than one fetch.
+          setApplied((prev) => (prev.mode ? prev : { ...prev, mode: list[0] }));
         }
       })
       .catch((err) => setLoadError(err.message));
@@ -185,6 +194,7 @@ export default function Simulator() {
         setSimDates(list);
         if (list.length > 0) {
           setDate(list[0]);
+          setApplied((prev) => (prev.date ? prev : { ...prev, date: list[0] }));
         }
       })
       .catch((err) => setLoadError(err.message));
@@ -220,8 +230,8 @@ export default function Simulator() {
   }, []);
 
   useEffect(() => {
-    loadGraphAndReport(date, mode);
-  }, [date, mode, loadGraphAndReport]);
+    loadGraphAndReport(applied.date, applied.mode);
+  }, [applied, loadGraphAndReport]);
 
   useEffect(() => {
     return () => {
@@ -232,8 +242,9 @@ export default function Simulator() {
   }, []);
 
   const runSimulation = useCallback(() => {
-    const targetDate = runDate || date;
-    if (!targetDate || !mode || running) {
+    const targetDate = runDate || applied.date;
+    const targetMode = applied.mode;
+    if (!targetDate || !targetMode || running) {
       return;
     }
     setEvents([]);
@@ -243,7 +254,7 @@ export default function Simulator() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ date: targetDate, mode }));
+      ws.send(JSON.stringify({ date: targetDate, mode: targetMode }));
     };
     ws.onmessage = (msg) => {
       let payload;
@@ -261,7 +272,7 @@ export default function Simulator() {
           setGraph(payload.graph);
         }
         setRunning(false);
-        loadGraphAndReport(targetDate, mode);
+        loadGraphAndReport(targetDate, targetMode);
         ws.close();
       }
       if (payload.event === 'error') {
@@ -279,11 +290,29 @@ export default function Simulator() {
     ws.onclose = () => {
       setRunning(false);
     };
-  }, [runDate, date, mode, running, loadGraphAndReport]);
+  }, [runDate, applied, running, loadGraphAndReport]);
+
+  const pending = mode !== applied.mode || date !== applied.date;
+
+  const applySelection = useCallback(() => {
+    setApplied({ mode, date });
+  }, [mode, date]);
+
+  // scrollIntoView on the card, not window.scrollTo on a computed offset: the
+  // sticky topbar's height is a clamp() of the viewport, and the offset it needs
+  // belongs in CSS as scroll-margin-top on the target.
+  const scrollToTop = useCallback(() => {
+    topRef.current?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto'
+        : 'smooth',
+      block: 'start',
+    });
+  }, []);
 
   return (
     <div>
-      <div className="ss-card">
+      <div className="ss-card ss-simulator__top" ref={topRef}>
         <div className="ss-dashboard-section-head">
           <div className="ss-dashboard-section-head__copy">
             <span className="ss-dashboard-section-head__eyebrow">Narrative simulation</span>
@@ -322,21 +351,52 @@ export default function Simulator() {
                 ))}
               </select>
             </label>
-            {MODE_HINTS[mode] ? (
-              <p className="ss-toolbar__hint">
-                {MODE_HINTS[mode]}
-                {liveDisabled ? ' Simulations are generated automatically after each trading day.' : ''}
-              </p>
-            ) : null}
+            {/* Commits the two selects together. Greyed out once what is on screen
+                matches them, so the button also answers "is this what I picked?" */}
+            <button
+              type="button"
+              className={`ss-btn ${pending ? '' : 'secondary'} ss-toolbar__apply`}
+              onClick={applySelection}
+              disabled={!pending || !mode || !date}
+              title="Load the selected mode and day"
+            >
+              Show selection
+            </button>
+            {/* The hint was a bare paragraph floating in the row with nothing
+                marking where it started or ended. Boxed, it reads as the panel's
+                output — and it now has somewhere to say the selection is uncommitted. */}
+            <aside
+              className={`ss-toolbar__note${pending ? ' ss-toolbar__note--pending' : ''}`}
+              aria-live="polite"
+            >
+              <span className="ss-toolbar__note-head">
+                <span className="ss-toolbar__note-label">
+                  {MODE_LABELS[mode] || mode || '—'}
+                </span>
+                {date ? <span className="ss-tag">{date}</span> : null}
+              </span>
+              {MODE_HINTS[mode] ? (
+                <p className="ss-toolbar__note-body">{MODE_HINTS[mode]}</p>
+              ) : null}
+              {pending ? (
+                <p className="ss-toolbar__note-foot">
+                  Not shown yet — press <strong>Show selection</strong> to load it.
+                </p>
+              ) : liveDisabled ? (
+                <p className="ss-toolbar__note-foot">
+                  Simulations are generated automatically after each trading day.
+                </p>
+              ) : null}
+            </aside>
           </div>
         </div>
 
         {loadError ? <p className="ss-error-text">Error: {loadError}</p> : null}
       </div>
 
-      <AnalystPanel date={date} />
+      <AnalystPanel date={applied.date} />
 
-      <PersonaPanel date={date} />
+      <PersonaPanel date={applied.date} />
 
       <div className="ss-card">
         <div className="ss-dashboard-section-head ss-dashboard-section-head--subsection">
@@ -439,6 +499,19 @@ export default function Simulator() {
         ) : null}
       </div>
       )}
+
+      {/* Static, at the end of the tab — not a floating corner pill: this page
+          fires no scroll events, so nothing can reveal a fixed button at the right
+          moment, and the one overlay this app had was taken off the dashboard for
+          covering content. */}
+      <div className="ss-backtotop">
+        <button type="button" className="ss-btn secondary" onClick={scrollToTop}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
+          Back to top for another analysis
+        </button>
+      </div>
     </div>
   );
 }
