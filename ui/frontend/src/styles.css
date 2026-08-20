@@ -1223,9 +1223,18 @@ select optgroup {
   flex-wrap: wrap;
 }
 
+/* The graph column. min-width:0 is the point: a flex item defaults to
+   min-width:auto, so the cytoscape canvas held the column at its own intrinsic
+   width and the network ran past the card edge on a phone — clipped, so part of
+   the graph could not be reached at all. */
+.ss-graph-col {
+  flex: 1 1 480px;
+  min-width: 0;
+}
+
 .ss-graph {
   flex: 1 1 480px;
-  min-width: 320px;
+  min-width: 0;
   height: 480px;
   border: 1px solid var(--ss-border);
   border-radius: var(--ss-radius);
@@ -1291,19 +1300,50 @@ select optgroup {
   vertical-align: middle;
 }
 
+/* The report is prose, not a code dump. It was a <pre> in ui-monospace, so the
+   narrative synthesis — the payoff of the whole tab — arrived looking like log
+   output, with its Markdown markers showing as literal characters. */
 .ss-report {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  line-height: 1.55;
-  max-height: 480px;
+  max-height: 520px;
   overflow: auto;
   background: var(--ss-surface-2);
   border: 1px solid var(--ss-border);
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px 18px;
   margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.ss-report__heading {
+  margin: 18px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ss-fg-muted);
+}
+
+.ss-report__heading:first-child {
+  margin-top: 0;
+}
+
+.ss-report__para {
+  /* Capped measure: at full card width the lines run past 120 characters, which
+     reads as a wall even once it is properly typeset. */
+  max-width: 78ch;
+  margin: 0 0 10px;
+  color: var(--ss-fg);
+  word-break: break-word;
+}
+
+.ss-report__para:last-child {
+  margin-bottom: 0;
+}
+
+.ss-report__para strong {
+  font-weight: 650;
+  color: var(--ss-fg);
 }
 
 .ss-events {
@@ -2183,6 +2223,7 @@ body {
 /* Archive toolbar: date + search on the first row, sort + score filters on the
    second, both inside ONE panel. Previously the first row sat bare on the card
    and only the second was boxed, so the same toolbar wore two skins. */
+.ss-toolbar,
 .ss-archive-toolbar {
   border: 1px solid var(--ss-border);
   border-radius: 12px;
@@ -2193,6 +2234,7 @@ body {
      the rounded corners, so nothing needs clipping here. */
 }
 
+.ss-toolbar__row,
 .ss-archive-toolbar__row {
   display: flex;
   flex-wrap: wrap;
@@ -2202,6 +2244,15 @@ body {
 }
 
 /* Hairline divider rather than a gap: the rows are one control surface. */
+.ss-toolbar__hint {
+  flex: 1 1 240px;
+  align-self: center;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ss-fg-muted);
+}
+
 .ss-archive-toolbar__row--scores {
   border-top: 1px solid var(--ss-border);
 }
@@ -2209,6 +2260,7 @@ body {
 /* One control height across the toolbar. select and input[type=search] resolve
    different intrinsic heights from identical padding (35px vs 37px), which left
    the search box sitting 2px proud of the date select right beside it. */
+.ss-toolbar .ss-field > select,
 .ss-archive-toolbar .ss-field > select,
 .ss-archive-toolbar .ss-archive-filter input,
 .ss-archive-toolbar .ss-input-group {
@@ -2354,8 +2406,11 @@ body {
 }
 
 /* A key, not a sentence: each term is a swatch plus one word, so it scans at a
-   glance instead of being read left to right. */
-.ss-legend {
+   glance instead of being read left to right.
+   NOT named .ss-legend — the simulator's node-type legend already owns that class,
+   and this block sat later in the file, so it was overriding the simulator's
+   margins, gap and text colour. */
+.ss-sentiment-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2365,18 +2420,18 @@ body {
   color: var(--ss-fg-muted);
 }
 
-.ss-legend__term {
+.ss-sentiment-legend__term {
   font-weight: 600;
   color: var(--ss-fg);
 }
 
-.ss-legend__scale {
+.ss-sentiment-legend__scale {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
 }
 
-.ss-legend__item {
+.ss-sentiment-legend__item {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2385,7 +2440,7 @@ body {
 
 /* Score filters drop unscored rows entirely, so the term is struck through rather
    than explained in an extra sentence appended to the legend. */
-.ss-legend__item.is-excluded {
+.ss-sentiment-legend__item.is-excluded {
   opacity: 0.45;
   text-decoration: line-through;
 }
@@ -2414,8 +2469,10 @@ body {
   outline: 2px solid var(--ss-accent);
   outline-offset: 1px;
 }
+.ss-toolbar .ss-field--sort select,
 .ss-archive-toolbar .ss-field--sort select { width: 172px; }
 .ss-archive-toolbar .ss-field--sentiment select { width: 180px; }
+.ss-toolbar .ss-field,
 .ss-archive-toolbar .ss-field { flex: 0 0 auto; }
 /* Overrides the standalone filter's 340px cap: inside the panel it should run to
    the edge rather than stopping short and leaving a gap on the right. */
@@ -2467,6 +2524,7 @@ body {
 
 .ss-input-group select:focus-visible { outline: none; }
 
+.ss-toolbar select:focus-visible,
 .ss-archive-toolbar select:focus-visible {
   outline: 2px solid var(--ss-accent);
   outline-offset: 1px;
