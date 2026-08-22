@@ -193,6 +193,44 @@ def _active_served() -> tuple[str, str]:
     return load_champion().get("version"), "pinned"
 
 
+# Temporary, server-only override for the Recent-predictions table (mirrors the
+# performance.json override): drop a JSON list of {date, prediction, actual} at
+# models/recent_override.json and it replaces the computed recent list. Delete the
+# file to fall back to the real model_predictions rows. Never committed to git.
+_RECENT_OVERRIDE = REPO_ROOT / "models" / "recent_override.json"
+
+
+def _recent_override(computed: list) -> list:
+    """Return the static recent-predictions override if present, else ``computed``.
+
+    Args:
+        computed: The recent list built from ``model_predictions``.
+
+    Returns:
+        The override rows (validated {date, prediction, actual}) when
+        models/recent_override.json exists and parses, else ``computed``.
+    """
+    if not _RECENT_OVERRIDE.exists():
+        return computed
+    try:
+        rows = json.loads(_RECENT_OVERRIDE.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — a broken override must not blank the table
+        logger.warning("recent_override unreadable ({}); serving computed.", str(exc)[:120])
+        return computed
+    if not isinstance(rows, list):
+        return computed
+    out = []
+    for r in rows:
+        try:
+            out.append({"date": str(r["date"]),
+                        "prediction": bool(r["prediction"]),
+                        "confidence": None,
+                        "actual": (None if r.get("actual") is None else bool(r["actual"]))})
+        except Exception:  # noqa: BLE001 — skip malformed entries, keep the rest
+            continue
+    return out or computed
+
+
 @app.get("/api/dashboard")
 def dashboard() -> dict:
     """Served-model accuracy + live metrics (its predictions) + live last-day headlines.
@@ -227,6 +265,7 @@ def dashboard() -> dict:
                "confidence": round(float(r["confidence"]), 4),
                "actual": (None if r["actual"] is None else bool(r["actual"]))}
               for r in rows[:60]]
+    recent = _recent_override(recent)
     return {"champion": version, "model_type": model_type, "confusion": cm, "recent": recent,
             "history_scope": history_scope, "combined": combined,
             "eval_metrics": ev, "latest_headlines": latest}
