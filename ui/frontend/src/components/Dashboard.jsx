@@ -444,7 +444,7 @@ export default function Dashboard() {
               onClick={() => setShowAllRecent((v) => !v)}
               aria-expanded={showAllRecent}
             >
-              {showAllRecent ? 'Show less' : `Show all ${recent.length} predictions`}
+              {showAllRecent ? 'Show less' : 'Show all'}
             </button>
           ) : null}
           </>
