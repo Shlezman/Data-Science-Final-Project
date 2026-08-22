@@ -245,26 +245,45 @@ export default function Archive() {
   //
   // First/Last and the jump box matter because an unfiltered day runs to 16 pages;
   // reaching the oldest headline of a date used to cost 15 clicks on Next.
+  //
+  // One segmented control, not five loose buttons. « Prev [1] of 16 Next » was five
+  // differently-sized boxes with gaps between them: nothing lined up, the number box
+  // floated mid-sentence, and the guillemets read as quotation marks rather than as
+  // "jump to the end". This is the same grouped shell as the date stepper's
+  // ‹ | date | › control, so the two read as one family.
+  // Sized to the digit count of the LAST page rather than a fixed 40px, and
+  // right-aligned in the CSS for the same reason: the box has to reserve room for
+  // "19" while showing "1", and centring parked that spare half-box between the
+  // number and the "of 19" that belongs to it.
+  const pageBoxWidth = `calc(${String(totalPages).length}ch + 2px)`;
+
   const pager = totalPages > 1 ? (
-    <div className="ss-pager">
+    <div className="ss-pagerctl" role="group" aria-label="Pagination">
       <button
-        className="ss-btn secondary"
+        type="button"
+        className="ss-pagerctl__btn"
         disabled={page <= 0}
         onClick={() => setPage(0)}
         aria-label="First page"
         title="First page"
       >
-        «
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18 6l-6 6 6 6M11 6l-6 6 6 6" />
+        </svg>
       </button>
       <button
-        className="ss-btn secondary"
+        type="button"
+        className="ss-pagerctl__btn"
         disabled={page <= 0}
         onClick={() => setPage((p) => Math.max(0, p - 1))}
+        aria-label="Previous page"
+        title="Previous page"
       >
-        Prev
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 6l-6 6 6 6" />
+        </svg>
       </button>
-      <span className="ss-pager__jump">
-        Page
+      <span className="ss-pagerctl__page">
         <input
           type="number"
           min="1"
@@ -279,27 +298,65 @@ export default function Archive() {
             }
           }}
           aria-label={`Page number, 1 to ${totalPages}`}
+          style={{ width: pageBoxWidth }}
         />
-        of {totalPages}
+        <span className="ss-pagerctl__total">of {totalPages}</span>
       </span>
       <button
-        className="ss-btn secondary"
+        type="button"
+        className="ss-pagerctl__btn"
         disabled={page >= totalPages - 1}
         onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+        aria-label="Next page"
+        title="Next page"
       >
-        Next
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 6l6 6-6 6" />
+        </svg>
       </button>
       <button
-        className="ss-btn secondary"
+        type="button"
+        className="ss-pagerctl__btn"
         disabled={page >= totalPages - 1}
         onClick={() => setPage(totalPages - 1)}
         aria-label="Last page"
         title="Last page"
       >
-        »
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6l6 6-6 6M13 6l6 6-6 6" />
+        </svg>
       </button>
     </div>
   ) : null;
+
+  // An actual key — swatch plus one word per term — rendered once. It replaced a
+  // sentence passed as a tooltip onto the "Sentiment" label of all 50 cards on the
+  // page. Each badge carries the BAND it stands for rather than a sample value:
+  // "+3", "0", "−2" were arbitrary numbers that read as data, and the separate
+  // "−10…+10" caption they needed is redundant once the bands are spelled out.
+  // Bands per sentimentBadge(): >0 positive, 0 neutral, <0 negative, null n/a.
+  // When score filters are on, "unscored" is struck through rather than explained
+  // in an extra clause.
+  const legend = (
+    <dl className="ss-sentiment-legend" aria-label="Sentiment badge key">
+      <dt className="ss-sentiment-legend__term">Sentiment</dt>
+      <dd className="ss-sentiment-legend__item">
+        <span className="ss-badge pos">+1…+10</span> positive
+      </dd>
+      <dd className="ss-sentiment-legend__item">
+        <span className="ss-badge neutral">0</span> neutral
+      </dd>
+      <dd className="ss-sentiment-legend__item">
+        <span className="ss-badge neg">−10…−1</span> negative
+      </dd>
+      <dd
+        className={`ss-sentiment-legend__item${scoresFiltered ? ' is-excluded' : ''}`}
+        title={scoresFiltered ? 'Excluded by the active score filters' : undefined}
+      >
+        <span className="ss-badge neutral">n/a</span> unscored
+      </dd>
+    </dl>
+  );
 
   return (
     <div className="ss-card">
@@ -402,29 +459,6 @@ export default function Archive() {
         </div>
       </div>
 
-      {/* An actual key — swatch plus one word per term — rendered once. It replaced a
-          sentence passed as a tooltip onto the "Sentiment" label of all 50 cards on
-          the page. When score filters are on, "unscored" is struck through rather
-          than explained in an extra clause. */}
-      <dl className="ss-sentiment-legend" aria-label="Sentiment badge key">
-        <dt className="ss-sentiment-legend__term">Sentiment</dt>
-        <dd className="ss-sentiment-legend__scale">−10…+10</dd>
-        <dd className="ss-sentiment-legend__item">
-          <span className="ss-badge pos">+3</span> positive
-        </dd>
-        <dd className="ss-sentiment-legend__item">
-          <span className="ss-badge neutral">0</span> neutral
-        </dd>
-        <dd className="ss-sentiment-legend__item">
-          <span className="ss-badge neg">−2</span> negative
-        </dd>
-        <dd
-          className={`ss-sentiment-legend__item${scoresFiltered ? ' is-excluded' : ''}`}
-          title={scoresFiltered ? 'Excluded by the active score filters' : undefined}
-        >
-          <span className="ss-badge neutral">n/a</span> unscored
-        </dd>
-      </dl>
 
       {dateNote ? <p className="ss-muted ss-archive-datenote">{dateNote}</p> : null}
       {error ? <p className="ss-error-text">Error: {error}</p> : null}
@@ -433,30 +467,47 @@ export default function Archive() {
         // than swapping in a "Loading…" line, which shifted the layout on every
         // keystroke and page change.
         <div className={loading ? 'is-refetching' : undefined}>
-          <p className="ss-muted ss-archive-count">
-            {total === 0
-              ? (criteria.length
-                ? `No headlines on this date with ${criteria.join(' and ')}.`
-                : 'No headlines for this date.')
-              : (
-                <>
-                  {firstOnPage}–{lastOnPage} of {total}
-                  {criteria.length
-                    ? <> headlines {criteria.join(' and ')} on this date</>
-                    : ' headlines'}
-                  {sort !== 'time'
-                    ? <> · sorted by {activeSort.label.toLowerCase()}, {(order === 'desc'
-                      ? activeSort.desc : activeSort.asc).toLowerCase()}</>
-                    : null}
-                </>
-              )}
-          </p>
-          {pager}
+          {/* The count, the pager and the badge key were three grey lines stacked
+              loose on the card with nothing bounding them. One panel now: the range
+              on the left, the pager on its right, the key on its own row under a
+              hairline — the same two-row shell the filter toolbar above already uses.
+              The key rides here rather than above the toolbar because it explains the
+              badges on the cards; with no rows to explain it does not render. */}
+          <div className="ss-listbar">
+            <div className="ss-listbar__row">
+              <p className="ss-listbar__count">
+                {total === 0
+                  ? (criteria.length
+                    ? `No headlines on this date with ${criteria.join(' and ')}.`
+                    : 'No headlines for this date.')
+                  : (
+                    <>
+                      {firstOnPage}–{lastOnPage} of {total}
+                      {criteria.length
+                        ? <> headlines {criteria.join(' and ')} on this date</>
+                        : ' headlines'}
+                      {sort !== 'time'
+                        ? <> · sorted by {activeSort.label.toLowerCase()}, {(order === 'desc'
+                          ? activeSort.desc : activeSort.asc).toLowerCase()}</>
+                        : null}
+                    </>
+                  )}
+              </p>
+              {pager}
+            </div>
+            {total > 0 ? (
+              <div className="ss-listbar__row ss-listbar__row--key">{legend}</div>
+            ) : null}
+          </div>
           <HeadlineList
             headlines={visibleHeadlines}
             highlight={sort === 'time' ? null : sort}
           />
-          {pager}
+          {pager ? (
+            <div className="ss-listbar ss-listbar--bottom">
+              <div className="ss-listbar__row">{pager}</div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
