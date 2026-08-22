@@ -362,9 +362,13 @@ export default function Simulator() {
             >
               Show selection
             </button>
-            {/* The hint was a bare paragraph floating in the row with nothing
-                marking where it started or ended. Boxed, it reads as the panel's
-                output — and it now has somewhere to say the selection is uncommitted. */}
+          </div>
+          {/* Its OWN row, under the hairline, like the archive toolbar's score row.
+              Sharing the controls' row made the row as tall as this note, and with
+              the row bottom-aligned (so labels sit above their selects) every field
+              was pushed down, opening a band of dead space across the top of the
+              panel. */}
+          <div className="ss-toolbar__row ss-toolbar__row--note">
             <aside
               className={`ss-toolbar__note${pending ? ' ss-toolbar__note--pending' : ''}`}
               aria-live="polite"

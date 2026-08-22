@@ -986,24 +986,140 @@ select optgroup {
   border-color: var(--ss-border);
 }
 
-.ss-pager {
-  display: flex;
-  align-items: center;
-  /* Wraps because First/Last/jump made the row wider than a phone: without this the
-     outer buttons run past the card's right edge at 375px. */
-  flex-wrap: wrap;
-  gap: 8px 12px;
+/* The list bar: range on the left, pager on the right, badge key on a second row.
+   These were three unbounded grey lines stacked on the card — a count, a row of five
+   loose buttons and a key — none of them aligned with each other or with anything
+   else. Same two-row bordered shell as .ss-archive-toolbar above the list. */
+.ss-listbar {
+  border: 1px solid var(--ss-border);
+  border-radius: 12px;
+  background: var(--ss-surface-2);
   margin: 12px 0;
+}
+
+.ss-listbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  padding: 9px 14px;
+}
+
+/* Hairline rather than a gap: the key belongs to the bar, the way the score row
+   belongs to the filter toolbar. */
+.ss-listbar__row--key {
+  border-top: 1px solid var(--ss-border);
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* The bottom copy carries the pager alone, so it aligns to the same right edge
+   the top one does instead of stretching a lone control across the bar. */
+.ss-listbar--bottom .ss-listbar__row {
+  justify-content: flex-end;
+}
+
+.ss-listbar__count {
+  margin: 0;
   font-size: 13px;
   color: var(--ss-fg-muted);
 }
 
-/* The pager appears above and below the list; the top copy sits against the
-   count line, so it needs a rule to separate it from the rows beneath. */
-.ss-pager:first-of-type {
-  margin-top: 4px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--ss-border);
+/* One control, not five: the buttons share a shell and are divided by hairlines,
+   the same idiom as the date stepper's ‹ | date | › group. Every hit target is the
+   same 34px square, so the row reads as a single object rather than as five boxes
+   of different widths with gaps between them. */
+.ss-pagerctl {
+  display: inline-flex;
+  align-items: stretch;
+  height: 34px;
+  border: 1px solid var(--ss-border);
+  border-radius: 8px;
+  background: var(--ss-surface);
+  overflow: hidden;
+}
+
+.ss-pagerctl__btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ss-fg-muted);
+  width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ss-pagerctl__btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ss-pagerctl__btn:hover:not(:disabled) {
+  color: var(--ss-fg);
+  background: var(--ss-surface-2);
+}
+
+.ss-pagerctl__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The hairlines between the segments. This has to come AFTER .ss-pagerctl__btn:
+   both selectors carry one class, so equal specificity makes source order the
+   tiebreak, and the button's `border: none` reset was erasing every divider. */
+.ss-pagerctl > * + * {
+  border-left: 1px solid var(--ss-border);
+}
+
+.ss-pagerctl__page {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--ss-fg-muted);
+}
+
+/* Borderless inside the group — the shell already draws the box, and a second
+   border around the number was most of what made the old pager look busy. The
+   spinner arrows go too: they were two more controls nobody aimed at. */
+.ss-pagerctl__page input {
+  /* Width comes from the page count's digits (inline, from Archive.jsx). Right
+     aligned so the number sits against the "of N" it belongs to — the reserved
+     room for the widest page number falls on the divider side, where the group's
+     padding already puts space. */
+  text-align: right;
+  border: none;
+  background: transparent;
+  color: var(--ss-fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0;
+  appearance: textfield;
+  -moz-appearance: textfield;
+  font-variant-numeric: tabular-nums;
+}
+
+.ss-pagerctl__page input::-webkit-outer-spin-button,
+.ss-pagerctl__page input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.ss-pagerctl__page input:focus-visible {
+  outline: 2px solid var(--ss-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 .ss-muted {
@@ -2154,18 +2270,27 @@ body {
 
 /* Selection summary. Replaces .ss-toolbar__hint, which was a bare paragraph
    floating in the row beside the fields with nothing marking where it began or
-   ended. Boxed and rule-led, it reads as the toolbar's output. */
+   ended. It sits in its own row under the hairline, not beside the selects: as a
+   sibling of the fields it made the row as tall as itself, and a bottom-aligned
+   row then pushed every field down behind a band of dead space.
+
+   No border or background of its own — the toolbar panel around it already draws
+   the box. All it keeps is the rule down its left edge, which doubles as the
+   state cue. */
+.ss-toolbar__row--note {
+  border-top: 1px solid var(--ss-border);
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
 .ss-toolbar__note {
-  flex: 1 1 300px;
-  min-width: 240px;
+  flex: 1 1 auto;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px;
-  border: 1px solid var(--ss-border);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding-left: 10px;
   border-left: 3px solid var(--ss-accent);
-  border-radius: 10px;
-  background: var(--ss-surface);
   font-size: 12px;
   line-height: 1.5;
   color: var(--ss-fg-muted);
@@ -2186,12 +2311,11 @@ body {
   color: var(--ss-fg);
 }
 
-/* Hairline, not a gap: the status line belongs to the note, and a plain margin
-   let it drift into looking like a third paragraph of the hint. */
+/* A rule to its left rather than above: the note is one line now, and the status
+   is the last thing on it. */
 .ss-toolbar__note-foot {
-  margin-top: 2px;
-  padding-top: 5px;
-  border-top: 1px solid var(--ss-border);
+  padding-left: 14px;
+  border-left: 1px solid var(--ss-border);
 }
 
 /* Amber while the selects and the screen disagree — the same cue as the live
@@ -2401,28 +2525,38 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 12px;
-  margin: 0 0 10px;
+  gap: 6px 16px;
+  margin: 0;
+  /* NO border or background of its own. It already sits in .ss-listbar__row--key,
+     inside the bordered listbar panel and under that row's hairline, so a box here
+     is a box inside a box — and on --ss-surface-2 over --ss-surface-2 the two
+     alphas stack into a visible nested strip. */
   font-size: 12px;
   color: var(--ss-fg-muted);
 }
 
+/* The caption gets a rule instead of a box, so "Sentiment −10…+10" reads as the
+   label of the four keys rather than as a fifth one. */
 .ss-sentiment-legend__term {
   font-weight: 600;
   color: var(--ss-fg);
-}
-
-.ss-sentiment-legend__scale {
-  margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  padding-right: 16px;
+  border-right: 1px solid var(--ss-border);
 }
 
 .ss-sentiment-legend__item {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
+}
+
+/* One width for all four swatches, sized to the widest band. Left to themselves
+   they set four different widths, so no badge–word pair lined up with the next and
+   the row read as ragged debris rather than as a key. */
+.ss-sentiment-legend .ss-badge {
+  min-width: 62px;
+  text-align: center;
 }
 
 /* Score filters drop unscored rows entirely, so the term is struck through rather
@@ -2526,10 +2660,6 @@ body {
 .ss-archive-reset:disabled {
   opacity: 0.4;
   cursor: default;
-}
-
-.ss-archive-count {
-  margin: 0 0 8px;
 }
 
 /* Keep the previous results visible while a new page or search loads, so the
