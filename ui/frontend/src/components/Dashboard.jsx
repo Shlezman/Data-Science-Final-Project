@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getJson } from '../lib/api.js';
-import { pct, direction, directionCls, outcome, outcomeCls } from '../lib/format.js';
+import { direction, directionCls, outcome, outcomeCls } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
 import Hero from './Hero.jsx';
 import EdaPanels from './EdaPanels.jsx';
@@ -175,16 +175,19 @@ function metricPercent(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function metricAssessment(kind, value) {
+function metricAssessment(kind, value, baseline) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return { label: 'No data', tone: 'neutral' };
   }
+  // Compare against the metric's real reference baseline (e.g. 53.03% for accuracy,
+  // 0.521 for ROC-AUC), not a naive 0.5 coin-flip.
+  const ref = typeof baseline === 'number' ? baseline : 0.5;
   if (kind === 'accuracy') {
-    const delta = (value - 0.5) * 100;
+    const delta = (value - ref) * 100;
     return { label: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp vs baseline`, tone: 'neutral' };
   }
   if (kind === 'auc') {
-    const delta = value - 0.5;
+    const delta = value - ref;
     return { label: `${delta >= 0 ? '+' : ''}${delta.toFixed(3)} vs baseline`, tone: 'neutral' };
   }
   return { label: `${value >= 0 ? '+' : ''}${value.toFixed(3)} vs baseline`, tone: 'neutral' };
@@ -197,7 +200,7 @@ function MetricInfo({ text }) {
 }
 
 function CoreMetric({ label, value, displayValue, kind, baseline, domain, scope, info, comparison }) {
-  const assessment = metricAssessment(kind, value);
+  const assessment = metricAssessment(kind, value, baseline);
   const [min, max] = domain;
   const clamp = (number) => Math.max(0, Math.min(100, ((number - min) / (max - min)) * 100));
   const valuePosition = typeof value === 'number' ? clamp(value) : clamp(baseline);
@@ -401,7 +404,6 @@ export default function Dashboard() {
               <tr>
                 <th>Date</th>
                 <th>Predicted</th>
-                <th>Confidence</th>
                 <th>Actual</th>
                 <th>Result</th>
               </tr>
@@ -417,7 +419,6 @@ export default function Dashboard() {
                         {direction(r.prediction)}
                       </span>
                     </td>
-                    <td>{pct(r.confidence)}</td>
                     <td>
                       <span className={`ss-badge ${directionCls(r.actual)}`}>
                         {direction(r.actual)}

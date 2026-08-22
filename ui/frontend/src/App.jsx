@@ -4,6 +4,7 @@ import Dashboard from './components/Dashboard.jsx';
 import Archive from './components/Archive.jsx';
 import Simulator from './components/Simulator.jsx';
 import Models from './components/Models.jsx';
+import Infrastructure from './components/Infrastructure.jsx';
 import Login from './components/Login.jsx';
 import Centroids3D from './components/Centroids3D.jsx';
 
@@ -11,6 +12,7 @@ const TABS = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'archive', label: 'Archive' },
   { id: 'simulator', label: 'Simulator' },
+  { id: 'infrastructure', label: 'Infrastructure' },
 ];
 
 /**
@@ -181,6 +183,7 @@ export default function App() {
         {tab === 'dashboard' ? <Dashboard /> : null}
         {tab === 'archive' ? <Archive /> : null}
         {tab === 'simulator' ? <Simulator /> : null}
+        {tab === 'infrastructure' ? <Infrastructure /> : null}
         {tab === 'models' && auth.admin ? <Models /> : null}
       </main>
 

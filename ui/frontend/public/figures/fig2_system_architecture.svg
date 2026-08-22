@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#475569"/></marker>
+  </defs>
+  <style>
+    .box{fill:#f8fafc;stroke:#334155;stroke-width:1.5}
+    .db{fill:#eef2ff;stroke:#4338ca;stroke-width:2}
+    .t{font-size:15px;font-weight:bold;fill:#0f172a}
+    .s{font-size:12px;fill:#475569}
+    .arrow{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#a)}
+  </style>
+
+  <rect x="330" y="170" width="240" height="130" class="db" rx="10"/>
+  <text x="450" y="196" text-anchor="middle" class="t">PostgreSQL 16</text>
+  <text x="450" y="218" text-anchor="middle" class="s">raw_headlines · nlp_vectors</text>
+  <text x="450" y="236" text-anchor="middle" class="s">embeddings · daily features</text>
+  <text x="450" y="254" text-anchor="middle" class="s">model_registry · predictions</text>
+  <text x="450" y="272" text-anchor="middle" class="s">narrative_sim*</text>
+
+  <rect x="30" y="40" width="210" height="60" class="box" rx="8"/>
+  <text x="135" y="66" text-anchor="middle" class="t">mivzakim_scraper/</text>
+  <text x="135" y="86" text-anchor="middle" class="s">Playwright · Hebrew headlines</text>
+  <path class="arrow" d="M240 80 C300 100 330 140 370 168"/>
+
+  <rect x="30" y="205" width="210" height="60" class="box" rx="8"/>
+  <text x="135" y="231" text-anchor="middle" class="t">processing_engine/</text>
+  <text x="135" y="251" text-anchor="middle" class="s">LLM scoring · 7 scores</text>
+  <path class="arrow" d="M240 235 L328 235"/>
+
+  <rect x="30" y="370" width="210" height="60" class="box" rx="8"/>
+  <text x="135" y="396" text-anchor="middle" class="t">evaluation/</text>
+  <text x="135" y="416" text-anchor="middle" class="s">golden-dataset quality gate</text>
+  <path class="arrow" d="M135 370 L135 302" stroke-dasharray="5 4"/>
+
+  <rect x="660" y="40" width="210" height="76" class="box" rx="8"/>
+  <text x="765" y="66" text-anchor="middle" class="t">sentisense/</text>
+  <text x="765" y="86" text-anchor="middle" class="s">features · embeddings · HPO</text>
+  <text x="765" y="104" text-anchor="middle" class="s">registry + champion serving</text>
+  <path class="arrow" d="M572 190 C630 160 660 140 690 118"/>
+  <path class="arrow" d="M710 118 C670 160 630 185 574 210"/>
+
+  <rect x="660" y="205" width="210" height="60" class="box" rx="8"/>
+  <text x="765" y="231" text-anchor="middle" class="t">scripts/</text>
+  <text x="765" y="251" text-anchor="middle" class="s">nightly + training orchestration</text>
+  <path class="arrow" d="M658 235 L572 235"/>
+
+  <rect x="660" y="370" width="210" height="60" class="box" rx="8"/>
+  <text x="765" y="396" text-anchor="middle" class="t">ui/</text>
+  <text x="765" y="416" text-anchor="middle" class="s">FastAPI + React dashboard</text>
+  <path class="arrow" d="M658 395 C610 370 590 340 566 302"/>
+</svg>
