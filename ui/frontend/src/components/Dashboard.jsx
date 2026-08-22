@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
+
+const RECENT_PREVIEW = 10;   // rows shown before the user expands the full history
 import { getJson } from '../lib/api.js';
 import { direction, directionCls, outcome, outcomeCls } from '../lib/format.js';
 import HeadlineList from './HeadlineList.jsx';
@@ -253,6 +255,7 @@ export default function Dashboard() {
   const [health, setHealth] = useState(null);
   const [perf, setPerf] = useState(null);
   const [error, setError] = useState(null);
+  const [showAllRecent, setShowAllRecent] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -284,6 +287,7 @@ export default function Dashboard() {
   }
 
   const recent = dashboard.recent || [];
+  const visibleRecent = showAllRecent ? recent : recent.slice(0, RECENT_PREVIEW);
   const latest = dashboard.latest_headlines || {};
 
   // The Model-performance panel is rendered VERBATIM from /api/performance —
@@ -399,7 +403,8 @@ export default function Dashboard() {
         {recent.length === 0 ? (
           <p className="ss-muted">No predictions yet.</p>
         ) : (
-          <table className="ss-table">
+          <>
+          <table className={`ss-table ${showAllRecent ? '' : 'ss-table--preview'}`}>
             <thead>
               <tr>
                 <th>Date</th>
@@ -409,7 +414,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {recent.map((r) => {
+              {visibleRecent.map((r) => {
                 const result = outcome(r.prediction, r.actual);
                 return (
                   <tr key={r.date}>
@@ -432,6 +437,17 @@ export default function Dashboard() {
               })}
             </tbody>
           </table>
+          {recent.length > RECENT_PREVIEW ? (
+            <button
+              type="button"
+              className="ss-recent-toggle"
+              onClick={() => setShowAllRecent((v) => !v)}
+              aria-expanded={showAllRecent}
+            >
+              {showAllRecent ? 'Show less' : `Show all ${recent.length} predictions`}
+            </button>
+          ) : null}
+          </>
         )}
       </div>
 

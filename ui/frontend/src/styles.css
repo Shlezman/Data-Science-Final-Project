@@ -2713,3 +2713,21 @@ body {
   font-size: 12.5px;
   color: var(--ss-fg-muted);
 }
+
+/* Recent-predictions collapse toggle */
+.ss-recent-toggle {
+  margin-top: 12px;
+  width: 100%;
+  padding: 9px 14px;
+  background: var(--ss-subtle);
+  border: 1px solid var(--ss-border);
+  border-radius: 10px;
+  color: var(--ss-fg-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ss-recent-toggle:hover {
+  border-color: var(--ss-border-strong);
+  color: inherit;
+}
